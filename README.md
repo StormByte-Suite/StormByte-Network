@@ -3,7 +3,7 @@
 ![Multiplatform](https://img.shields.io/badge/Linux%20%7C%20Windows%20%7C%20macOS-Supported-1793D1)
 ![C++26](https://img.shields.io/badge/C%2B%2B-26-00599C?logo=c%2B%2B&logoColor=white)
 ![CMake](https://img.shields.io/badge/CMake-3.28+-064F8C?logo=cmake&logoColor=white)
-![License: LGPL v3](https://img.shields.io/badge/License-LGPL_v3-blue.svg)
+![License: LGPL v3 or commercial](https://img.shields.io/badge/License-LGPL_v3_or_commercial-blue.svg)
 [![CI](https://github.com/StormBytePP/StormByte-Network/actions/workflows/ci.yml/badge.svg)](https://github.com/StormBytePP/StormByte-Network/actions/workflows/ci.yml)
 [![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github-sponsors&logoColor=white)](https://github.com/sponsors/StormBytePP)
 
@@ -40,10 +40,12 @@ It is not a thin socket wrapper. You inherit `Client` or `Server`, define packet
 ```bash
 git clone https://github.com/StormBytePP/StormByte-Network.git
 cd StormByte-Network
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
 cmake --build build -j
 cmake --install build
 ```
+
+`BUILD_SHARED_LIBS` defaults to `ON`; use `-DBUILD_SHARED_LIBS=OFF` for a static build. BuildMaster carries the selected mode through the bundled StormByte dependency graph. In static mode it flattens private dependency link requirements for consumers; no vendor repack is needed.
 
 ## Why StormByte-Network
 
@@ -51,7 +53,7 @@ cmake --install build
 |------|--------------------|
 | **Inherit, don't wrap sockets** | `Client` / `Server` are abstract application endpoints. |
 | **Framed messages** | `Transport::Packet` + private `Frame` (opcode, size, payload). |
-| **Buffer as I/O** | Pipelines on inbound/outbound payloads; Reader/Writer adapters. |
+| **Buffer pipelines** | Optional processing of inbound/outbound payloads. |
 | **IPv4 and IPv6** | `Connection::Protocol`. |
 | **Cross-platform** | POSIX and Winsock behind `Socket` / `Handler`. |
 
@@ -69,9 +71,11 @@ cmake --install build
 
 | Dependency | Required Version | Role |
 |------------|------------------|------|
-| [StormByte (base)](https://github.com/StormBytePP/StormByte/releases/tag/1.1.0) | [1.1.0](https://github.com/StormBytePP/StormByte/releases/tag/1.1.0) | Expected, exceptions, visibility |
-| [StormByte-Buffer](https://github.com/StormBytePP/StormByte-Buffer/releases/tag/1.1.0) | [1.1.0](https://github.com/StormBytePP/StormByte-Buffer/releases/tag/1.1.0) | FIFO, Pipeline, Consumer, External I/O |
-| [StormByte-Logger](https://github.com/StormBytePP/StormByte-Logger/releases/tag/1.1.0) | [1.1.0](https://github.com/StormBytePP/StormByte-Logger/releases/tag/1.1.0) | Diagnostics |
+| [StormByte (base)](https://github.com/StormBytePP/StormByte/releases/tag/2.0.0) | [2.0.0](https://github.com/StormBytePP/StormByte/releases/tag/2.0.0) | Expected, BinaryData, Size, ByteSize, visibility |
+| [StormByte-Buffer](https://github.com/StormBytePP/StormByte-Buffer/releases/tag/2.0.0) | [2.0.0](https://github.com/StormBytePP/StormByte-Buffer/releases/tag/2.0.0) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
+| [StormByte-Logger](https://github.com/StormBytePP/StormByte-Logger/releases/tag/2.0.0) | [2.0.0](https://github.com/StormBytePP/StormByte-Logger/releases/tag/2.0.0) | Diagnostics |
+| [StormByte-String](https://github.com/StormBytePP/StormByte-String/releases/tag/1.0.0) | [1.0.0](https://github.com/StormBytePP/StormByte-String/releases/tag/1.0.0) | Owned UTF-8 text |
+| [StormByte-System](https://github.com/StormBytePP/StormByte-System/releases/tag/2.0.0) | [2.0.0](https://github.com/StormBytePP/StormByte-System/releases/tag/2.0.0) | Calling-thread utilities |
 
 ## The rest of the suite
 
@@ -85,6 +89,7 @@ cmake --install build
 | [Logger](https://github.com/StormBytePP/StormByte-Logger) | Stream logger with levels, headers, human-readable sizes and redaction (`ThreadedLog`) | [/StormByte-Logger](https://dev.stormbyte.org/StormByte-Logger) |
 | [Multimedia](https://github.com/StormBytePP/StormByte-Multimedia) | Decode, encode and containers without raw FFmpeg types; codecs enabled only if present | [/StormByte-Multimedia](https://dev.stormbyte.org/StormByte-Multimedia) |
 | **Network** | This repository | [/StormByte-Network](https://dev.stormbyte.org/StormByte-Network) |
+| [String](https://github.com/StormBytePP/StormByte-String) | Owned UTF-8 and wide text | [/StormByte-String](https://dev.stormbyte.org/StormByte-String) |
 | [System](https://github.com/StormBytePP/StormByte-System) | Processes, pipes and environment variables across Linux, Windows and macOS | [/StormByte-System](https://dev.stormbyte.org/StormByte-System) |
 
 ## Public API
@@ -112,7 +117,7 @@ Sockets, frames and Winsock bootstrap are private.
 class AppClient : public StormByte::Network::Client {
 public:
 	AppClient(const StormByte::Network::DeserializePacketFunction& fn,
-	          std::shared_ptr<StormByte::Logger::Log> log)
+	          StormByte::Shared<StormByte::Logger::Log> log)
 		: Client(fn, log) {}
 
 protected:
@@ -139,7 +144,7 @@ protected:
 	StormByte::Buffer::Pipeline OutputPipeline() const noexcept override { return {}; }
 
 	StormByte::Network::PacketPointer ProcessClientPacket(
-		const std::string& uuid,
+		std::string_view uuid,
 		StormByte::Network::PacketPointer packet) noexcept override {
 		(void)uuid;
 		return packet;
@@ -157,7 +162,7 @@ public:
 	PingPacket() : Packet(1) {}
 
 protected:
-	StormByte::Buffer::DataType DoSerialize() const noexcept override {
+	StormByte::BinaryData DoSerialize() const noexcept override {
 		return {};
 	}
 };
@@ -182,6 +187,6 @@ Issues on GitHub. No wiki, no discussions.
 
 ## License
 
-GNU Lesser General Public License v3 or later.
+StormByte-Network original source is dual-licensed under the GNU Lesser General Public License v3.0 or later, or a commercial license from the copyright holder (David C. Manuelda, StormBytePP).
 
-See [https://www.gnu.org/licenses/lgpl-3.0.html](https://www.gnu.org/licenses/lgpl-3.0.html).
+See [LICENSE](LICENSE), [COPYING.LGPLv3](COPYING.LGPLv3), and <https://www.gnu.org/licenses/lgpl-3.0.html>. These licenses do not cover bundled StormByte modules or other third-party material under `thirdparty/`; each keeps its own license. Neither license grants patent rights.

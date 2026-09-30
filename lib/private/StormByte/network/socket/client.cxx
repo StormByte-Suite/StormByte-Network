@@ -3,9 +3,28 @@
  *
  * This file is part of StormByte-Network.
  *
- * StormByte-Network is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License version 3
- * or later, as published by the Free Software Foundation.
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
  *
  * StormByte-Network is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,8 +32,10 @@
  * GNU Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with StormByte-Network. If not, see
+ * version 3 along with StormByte-Network. If not, see
  * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
 #include <StormByte/network/socket/client.hxx>
@@ -31,7 +52,6 @@
 #include <ws2tcpip.h>
 #endif
 #include <StormByte/network/connection/handler.hxx>
-#include <StormByte/system.hxx>
 #include <chrono>
 #include <cstring>
 #include <span>
@@ -75,13 +95,13 @@ namespace {
 	}
 }
 
-Socket::Client::Client(const Connection::Protocol& protocol, std::shared_ptr<Logger::Log> logger) noexcept
+Socket::Client::Client(const Connection::Protocol& protocol, StormByte::Shared<Logger::Log> logger) noexcept
 :Socket(protocol, logger) {
-	m_logger << Logger::Level::LowLevel << "Created client socket with UUID: " << m_UUID << std::endl;
+	m_logger << Logger::Level::LowLevel << "Created client socket with UUID: " << std::string_view{m_UUID} << std::endl;
 }
 
-ExpectedVoid Socket::Client::Connect(const std::string& hostname, const unsigned short& port) noexcept {
-	m_logger << Logger::Level::LowLevel << "Connecting to " << hostname << ":" << port << std::endl;
+ExpectedVoid Socket::Client::Connect(std::string_view hostname, const unsigned short& port) noexcept {
+	m_logger << Logger::Level::LowLevel << "Connecting to " << std::string_view{hostname} << ":" << port << std::endl;
 	if (m_status.load(std::memory_order_acquire) != Connection::Status::Disconnected) {
 		m_logger << Logger::Level::Error << "Client is already connected" << std::endl;
 		return Unexpected<ConnectionError>("Client is already connected");
@@ -107,7 +127,7 @@ ExpectedVoid Socket::Client::Connect(const std::string& hostname, const unsigned
 #else
 	if (::connect(m_handle, m_conn_info->SockAddr().get(), sizeof(*m_conn_info->SockAddr())) == -1) {
 #endif
-		m_logger << Logger::Level::Error << "Failed to connect: " << Connection::Handler::Instance().LastError() << std::endl;
+		m_logger << Logger::Level::Error << "Failed to connect: " << std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 		return Unexpected<ConnectionError>(Connection::Handler::Instance().LastError());
 	}
 
@@ -118,10 +138,6 @@ ExpectedVoid Socket::Client::Connect(const std::string& hostname, const unsigned
 
 ExpectedVoid Socket::Client::Send(const Buffer::FIFO& buffer) noexcept {
 	return Send(std::span<const std::byte>(buffer.Data().data(), buffer.Size()));
-}
-
-ExpectedVoid Socket::Client::Send(const std::vector<std::byte>& buffer) noexcept {
-	return Send(std::span<const std::byte>(buffer.data(), buffer.size()));
 }
 
 ExpectedVoid Socket::Client::Send(std::span<const std::byte> data) noexcept {
@@ -167,9 +183,9 @@ ExpectedVoid Socket::Client::Send(std::span<const std::byte> data) noexcept {
 			}
 #endif
 			int sys_errno = errno;
-			m_logger << Logger::Level::Error << "Send failed: " << Connection::Handler::Instance().LastError()
+				m_logger << Logger::Level::Error << "Send failed: " << std::string_view{Connection::Handler::Instance().LastError()}
 					<< " (code: " << Connection::Handler::Instance().LastErrorCode() << ")"
-					<< " errno: " << sys_errno << " (" << Connection::Handler::Instance().ErrnoToString(sys_errno) << ")" << std::endl;
+					<< " errno: " << sys_errno << " (" << std::string_view{Connection::Handler::Instance().ErrnoToString(sys_errno)} << ")" << std::endl;
 			return Unexpected<ConnectionError>(
 				"Failed to write: {} (error code: {})",
 				Connection::Handler::Instance().LastError(),
@@ -195,7 +211,7 @@ ExpectedVoid Socket::Client::Send(Buffer::Consumer data) noexcept {
 	}
 
 	while (true) {
-		Buffer::DataType byte_data;
+		StormByte::BinaryData byte_data;
 		if (!data.Extract(0, byte_data) || byte_data.empty()) {
 			if (data.EoF())
 				break;
@@ -291,7 +307,7 @@ ExpectedBuffer Socket::Client::ReadOnce(const std::size_t& size, int flags) noex
 	}
 }
 
-ExpectedVoid Socket::Client::ReceiveLoop(const std::size_t& max_size, Buffer::DataType& out,
+ExpectedVoid Socket::Client::ReceiveLoop(const std::size_t& max_size, StormByte::BinaryData& out,
 	const unsigned short& timeout_seconds, bool require_exact) noexcept {
 	if (!m_handle) {
 		return Unexpected<ConnectionError>("Receive failed: Invalid socket handle");
@@ -399,7 +415,7 @@ ExpectedVoid Socket::Client::ReceiveLoop(const std::size_t& max_size, Buffer::Da
 ExpectedBuffer Socket::Client::Receive(const std::size_t& max_size, const unsigned short& timeout_seconds) noexcept {
 	m_logger << Logger::Level::LowLevel << "Starting to read data with max_size: "
 			<< humanreadable_bytes << max_size << nohumanreadable << std::endl;
-	Buffer::DataType bytes;
+	StormByte::BinaryData bytes;
 	auto loop = ReceiveLoop(max_size, bytes, timeout_seconds, false);
 	if (!loop) {
 		return Unexpected(loop.error());
@@ -413,7 +429,7 @@ ExpectedBuffer Socket::Client::Receive(const std::size_t& max_size, const unsign
 	return buffer;
 }
 
-ExpectedVoid Socket::Client::ReceiveInto(const std::size_t& max_size, Buffer::DataType& out,
+ExpectedVoid Socket::Client::ReceiveInto(const std::size_t& max_size, StormByte::BinaryData& out,
 	const unsigned short& timeout_seconds) noexcept {
 	m_logger << Logger::Level::LowLevel << "Starting ReceiveInto with max_size: "
 			<< humanreadable_bytes << max_size << nohumanreadable << std::endl;
@@ -461,9 +477,9 @@ ExpectedVoid Socket::Client::Write(std::span<const std::byte> data, const std::s
 			}
 #endif
 			int sys_errno = errno;
-			m_logger << Logger::Level::Error << "Write failed: " << Connection::Handler::Instance().LastError()
+			m_logger << Logger::Level::Error << "Write failed: " << std::string_view{Connection::Handler::Instance().LastError()}
 					<< " (code: " << Connection::Handler::Instance().LastErrorCode() << ")"
-					<< " errno: " << sys_errno << " (" << Connection::Handler::Instance().ErrnoToString(sys_errno) << ")" << std::endl;
+					<< " errno: " << sys_errno << " (" << std::string_view{Connection::Handler::Instance().ErrnoToString(sys_errno)} << ")" << std::endl;
 			return Unexpected<ConnectionError>(
 				"Write failed: {} (error code: {})",
 				Connection::Handler::Instance().LastError(),
@@ -512,7 +528,7 @@ StormByte::Expected<std::size_t, ConnectionError> Socket::Client::TryWrite(
 	return Unexpected<ConnectionError>("Failed to write: {}", Connection::Handler::Instance().LastError());
 }
 
-StormByte::Expected<StormByte::Buffer::DataType, ConnectionError> Socket::Client::TryRead(bool& would_block) noexcept {
+StormByte::Expected<StormByte::BinaryData, ConnectionError> Socket::Client::TryRead(bool& would_block) noexcept {
 	would_block = false;
 	if (m_status.load(std::memory_order_acquire) != Connection::Status::Connected || !m_handle) {
 		return Unexpected<ConnectionError>("Failed to read: Client is not connected");
@@ -521,7 +537,7 @@ StormByte::Expected<StormByte::Buffer::DataType, ConnectionError> Socket::Client
 	const std::size_t size = ClampChunk(
 		m_effective_recv_buf > 0 ? static_cast<std::size_t>(m_effective_recv_buf) : DEFAULT_IO_CHUNK,
 		MAX_SINGLE_IO);
-	StormByte::Buffer::DataType data(size);
+	StormByte::BinaryData data(size);
 #ifdef UNIX
 	const ssize_t received = ::recv(m_handle, data.data(), data.size(), 0);
 #else

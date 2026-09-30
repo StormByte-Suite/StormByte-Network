@@ -3,9 +3,28 @@
  *
  * This file is part of StormByte-Network.
  *
- * StormByte-Network is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License version 3
- * or later, as published by the Free Software Foundation.
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
  *
  * StormByte-Network is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,13 +32,15 @@
  * GNU Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with StormByte-Network. If not, see
+ * version 3 along with StormByte-Network. If not, see
  * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
 #include <StormByte/network/connection/handler.hxx>
 #include <StormByte/network/socket/socket.hxx>
-#include <StormByte/system.hxx>
+#include <StormByte/system/this_thread.hxx>
 #include <StormByte/uuid.hxx>
 #ifdef UNIX
 #include <netinet/in.h>
@@ -44,7 +65,7 @@
 constexpr const int SOCKET_BUFFER_SIZE = 262144; // 256 KiB desired minimum
 constexpr const std::size_t MAX_SINGLE_IO = 4 * 1024 * 1024; // must match client.cxx
 using namespace StormByte::Network::Socket;
-Socket::Socket(const Connection::Protocol& protocol, std::shared_ptr<Logger::Log> logger) noexcept:
+Socket::Socket(const Connection::Protocol& protocol, StormByte::Shared<Logger::Log> logger) noexcept:
 m_protocol(protocol), m_status(Connection::Status::Disconnected),
 m_handle(-1), m_conn_info(nullptr), m_mtu(DEFAULT_MTU), m_logger(logger),
 m_UUID(StormByte::GenerateUUIDv4()) {
@@ -102,19 +123,19 @@ void Socket::Disconnect() noexcept {
 	if (m_handle > 0) {
 #ifdef UNIX
 		shutdown(m_handle, SHUT_RDWR);
-		StormByte::System::Sleep(std::chrono::milliseconds(100));
+		StormByte::System::ThisThread::Sleep(std::chrono::milliseconds(100));
 		close(m_handle);
 		m_handle = -1;
 #else
 		shutdown(m_handle, SD_BOTH);
-		StormByte::System::Sleep(std::chrono::milliseconds(100));
+		StormByte::System::ThisThread::Sleep(std::chrono::milliseconds(100));
 		closesocket(m_handle);
 		m_handle = INVALID_SOCKET;
 #endif
 	}
 
 	m_status.store(Connection::Status::Disconnected, std::memory_order_release);
-	m_logger << Logger::Level::LowLevel << "Disconnected socket " << m_UUID << std::endl;
+	m_logger << Logger::Level::LowLevel << "Disconnected socket " << std::string_view{m_UUID} << std::endl;
 }
 
 StormByte::Network::ExpectedReadResult Socket::WaitForData(const long long& usecs) noexcept {
@@ -143,7 +164,7 @@ StormByte::Network::ExpectedReadResult Socket::WaitForData(const long long& usec
 			return;
 		logged_waiting = true;
 		m_logger << Logger::Level::LowLevel
-				<< "Still waiting for data on socket " << m_UUID
+				<< "Still waiting for data on socket " << std::string_view{m_UUID}
 				<< " (elapsed " << elapsed_ms() << " ms)" << std::endl;
 		next_progress_log = now + PROGRESS_INTERVAL;
 	};
@@ -152,7 +173,7 @@ StormByte::Network::ExpectedReadResult Socket::WaitForData(const long long& usec
 		if (!logged_waiting && ms < 1000)
 			return;
 		m_logger << Logger::Level::LowLevel
-				<< "Wait for data on socket " << m_UUID << ": " << reason
+				<< "Wait for data on socket " << std::string_view{m_UUID} << ": " << reason
 				<< " after " << ms << " ms" << std::endl;
 	};
 	while (Connection::IsConnected(m_status.load(std::memory_order_acquire))) {
@@ -347,13 +368,13 @@ void Socket::InitializeAfterConnect() noexcept {
 	rc = setsockopt(m_handle, SOL_SOCKET, SO_SNDBUF, &send_buf, sizeof(send_buf));
 	if (rc != 0) {
 		m_logger << Logger::Level::Warning << "setsockopt(SO_SNDBUF) failed: "
-				<< Connection::Handler::Instance().LastError() << std::endl;
+				<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 	}
 
 	rc = setsockopt(m_handle, SOL_SOCKET, SO_RCVBUF, &recv_buf, sizeof(recv_buf));
 	if (rc != 0) {
 		m_logger << Logger::Level::Warning << "setsockopt(SO_RCVBUF) failed: "
-				<< Connection::Handler::Instance().LastError() << std::endl;
+				<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 	}
 #elifdef UNIX
 	// macOS / other POSIX (no /proc)
@@ -362,13 +383,13 @@ void Socket::InitializeAfterConnect() noexcept {
 	rc = setsockopt(m_handle, SOL_SOCKET, SO_SNDBUF, &send_buf, sizeof(send_buf));
 	if (rc != 0) {
 		m_logger << Logger::Level::Warning << "setsockopt(SO_SNDBUF) failed: "
-				<< Connection::Handler::Instance().LastError() << std::endl;
+				<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 	}
 
 	rc = setsockopt(m_handle, SOL_SOCKET, SO_RCVBUF, &recv_buf, sizeof(recv_buf));
 	if (rc != 0) {
 		m_logger << Logger::Level::Warning << "setsockopt(SO_RCVBUF) failed: "
-				<< Connection::Handler::Instance().LastError() << std::endl;
+				<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 	}
 
 	// Prevent SIGPIPE on send (macOS/BSD equivalent of MSG_NOSIGNAL)
@@ -376,7 +397,7 @@ void Socket::InitializeAfterConnect() noexcept {
 	rc = setsockopt(m_handle, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, sizeof(nosigpipe));
 	if (rc != 0) {
 		m_logger << Logger::Level::Warning << "setsockopt(SO_NOSIGPIPE) failed: "
-				<< Connection::Handler::Instance().LastError() << std::endl;
+				<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 	}
 #else
 	// Windows
@@ -387,12 +408,12 @@ void Socket::InitializeAfterConnect() noexcept {
 		reinterpret_cast<const char*>(&try_send), sizeof(try_send));
 	if (rc != 0) {
 		m_logger << Logger::Level::Warning << "setsockopt(SO_SNDBUF) attempt failed: "
-				<< Connection::Handler::Instance().LastError() << std::endl;
+				<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 		rc = setsockopt(m_handle, SOL_SOCKET, SO_SNDBUF,
 			reinterpret_cast<const char*>(&desired_buf), sizeof(desired_buf));
 		if (rc != 0) {
 			m_logger << Logger::Level::Warning << "setsockopt(SO_SNDBUF) fallback failed: "
-					<< Connection::Handler::Instance().LastError() << std::endl;
+					<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 		}
 	}
 
@@ -400,12 +421,12 @@ void Socket::InitializeAfterConnect() noexcept {
 		reinterpret_cast<const char*>(&try_recv), sizeof(try_recv));
 	if (rc != 0) {
 		m_logger << Logger::Level::Warning << "setsockopt(SO_RCVBUF) attempt failed: "
-				<< Connection::Handler::Instance().LastError() << std::endl;
+				<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 		rc = setsockopt(m_handle, SOL_SOCKET, SO_RCVBUF,
 			reinterpret_cast<const char*>(&desired_buf), sizeof(desired_buf));
 		if (rc != 0) {
 			m_logger << Logger::Level::Warning << "setsockopt(SO_RCVBUF) fallback failed: "
-					<< Connection::Handler::Instance().LastError() << std::endl;
+					<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 		}
 	}
 #endif
@@ -460,7 +481,7 @@ void Socket::InitializeAfterConnect() noexcept {
 #endif
 	if (rc != 0) {
 		m_logger << Logger::Level::Warning << "setsockopt(TCP_NODELAY) failed: "
-				<< Connection::Handler::Instance().LastError() << std::endl;
+				<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 	}
 
 	m_status.store(Connection::Status::Connected, std::memory_order_release);

@@ -2,6 +2,40 @@
  * Copyright (C) 2024-2026 David C. Manuelda (StormBytePP)
  *
  * This file is part of StormByte-Network.
+ *
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
+ *
+ * StormByte-Network is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * version 3 along with StormByte-Network. If not, see
+ * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
 #include <StormByte/network/session.hxx>
@@ -10,7 +44,7 @@
 #include <iterator>
 
 namespace StormByte::Network::Detail {
-	using StormByte::Buffer::DataType;
+	using StormByte::BinaryData;
 
 	Session::Session(std::string uuid, std::shared_ptr<Connection::Client> client) noexcept:
 	m_uuid(std::move(uuid)), m_client(std::move(client)) {}
@@ -76,7 +110,7 @@ namespace StormByte::Network::Detail {
 		return !m_output_frames.empty() && PrepareOutput();
 	}
 
-	bool Session::QueueResponse(const PacketPointer& packet, std::shared_ptr<Logger::Log> logger) noexcept {
+	bool Session::QueueResponse(const PacketPointer& packet, StormByte::Shared<Logger::Log> logger) noexcept {
 		if (!packet || m_closed || m_output_frame_count >= MAX_OUTPUT_FRAMES) {
 			return false;
 		}
@@ -87,7 +121,7 @@ namespace StormByte::Network::Detail {
 		++m_output_frame_count;
 		auto& stream = m_output_frames.back();
 		if (!stream.source.EoF()) {
-			Buffer::DataType chunk;
+			StormByte::BinaryData chunk;
 			if (stream.source.Extract(64 * 1024, chunk) && !chunk.empty()) {
 				m_output_bytes += chunk.size();
 				stream.data = std::move(chunk);
@@ -148,18 +182,18 @@ namespace StormByte::Network::Detail {
 			return !m_output_frames.empty() && PrepareOutput();
 		}
 
-		const std::size_t available_room = MAX_OUTPUT_BYTES - m_output_bytes;
+		const StormByte::ByteSize available_room = MAX_OUTPUT_BYTES - m_output_bytes;
 		if (available_room == 0) {
 			return false;
 		}
 
-		Buffer::DataType chunk;
-		const std::size_t available = frame.source.AvailableBytes();
+		StormByte::BinaryData chunk;
+		const StormByte::ByteSize available = frame.source.Available();
 		if (available == 0) {
 			return false;
 		}
 
-		const std::size_t count = std::min<std::size_t>({ available_room, available, 64 * 1024 });
+		const StormByte::ByteSize count = std::min({ available_room, available, StormByte::ByteSize{64 * 1024} });
 		if (!frame.source.Extract(count, chunk) || chunk.empty()) {
 			return false;
 		}
@@ -170,8 +204,8 @@ namespace StormByte::Network::Detail {
 	}
 
 	StormByte::Expected<Session::FrameList, ConnectionError> Session::AppendReceived(
-		DataType&& received, Buffer::Pipeline& in_pipeline,
-		std::shared_ptr<Logger::Log> logger) noexcept {
+		StormByte::BinaryData&& received, Buffer::Pipeline& in_pipeline,
+		StormByte::Shared<Logger::Log> logger) noexcept {
 		if (m_closed) {
 			return Unexpected<ConnectionError>("Session is closed");
 		}
@@ -190,8 +224,10 @@ namespace StormByte::Network::Detail {
 					break;
 				}
 
-				DataType opcode_data(m_input.begin(), m_input.begin() + sizeof(Transport::Packet::OpcodeType));
-				DataType size_data(m_input.begin() + sizeof(Transport::Packet::OpcodeType), m_input.begin() + FRAME_HEADER_SIZE);
+				const std::span<const std::byte> opcode_data{m_input.data(), sizeof(Transport::Packet::OpcodeType)};
+				const std::span<const std::byte> size_data{
+					m_input.data() + sizeof(Transport::Packet::OpcodeType),
+					static_cast<std::size_t>(FRAME_HEADER_SIZE) - sizeof(Transport::Packet::OpcodeType)};
 				auto expected_opcode = Serializable<Transport::Packet::OpcodeType>::Deserialize(opcode_data);
 				auto expected_size = Serializable<std::size_t>::Deserialize(size_data);
 				if (!expected_opcode || !expected_size) {
@@ -208,7 +244,7 @@ namespace StormByte::Network::Detail {
 			}
 
 			if (m_phase == ParsePhase::Payload) {
-				const std::size_t available = std::min(m_bytes_needed, m_input.size());
+				const StormByte::ByteSize available = std::min(m_bytes_needed, m_input.size());
 				if (available > 0) {
 					m_payload.insert(m_payload.end(), std::make_move_iterator(m_input.begin()), std::make_move_iterator(m_input.begin() + available));
 					m_input.erase(m_input.begin(), m_input.begin() + available);
@@ -230,7 +266,7 @@ namespace StormByte::Network::Detail {
 	}
 
 	StormByte::Expected<Session::FrameList, ConnectionError> Session::ReadReady(
-		Buffer::Pipeline& in_pipeline, std::shared_ptr<Logger::Log> logger) noexcept {
+		Buffer::Pipeline& in_pipeline, StormByte::Shared<Logger::Log> logger) noexcept {
 		if (m_closed || !m_client || !m_client->Socket()) {
 			m_closed = true;
 			return Unexpected<ConnectionError>("Session is closed");

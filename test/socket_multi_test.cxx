@@ -3,9 +3,28 @@
  *
  * This file is part of StormByte-Network.
  *
- * StormByte-Network is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License version 3
- * or later, as published by the Free Software Foundation.
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
  *
  * StormByte-Network is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,8 +32,10 @@
  * GNU Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with StormByte-Network. If not, see
+ * version 3 along with StormByte-Network. If not, see
  * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
 // Combined multi-client server/client test
@@ -80,7 +101,7 @@ int TestSocketMulti() {
                     ~FinishedGuard() { counter.fetch_add(1); }
                 } guard(clients_finished);
                 // Accumulate until we've received the full payload from this client
-                std::vector<std::byte> accumulated;
+                StormByte::BinaryData accumulated;
                 std::size_t total_received = 0;
                 while (total_received < TOTAL_BYTES_PER_CLIENT) {
                     auto recv_res = client.Receive(TOTAL_BYTES_PER_CLIENT - total_received);

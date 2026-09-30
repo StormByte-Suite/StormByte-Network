@@ -3,9 +3,28 @@
  *
  * This file is part of StormByte-Network.
  *
- * StormByte-Network is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License version 3
- * or later, as published by the Free Software Foundation.
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
  *
  * StormByte-Network is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,8 +32,10 @@
  * GNU Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with StormByte-Network. If not, see
+ * version 3 along with StormByte-Network. If not, see
  * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
 #include <StormByte/network/socket/server.hxx>
@@ -31,12 +52,12 @@
 #include <algorithm>
 #include <memory>
 using namespace StormByte::Network;
-Socket::Server::Server(const Connection::Protocol& protocol, std::shared_ptr<Logger::Log> logger) noexcept:
+Socket::Server::Server(const Connection::Protocol& protocol, StormByte::Shared<Logger::Log> logger) noexcept:
 Socket(protocol, logger) {
-	m_logger << Logger::Level::LowLevel << "Created server socket with UUID: " << m_UUID << std::endl;
+	m_logger << Logger::Level::LowLevel << "Created server socket with UUID: " << std::string_view{m_UUID} << std::endl;
 }
 
-ExpectedVoid Socket::Server::Listen(const std::string& hostname, const unsigned short& port) noexcept {
+ExpectedVoid Socket::Server::Listen(std::string_view hostname, const unsigned short& port) noexcept {
 	if (Connection::IsConnected(m_status.load(std::memory_order_acquire)))
 		return Unexpected<ConnectionError>("Server is already connected");
 	m_status.store(Connection::Status::Connecting, std::memory_order_release);
@@ -153,7 +174,7 @@ void Socket::Server::Disconnect() noexcept {
 	Socket::Disconnect();
 }
 
-void Socket::Server::DisconnectClient(const std::string& client_uuid) noexcept {
+void Socket::Server::DisconnectClient(std::string_view client_uuid) noexcept {
 	auto it = std::find_if(m_active_clients.begin(), m_active_clients.end(),
 		[&client_uuid](const std::shared_ptr<Client>& client) {
 			return client && client->UUID() == client_uuid;

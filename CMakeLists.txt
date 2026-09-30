@@ -13,10 +13,13 @@ project("StormByte C++ Library: Network module"
 	HOMEPAGE_URL "https://dev.stormbyte.org/StormByte-Network"
 )
 
+option(BUILD_SHARED_LIBS "Build shared libraries" ON)
+
 include(cmake/optimizations.cmake)
 include(cmake/asan.cmake)
 cmake_policy(SET CMP0079 NEW)
 
+add_subdirectory(buildmaster)
 add_subdirectory(doc)
 add_subdirectory(thirdparty)
 add_subdirectory(lib)

@@ -32,6 +32,10 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     name: checkout-bootstrap (${{ matrix.os }})
+    env:
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: core.longpaths
+      GIT_CONFIG_VALUE_0: "true"
     steps:
       - name: Warm submodule / checkout cache
         uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
@@ -61,7 +65,7 @@ jobs:
         compiler: [gcc, clang, clang-libc++]
     name: linux-${{ matrix.compiler }}
     env:
-      LD_LIBRARY_PATH: ${{ github.workspace }}/build/thirdparty/buildmaster/install/lib:${{ github.workspace }}/build/lib
+      LD_LIBRARY_PATH: ${{ github.workspace }}/build/buildmaster/install/lib64:${{ github.workspace }}/build/lib
 
     steps:
       - name: Checkout repository and submodules
@@ -79,9 +83,10 @@ jobs:
           configure-options: >-
             -DENABLE_TEST=ON
             -DWITH_STORMBYTE=BUNDLED
+            -DBUILD_SHARED_LIBS=ON
             ${{ matrix.compiler == 'clang-libc++' && '-DCMAKE_CXX_FLAGS=-stdlib=libc++' || '' }}
           run-tests: true
-          ctest-options: --output-on-failure --test-dir ${{ github.workspace }}/build/test
+          ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
 
   ###########################################################################
   # macOS
@@ -95,7 +100,7 @@ jobs:
         compiler: [gcc, clang]
     name: macos-${{ matrix.compiler }}
     env:
-      DYLD_LIBRARY_PATH: ${{ github.workspace }}/build/thirdparty/buildmaster/install/lib:${{ github.workspace }}/build/lib
+      DYLD_LIBRARY_PATH: ${{ github.workspace }}/build/buildmaster/install/lib64:${{ github.workspace }}/build/lib
 
     steps:
       - name: Checkout repository and submodules
@@ -113,8 +118,9 @@ jobs:
           configure-options: >-
             -DENABLE_TEST=ON
             -DWITH_STORMBYTE=BUNDLED
+            -DBUILD_SHARED_LIBS=ON
           run-tests: true
-          ctest-options: --output-on-failure --test-dir ${{ github.workspace }}/build/test
+          ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
 
   ###########################################################################
   # Windows
@@ -123,6 +129,10 @@ jobs:
     needs: [checkout-bootstrap]
     runs-on: windows-latest
     name: windows-clang-cl
+    env:
+      GIT_CONFIG_COUNT: 1
+      GIT_CONFIG_KEY_0: core.longpaths
+      GIT_CONFIG_VALUE_0: "true"
 
     steps:
       - name: Checkout repository and submodules
@@ -135,7 +145,7 @@ jobs:
         shell: pwsh
         run: |
           echo "${{ github.workspace }}\build\lib" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "${{ github.workspace }}\build\thirdparty\buildmaster\install\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "${{ github.workspace }}\build\buildmaster\install\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
@@ -146,8 +156,9 @@ jobs:
           configure-options: >-
             -DENABLE_TEST=ON
             -DWITH_STORMBYTE=BUNDLED
+            -DBUILD_SHARED_LIBS=ON
           run-tests: true
-          ctest-options: --output-on-failure --test-dir ${{ github.workspace }}/build/test
+          ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
 
   ###########################################################################
   # Docs (StormByteNetworkDoc)
@@ -161,4 +172,5 @@ jobs:
       extra-cmake-options: >-
         -DENABLE_DOC=ON
         -DWITH_STORMBYTE=BUNDLED
+        -DBUILD_SHARED_LIBS=ON
       docs_output_dir: ./_site

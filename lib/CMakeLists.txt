@@ -1,11 +1,29 @@
 include(GNUInstallDirs)
 
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 file(GLOB_RECURSE STORMBYTE_NETWORK_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/*.cxx")
 
-add_library(StormByte-Network SHARED ${STORMBYTE_NETWORK_SOURCES})
-add_library(StormByte::Network ALIAS StormByte-Network)
+if(BUILD_SHARED_LIBS)
+	set(_mode shared)
+else()
+	set(_mode static)
+endif()
+
+buildmaster_component(
+	StormByte-Network
+	"StormByte Suite - Network"
+	"${STORMBYTE_NETWORK_SOURCES}"
+	""
+	${_mode}
+	"StormByte-Network"
+	"BACKEND=host;ALIAS=StormByte::Network"
+)
+
+if(BUILD_SHARED_LIBS)
+	target_compile_definitions(StormByte-Network
+		PRIVATE StormByte_Network_EXPORTS
+		PUBLIC STORMBYTE_NETWORK_SHARED
+	)
+endif()
 
 set_target_properties(StormByte-Network PROPERTIES
 	LINKER_LANGUAGE CXX

@@ -3,9 +3,28 @@
  *
  * This file is part of StormByte-Network.
  *
- * StormByte-Network is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License version 3
- * or later, as published by the Free Software Foundation.
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
  *
  * StormByte-Network is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,8 +32,10 @@
  * GNU Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with StormByte-Network. If not, see
+ * version 3 along with StormByte-Network. If not, see
  * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
 #include <StormByte/network/connection/handler.hxx>
@@ -24,7 +45,8 @@
 #else
 #include <winsock2.h>
 #endif
-#include <StormByte/string.hxx>
+#include <StormByte/string/string.hxx>
+#include <StormByte/string/wstring.hxx>
 using namespace StormByte::Network::Connection;
 Handler::Handler() noexcept {
 	#ifdef WINDOWS
@@ -55,7 +77,9 @@ std::string Handler::LastError() const noexcept {
 				nullptr, WSAGetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
 				reinterpret_cast<LPWSTR>(&errorMsg), 0, nullptr);
 	if (res != 0 && errorMsg != nullptr) {
-		error_string = StormByte::String::UTF8Encode(std::wstring(errorMsg));
+		const StormByte::String::WString wide_message{std::wstring_view{errorMsg}};
+		const StormByte::String::String utf8_message{wide_message};
+		error_string.assign(static_cast<std::string_view>(utf8_message));
 		LocalFree(errorMsg);
 	} else {
 		// No message available; leave empty so callers can decide how to present it

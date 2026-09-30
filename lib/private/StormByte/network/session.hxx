@@ -2,6 +2,40 @@
  * Copyright (C) 2024-2026 David C. Manuelda (StormBytePP)
  *
  * This file is part of StormByte-Network.
+ *
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
+ *
+ * StormByte-Network is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * version 3 along with StormByte-Network. If not, see
+ * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
 #pragma once
@@ -72,7 +106,7 @@ namespace StormByte::Network::Detail {
 			 * @return Complete frames, or connection error.
 			 */
 			StormByte::Expected<FrameList, ConnectionError> ReadReady(
-				Buffer::Pipeline& in_pipeline, std::shared_ptr<Logger::Log> logger) noexcept;
+				Buffer::Pipeline& in_pipeline, StormByte::Shared<Logger::Log> logger) noexcept;
 
 			/** @brief Close the session. */
 			void Close() noexcept;
@@ -86,7 +120,7 @@ namespace StormByte::Network::Detail {
 			 * @param logger Diagnostic logger.
 			 * @return false when the per-session cap is exceeded.
 			 */
-			bool QueueResponse(const PacketPointer& packet, std::shared_ptr<Logger::Log> logger) noexcept;
+			bool QueueResponse(const PacketPointer& packet, StormByte::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Attempt one non-blocking output write.
@@ -96,15 +130,15 @@ namespace StormByte::Network::Detail {
 
 		private:
 			enum class ParsePhase: unsigned short { Header, Payload }; ///< Parser phase.
-			static constexpr std::size_t FRAME_HEADER_SIZE =
-				sizeof(Transport::Packet::OpcodeType) + sizeof(std::size_t); ///< Wire header size.
+			static constexpr StormByte::ByteSize FRAME_HEADER_SIZE =
+				StormByte::ByteSize{sizeof(Transport::Packet::OpcodeType) + sizeof(std::size_t)}; ///< Wire header size.
 
 			std::string m_uuid; ///< Client UUID.
 			std::shared_ptr<Connection::Client> m_client; ///< Client connection.
-			Buffer::DataType m_input; ///< Unparsed bytes.
-			Buffer::DataType m_payload; ///< Partial payload.
+			StormByte::BinaryData m_input; ///< Unparsed bytes.
+			StormByte::BinaryData m_payload; ///< Partial payload.
 			Transport::Packet::OpcodeType m_opcode = 0; ///< Current opcode.
-			std::size_t m_bytes_needed = FRAME_HEADER_SIZE; ///< Remaining bytes.
+			StormByte::ByteSize m_bytes_needed = FRAME_HEADER_SIZE; ///< Remaining bytes.
 			ParsePhase m_phase = ParsePhase::Header; ///< Current parser phase.
 			bool m_closed = false; ///< Terminal state.
 			bool m_in_flight = false; ///< Request executing in pool.
@@ -112,16 +146,16 @@ namespace StormByte::Network::Detail {
 			FrameList m_ready_frames; ///< Parsed frames waiting for submission.
 			struct OutputStream {
 				Buffer::Consumer source; ///< Pipeline output source.
-				Buffer::DataType data; ///< Currently buffered chunk.
-				std::size_t offset = 0; ///< Bytes already written from chunk.
+				StormByte::BinaryData data; ///< Currently buffered chunk.
+				StormByte::ByteSize offset{0}; ///< Bytes already written from chunk.
 
 				explicit OutputStream(Buffer::Consumer&& consumer) noexcept:
 					source(std::move(consumer)) {}
 			};
 			std::deque<OutputStream> m_output_frames; ///< Serialized output streams.
-			std::size_t m_output_bytes = 0; ///< Queued output bytes.
+			StormByte::ByteSize m_output_bytes{0}; ///< Queued output bytes.
 			std::size_t m_output_frame_count = 0; ///< Logical response count.
-			static constexpr std::size_t MAX_OUTPUT_BYTES = 1024 * 1024; ///< Per-session byte cap.
+			static constexpr StormByte::ByteSize MAX_OUTPUT_BYTES{1024 * 1024}; ///< Per-session byte cap.
 			static constexpr std::size_t MAX_OUTPUT_FRAMES = 8; ///< Per-session frame cap.
 
 			/** @brief Fill the front stream from its pipeline without blocking. */
@@ -135,7 +169,7 @@ namespace StormByte::Network::Detail {
 			 * @return Complete frames or connection error.
 			 */
 			StormByte::Expected<FrameList, ConnectionError> AppendReceived(
-				Buffer::DataType&& received, Buffer::Pipeline& in_pipeline,
-				std::shared_ptr<Logger::Log> logger) noexcept;
+				StormByte::BinaryData&& received, Buffer::Pipeline& in_pipeline,
+				StormByte::Shared<Logger::Log> logger) noexcept;
 	};
 }

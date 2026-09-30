@@ -3,9 +3,28 @@
  *
  * This file is part of StormByte-Network.
  *
- * StormByte-Network is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License version 3
- * or later, as published by the Free Software Foundation.
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
  *
  * StormByte-Network is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -13,8 +32,10 @@
  * GNU Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with StormByte-Network. If not, see
+ * version 3 along with StormByte-Network. If not, see
  * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
 #include <StormByte/network/connection/client.hxx>
@@ -31,7 +52,7 @@
 #endif
 #include <algorithm>
 using namespace StormByte::Network;
-Server::Server(const DeserializePacketFunction& deserialize_packet_function, std::shared_ptr<Logger::Log> logger) noexcept:
+Server::Server(const DeserializePacketFunction& deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept:
 	Endpoint(deserialize_packet_function, logger),
 	m_socket_server(nullptr),
 	m_status(Connection::Status::Disconnected),
@@ -91,7 +112,7 @@ Server& Server::operator=(Server&& other) noexcept {
 	return *this;
 }
 
-bool Server::Connect(const Connection::Protocol& protocol, const std::string& address, const unsigned short& port) {
+bool Server::Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) {
 	if (m_socket_server) {
 		m_logger << Logger::Level::Error << "Server is already running." << std::endl;
 		return false;
@@ -100,7 +121,7 @@ bool Server::Connect(const Connection::Protocol& protocol, const std::string& ad
 	try {
 		m_socket_server = std::make_unique<Socket::Server>(protocol, m_logger);
 		if (!m_socket_server->Listen(address, port)) {
-			m_logger << Logger::Level::Error << "Failed to listen on " << address << ":" << port
+			m_logger << Logger::Level::Error << "Failed to listen on " << std::string_view{address} << ":" << port
 					<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
 			m_socket_server.reset();
 			return false;
@@ -116,7 +137,7 @@ bool Server::Connect(const Connection::Protocol& protocol, const std::string& ad
 		std::size_t worker_count = std::thread::hardware_concurrency();
 		worker_count = worker_count == 0 ? 4 : std::min(worker_count, static_cast<std::size_t>(8));
 		m_pool = std::make_unique<Detail::WorkerPool>(worker_count, 64,
-			[this](const std::string& uuid, PacketPointer packet) {
+			[this](std::string_view uuid, PacketPointer packet) {
 				return ProcessClientPacket(uuid, std::move(packet));
 			},
 			[this](Detail::WorkerPool::Completion completion) {
@@ -131,7 +152,7 @@ bool Server::Connect(const Connection::Protocol& protocol, const std::string& ad
 			});
 		m_status.store(Connection::Status::Connected);
 		m_accept_thread = std::thread(&Server::AcceptClients, this);
-		m_logger << Logger::Level::LowLevel << "Server is listening on " << address << ":" << port
+		m_logger << Logger::Level::LowLevel << "Server is listening on " << std::string_view{address} << ":" << port
 				<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
 		return true;
 	} catch (const std::bad_alloc& bd) {
@@ -251,17 +272,17 @@ void Server::CloseWakeup() noexcept {
 #endif
 }
 
-void Server::DisconnectClient(const std::string& uuid) noexcept {
+void Server::DisconnectClient(std::string_view uuid) noexcept {
 	if (m_accept_thread.get_id() != std::this_thread::get_id()) {
-		PostCommand({ CommandType::DisconnectClient, uuid });
+		PostCommand({ CommandType::DisconnectClient, std::string{uuid} });
 		return;
 	}
 
 	DisconnectClientOnLoop(uuid);
 }
 
-void Server::DisconnectClientOnLoop(const std::string& uuid) noexcept {
-	auto session_it = m_sessions.find(uuid);
+void Server::DisconnectClientOnLoop(std::string_view uuid) noexcept {
+	auto session_it = m_sessions.find(std::string{uuid});
 	if (session_it == m_sessions.end()) {
 		return;
 	}
@@ -271,7 +292,7 @@ void Server::DisconnectClientOnLoop(const std::string& uuid) noexcept {
 	session->Close();
 	if (session->Client() && session->Client()->Socket()) {
 		session->Client()->Socket()->Disconnect();
-		m_logger << Logger::Level::LowLevel << "Disconnected client: " << uuid << std::endl;
+				m_logger << Logger::Level::LowLevel << "Disconnected client: " << uuid << std::endl;
 	}
 }
 
@@ -294,7 +315,7 @@ void Server::AcceptOneClient() noexcept {
 	const std::string client_uuid = expected_client.value()->UUID();
 	auto connection = CreateConnection(expected_client.value());
 	m_sessions.emplace(client_uuid, std::make_shared<Detail::Session>(client_uuid, std::move(connection)));
-	m_logger << Logger::Level::LowLevel << "AcceptClients: accepted client uuid=" << client_uuid << std::endl;
+	m_logger << Logger::Level::LowLevel << "AcceptClients: accepted client uuid=" << std::string_view{client_uuid} << std::endl;
 }
 
 void Server::PostCompletion(Completion completion) noexcept {

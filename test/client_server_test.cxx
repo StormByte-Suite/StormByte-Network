@@ -1,28 +1,49 @@
 /*
-* Copyright (C) 2024-2026 David C. Manuelda (StormBytePP)
-*
-* This file is part of StormByte-Network.
-*
-* StormByte-Network is free software: you can redistribute it and/or modify
-* it under the terms of the GNU Lesser General Public License version 3
-* or later, as published by the Free Software Foundation.
-*
-* StormByte-Network is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU Lesser General Public License for more details.
-*
-* You should have received a copy of the GNU Lesser General Public License
-* along with StormByte-Network. If not, see
-* <https://www.gnu.org/licenses/lgpl-3.0.html>.
-*/
+ * Copyright (C) 2024-2026 David C. Manuelda (StormBytePP)
+ *
+ * This file is part of StormByte-Network.
+ *
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
+ *
+ * StormByte-Network is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * version 3 along with StormByte-Network. If not, see
+ * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
+ */
 
 #include <StormByte/network/client.hxx>
 #include <StormByte/network/server.hxx>
 #include <StormByte/serializable.hxx>
 #include <StormByte/logger/threaded_log.hxx>
 #include <StormByte/test_handlers.h>
-#include <StormByte/system.hxx>
+#include <StormByte/system/this_thread.hxx>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -49,17 +70,14 @@ template<typename T>
 using Serializable = SB::Serializable<T>;
 template<typename T>
 using NetExpected = SB::Expected<T, Net::Exception>;
-using Buf::DataType;
 using Buf::Consumer;
 using Buf::Producer;
-using Buf::ExternalReader;
-using Buf::ExternalWriter;
 using Buf::ExecutionMode;
 using SBLog::ThreadedLog;
 using Buf::Pipeline;
 using namespace StormByte::Logger;
 using namespace StormByte::Network;
-std::shared_ptr<Log> logger = std::make_shared<ThreadedLog>(std::cout, Level::Info, "[%L] [T%i] %T:");
+StormByte::Shared<Log> logger = StormByte::Heap::MakeShared<ThreadedLog>(std::cout, Level::Info, "[%L] [T%i] %T:");
 constexpr const unsigned short timeout = 5; // 5 seconds
 constexpr const std::size_t large_data_size = 20 * 1024 * 1024; // 20 MB
 constexpr const char large_data_repeat_char = 'x';
@@ -173,7 +191,7 @@ namespace Test {
 			public:
 				AskNameList(const std::size_t& amount): Generic(Opcode::C_MSG_ASKNAMELIST), m_amount(amount) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return Serializable<std::size_t>(m_amount).Serialize();
 				}
 
@@ -188,7 +206,7 @@ namespace Test {
 			public:
 				AnswerNameList(const std::vector<std::string>& names): Generic(Opcode::S_MSG_RESPONDNAMELIST), m_names(names) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return Serializable<std::vector<std::string>>(m_names).Serialize();
 				}
 
@@ -203,7 +221,7 @@ namespace Test {
 			public:
 				AskRandomNumber(): Generic(Opcode::C_MSG_ASKRANDOMNUMBER) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return {};
 				}
 		};
@@ -211,7 +229,7 @@ namespace Test {
 			public:
 				AnswerRandomNumber(const int& number): Generic(Opcode::S_MSG_RESPONDRANDOMNUMBER), m_number(number) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return Serializable<int>(m_number).Serialize();
 				}
 
@@ -228,7 +246,7 @@ namespace Test {
 					: Generic(Opcode::C_MSG_SENDLARGEDATA),
 					m_data(std::move(data)) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return Serializable<std::string>(m_data).Serialize();
 				}
 
@@ -251,7 +269,7 @@ namespace Test {
 					: Generic(Opcode::S_MSG_REPLYLARGEDATAECHOED),
 					m_data(std::move(data)) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return Serializable<std::string>(m_data).Serialize();
 				}
 
@@ -270,7 +288,7 @@ namespace Test {
 			public:
 				Ping(): Generic(Opcode::C_MSG_PING) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return {};
 				}
 		};
@@ -278,7 +296,7 @@ namespace Test {
 			public:
 				Pong(): Generic(Opcode::S_MSG_PONG) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return {};
 				}
 		};
@@ -286,32 +304,32 @@ namespace Test {
 			public:
 				DisconnectRequest(): Generic(Opcode::C_MSG_DISCONNECT) {}
 
-				DataType DoSerialize() const noexcept override { return {}; }
+				StormByte::BinaryData DoSerialize() const noexcept override { return {}; }
 		};
 		class SlowRequest: public Generic {
 			public:
 				SlowRequest(): Generic(Opcode::C_MSG_SLOW) {}
 
-				DataType DoSerialize() const noexcept override { return {}; }
+				StormByte::BinaryData DoSerialize() const noexcept override { return {}; }
 		};
 		class SlowReply: public Generic {
 			public:
 				SlowReply(): Generic(Opcode::S_MSG_SLOW) {}
 
-				DataType DoSerialize() const noexcept override { return {}; }
+				StormByte::BinaryData DoSerialize() const noexcept override { return {}; }
 		};
 		class StopServerRequest: public Generic {
 			public:
 				StopServerRequest(): Generic(Opcode::C_MSG_STOPSERVER) {}
 
-				DataType DoSerialize() const noexcept override { return {}; }
+				StormByte::BinaryData DoSerialize() const noexcept override { return {}; }
 		};
 		class EchoText: public Generic {
 			public:
 				explicit EchoText(std::string text) noexcept:
 					Generic(Opcode::C_MSG_ECHOTEXT), m_text(std::move(text)) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return Serializable<std::string>(m_text).Serialize();
 				}
 
@@ -327,7 +345,7 @@ namespace Test {
 				explicit ReplyText(std::string text) noexcept:
 					Generic(Opcode::S_MSG_REPLYTEXT), m_text(std::move(text)) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return Serializable<std::string>(m_text).Serialize();
 				}
 
@@ -343,7 +361,7 @@ namespace Test {
 				explicit SumNumbers(std::vector<int> numbers) noexcept:
 					Generic(Opcode::C_MSG_SUMNUMBERS), m_numbers(std::move(numbers)) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return Serializable<std::vector<int>>(m_numbers).Serialize();
 				}
 
@@ -359,7 +377,7 @@ namespace Test {
 				explicit ReplySum(const int& sum) noexcept:
 					Generic(Opcode::S_MSG_REPLYSUM), m_sum(sum) {}
 
-				DataType DoSerialize() const noexcept override {
+				StormByte::BinaryData DoSerialize() const noexcept override {
 					return Serializable<int>(m_sum).Serialize();
 				}
 
@@ -373,9 +391,9 @@ namespace Test {
 	}
 
 	DeserializePacketFunction DeserializeFunction() {
-		return [](Transport::Packet::OpcodeType opcode, Consumer consumer, std::shared_ptr<Log> logger) -> PacketPointer {
+		return [](Transport::Packet::OpcodeType opcode, Consumer consumer, StormByte::Shared<Log> logger) -> PacketPointer {
 			(void)logger;
-			DataType data;
+			StormByte::BinaryData data;
 			consumer.ExtractUntilEoF(data);
 			switch(static_cast<Packet::Opcode>(opcode)) {
 				case Packet::Opcode::C_MSG_ASKNAMELIST: {
@@ -486,31 +504,28 @@ namespace Test {
 	using ExpectedRandomNumber = NetExpected<int>;
 	using ExpectedLargeData = NetExpected<std::string>;
 
-	/**
-	 * @brief XOR transform stage compatible with the new Pipeline PipeFunction signature.
-	 *
-	 * Uses ExternalReader / ExternalWriter (not Consumer / Producer directly).
-	 * Chunked Extract so intermediate LockFreeRings can stream under Async / Parallel Process.
-	 */
-	Buf::Pipeline::PipeFunction CreateXorPipe() noexcept {
-		return [](ExternalReader& in, ExternalWriter& out, std::shared_ptr<Log> log) {
+	/** @brief XOR transform stage for framed test payloads. */
+	class XorPipe final: public Buf::Pipe {
+		public:
+			void Run(Buf::ReadOnly& in, Buf::WriteOnly& out,
+				const StormByte::Shared<Log>& log) override {
 			log << Level::Debug << "XOR Pipe: Starting..." << std::endl;
-			constexpr std::size_t max_chunk = 10 * 1024 * 1024;
+			constexpr StormByte::ByteSize max_chunk{10 * 1024 * 1024};
 
 			while (!in.EoF()) {
-				DataType data;
+				StormByte::BinaryData data;
 
 				// Blocks until ≥1 byte or EoF/error (no yield spin)
-				if (!in.Extract(1, data) || data.empty()) {
+				if (!in.Extract(StormByte::ByteSize{1}, data) || data.empty()) {
 					if (in.EoF())
 						break;
 					continue;
 				}
 
 				// Non-blocking grab of the rest of the current burst (capped)
-				const std::size_t extra = std::min(in.AvailableBytes(), max_chunk - data.size());
-				if (extra > 0) {
-					DataType more;
+				const StormByte::ByteSize extra = std::min(in.Available(), max_chunk - data.size());
+				if (extra > StormByte::ByteSize{0}) {
+					StormByte::BinaryData more;
 					if (in.Extract(extra, more) && !more.empty()) {
 						data.insert(data.end(),
 							std::make_move_iterator(more.begin()),
@@ -530,25 +545,33 @@ namespace Test {
 
 			out.Close();
 			log << Level::Debug << "XOR Pipe: Finished." << std::endl;
-		};
-	}
+			}
+
+			PointerType Clone() const noexcept override {
+				return MakePointer<XorPipe>();
+			}
+
+			PointerType Move() noexcept override {
+				return MakePointer<XorPipe>();
+			}
+	};
 
 	class Client: public Net::Client {
 		public:
-			Client(std::shared_ptr<Log> logger) noexcept:
+			Client(StormByte::Shared<Log> logger) noexcept:
 			Net::Client(DeserializeFunction(), logger) {}
 
 			~Client() noexcept = default;
 
 			Pipeline InputPipeline() const noexcept override {
 				Pipeline pipeline;
-				pipeline.AddPipe(CreateXorPipe());
+				pipeline.Add(XorPipe{});
 				return pipeline;
 			}
 
 			Pipeline OutputPipeline() const noexcept override {
 				Pipeline pipeline;
-				pipeline.AddPipe(CreateXorPipe());
+				pipeline.Add(XorPipe{});
 				return pipeline;
 			}
 
@@ -657,25 +680,25 @@ namespace Test {
 
 	class Server: public Net::Server {
 		public:
-			Server(std::shared_ptr<Log> logger) noexcept:
+			Server(StormByte::Shared<Log> logger) noexcept:
 			Net::Server(DeserializeFunction(), logger) {}
 
 			~Server() noexcept = default;
 
 			Pipeline InputPipeline() const noexcept override {
 				Pipeline pipeline;
-				pipeline.AddPipe(CreateXorPipe());
+				pipeline.Add(XorPipe{});
 				return pipeline;
 			}
 
 			Pipeline OutputPipeline() const noexcept override {
 				Pipeline pipeline;
-				pipeline.AddPipe(CreateXorPipe());
+				pipeline.Add(XorPipe{});
 				return pipeline;
 			}
 
 		private:
-			PacketPointer ProcessClientPacket(const std::string& client_uuid, PacketPointer packet) noexcept override {
+			PacketPointer ProcessClientPacket(std::string_view client_uuid, PacketPointer packet) noexcept override {
 				(void)client_uuid;
 				switch(static_cast<Packet::Opcode>(packet->Opcode())) {
 					case Packet::Opcode::C_MSG_ASKNAMELIST: {
@@ -760,7 +783,7 @@ namespace Test {
 }
 
 int TestRequestNameList() {
-	const std::string fn_name = "TestRequestNameList";
+	constexpr std::string_view fn_name = "TestRequestNameList";
 
 	Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
@@ -791,7 +814,7 @@ int TestRequestNameList() {
 		ASSERT_TRUE(fn_name, names[i] == ("Name_" + std::to_string(i + 1)));
 	}
 
-	logger << Level::Info << fn_name << ": Received names: " << all_names << std::endl;
+	logger << Level::Info << fn_name << ": Received names: " << std::string_view{all_names} << std::endl;
 
 	client.Disconnect();
 	server.Disconnect();
@@ -799,7 +822,7 @@ int TestRequestNameList() {
 }
 
 int TestRequestRandomNumber() {
-	const std::string fn_name = "TestRequestRandomNumber";
+	constexpr std::string_view fn_name = "TestRequestRandomNumber";
 
 	Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
@@ -830,7 +853,7 @@ int TestRequestRandomNumber() {
 }
 
 int TestRequestLargeDataEchoed() {
-	const std::string fn_name = "TestRequestLargeDataEchoed";
+	constexpr std::string_view fn_name = "TestRequestLargeDataEchoed";
 
 	Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
@@ -865,7 +888,7 @@ int TestRequestLargeDataEchoed() {
 }
 
 int TestRequestAdditionalCommands() {
-	const std::string fn_name = "TestRequestAdditionalCommands";
+	constexpr std::string_view fn_name = "TestRequestAdditionalCommands";
 
 	Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
@@ -899,7 +922,7 @@ int TestRequestAdditionalCommands() {
 }
 
 int TestClientDisconnectKeepsServerAlive() {
-	const std::string fn_name = "TestClientDisconnectKeepsServerAlive";
+	constexpr std::string_view fn_name = "TestClientDisconnectKeepsServerAlive";
 
 	Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
@@ -934,7 +957,7 @@ int TestClientDisconnectKeepsServerAlive() {
 }
 
 int TestDisconnectRequestedByHandler() {
-	const std::string fn_name = "TestDisconnectRequestedByHandler";
+	constexpr std::string_view fn_name = "TestDisconnectRequestedByHandler";
 	Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
@@ -961,7 +984,7 @@ int TestDisconnectRequestedByHandler() {
 }
 
 int TestSlowHandlerDoesNotBlockOtherClients() {
-	const std::string fn_name = "TestSlowHandlerDoesNotBlockOtherClients";
+	constexpr std::string_view fn_name = "TestSlowHandlerDoesNotBlockOtherClients";
 	Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
@@ -992,7 +1015,7 @@ int TestSlowHandlerDoesNotBlockOtherClients() {
 }
 
 int TestStopRequestedByHandler() {
-	const std::string fn_name = "TestStopRequestedByHandler";
+	constexpr std::string_view fn_name = "TestStopRequestedByHandler";
 	Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
@@ -1012,7 +1035,7 @@ int TestStopRequestedByHandler() {
 }
 
 int TestShutdownWithPendingTask() {
-	const std::string fn_name = "TestShutdownWithPendingTask";
+	constexpr std::string_view fn_name = "TestShutdownWithPendingTask";
 	Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
@@ -1036,7 +1059,7 @@ int TestShutdownWithPendingTask() {
 }
 
 int TestDisconnectDuringSlowHandler() {
-	const std::string fn_name = "TestDisconnectDuringSlowHandler";
+	constexpr std::string_view fn_name = "TestDisconnectDuringSlowHandler";
 	Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
@@ -1063,7 +1086,7 @@ int TestDisconnectDuringSlowHandler() {
 }
 
 int TestFragmentedAndBatchedFrames() {
-	const std::string fn_name = "TestFragmentedAndBatchedFrames";
+	constexpr std::string_view fn_name = "TestFragmentedAndBatchedFrames";
 	constexpr std::size_t frame_header_size = sizeof(Transport::Packet::OpcodeType) + sizeof(std::size_t);
 
 	Test::Server server(logger);
@@ -1080,24 +1103,25 @@ int TestFragmentedAndBatchedFrames() {
 		RETURN_TEST(fn_name, 1);
 	}
 
-	auto make_wire_frame = [](const Test::Packet::Opcode opcode, const DataType& payload) {
-		DataType frame = Serializable<Transport::Packet::OpcodeType>(
+	auto make_wire_frame = [](const Test::Packet::Opcode opcode, const StormByte::BinaryData& payload) {
+		StormByte::BinaryData frame = Serializable<Transport::Packet::OpcodeType>(
 			static_cast<Transport::Packet::OpcodeType>(opcode)).Serialize();
-		const DataType payload_size = Serializable<std::size_t>(payload.size()).Serialize();
+		const StormByte::BinaryData payload_size = Serializable<std::size_t>(payload.size()).Serialize();
 		frame.insert(frame.end(), payload_size.begin(), payload_size.end());
 		frame.insert(frame.end(), payload.begin(), payload.end());
 		return frame;
 	};
 
 	auto receive_frame = [&](const Test::Packet::Opcode expected_opcode, const std::string* expected_text = nullptr) -> bool {
-		DataType header(frame_header_size);
+		StormByte::BinaryData header(frame_header_size);
 		if (!ReceiveRawBytes(socket_handle, std::span<std::byte>(header.data(), header.size()))) {
 			return false;
 		}
 
 		auto opcode = Serializable<Transport::Packet::OpcodeType>::Deserialize(header);
-		auto payload_size = Serializable<std::size_t>::Deserialize(
-			DataType(header.begin() + sizeof(Transport::Packet::OpcodeType), header.end()));
+		auto payload_size = Serializable<std::size_t>::Deserialize(std::span<const std::byte>{
+			header.data() + sizeof(Transport::Packet::OpcodeType),
+			header.size() - sizeof(Transport::Packet::OpcodeType)});
 		if (!opcode || !payload_size || *opcode != static_cast<Transport::Packet::OpcodeType>(expected_opcode)) {
 			return false;
 		}
@@ -1110,7 +1134,7 @@ int TestFragmentedAndBatchedFrames() {
 			return false;
 		}
 
-		DataType payload(*payload_size);
+		StormByte::BinaryData payload(*payload_size);
 		if (!ReceiveRawBytes(socket_handle, std::span<std::byte>(payload.data(), payload.size()))) {
 			return false;
 		}
@@ -1123,24 +1147,24 @@ int TestFragmentedAndBatchedFrames() {
 		return text && *text == *expected_text;
 	};
 
-	const DataType ping_data = make_wire_frame(Test::Packet::Opcode::C_MSG_PING, {});
+	const StormByte::BinaryData ping_data = make_wire_frame(Test::Packet::Opcode::C_MSG_PING, {});
 	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(ping_data.data(), 1)));
 	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(ping_data.data() + 1, ping_data.size() - 1)));
 	ASSERT_TRUE(fn_name, receive_frame(Test::Packet::Opcode::S_MSG_PONG));
 
 	const std::string text = "fragmented payload";
-	DataType text_payload = Serializable<std::string>(text).Serialize();
+	StormByte::BinaryData text_payload = Serializable<std::string>(text).Serialize();
 	for (auto& byte: text_payload) {
 		byte ^= std::byte{0xAB};
 	}
 
-	const DataType text_data = make_wire_frame(Test::Packet::Opcode::C_MSG_ECHOTEXT, text_payload);
+	const StormByte::BinaryData text_data = make_wire_frame(Test::Packet::Opcode::C_MSG_ECHOTEXT, text_payload);
 	const std::size_t split = frame_header_size + 2;
 	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(text_data.data(), split)));
 	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(text_data.data() + split, text_data.size() - split)));
 	ASSERT_TRUE(fn_name, receive_frame(Test::Packet::Opcode::S_MSG_REPLYTEXT, &text));
 
-	DataType batched;
+	StormByte::BinaryData batched;
 	batched.insert(batched.end(), ping_data.begin(), ping_data.end());
 	batched.insert(batched.end(), ping_data.begin(), ping_data.end());
 	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(batched.data(), batched.size())));

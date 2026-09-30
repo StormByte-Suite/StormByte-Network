@@ -3,9 +3,39 @@
  *
  * This file is part of StormByte-Network.
  *
- * StormByte-Network is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License version 3
- * or later, as published by the Free Software Foundation.
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
+ *
+ * StormByte-Network is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * version 3 along with StormByte-Network. If not, see
+ * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
 #pragma once
@@ -45,7 +75,7 @@ namespace StormByte::Network::Detail {
 			 */
 			EventLoop(Socket::Server& listener, Connection::HandlerType wakeup_read,
 				const std::atomic<Connection::Status>& status,
-				std::shared_ptr<Logger::Log> logger) noexcept;
+				StormByte::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Run until the server stops or the wakeup is signalled.
@@ -60,7 +90,7 @@ namespace StormByte::Network::Detail {
 			Socket::Server& m_listener; ///< Listening socket.
 			Connection::HandlerType m_wakeup_read; ///< Wakeup read handle.
 			const std::atomic<Connection::Status>& m_status; ///< Server status.
-			std::shared_ptr<Logger::Log> m_logger; ///< Diagnostic logger.
+			StormByte::Shared<Logger::Log> m_logger; ///< Diagnostic logger.
 
 			enum class EventKind: unsigned short { Timeout, Listener, Session, Wakeup }; ///< Wait event kind.
 			struct Event { EventKind kind; std::shared_ptr<Session> session; bool readable = false; bool writable = false; }; ///< Wait event.
