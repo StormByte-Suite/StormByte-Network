@@ -2,5 +2,5 @@
 	path = thirdparty/StormByte/buffer/src
 	url = https://github.com/StormBytePP/StormByte-Buffer.git
 [submodule "BuildMaster"]
-	path = thirdparty/buildmaster
+	path = buildmaster
 	url = https://github.com/StormBytePP/StormByte-BuildMaster.git
