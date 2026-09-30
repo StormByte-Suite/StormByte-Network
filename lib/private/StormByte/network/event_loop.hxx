@@ -51,6 +51,10 @@
 #include <vector>
 
 namespace StormByte::Network::Detail {
+	namespace RemoteFile {
+		class Host;
+	}
+
 	/**
 	 * @class EventLoop
 	 * @brief Private listener and wakeup event loop.
@@ -64,6 +68,9 @@ namespace StormByte::Network::Detail {
 			using SessionList = std::vector<std::shared_ptr<Session>>; ///< Session snapshot.
 			using SessionSnapshot = std::function<SessionList()>; ///< Session snapshot callback.
 			using SessionCallback = std::function<void(const std::shared_ptr<Session>&, bool, bool)>; ///< Session-ready callback.
+			using PlaneList = std::vector<std::shared_ptr<RemoteFile::Host>>; ///< Peer data-plane snapshot.
+			using PlaneSnapshot = std::function<PlaneList()>; ///< Peer data-plane snapshot callback.
+			using PlaneCallback = std::function<void(const std::shared_ptr<RemoteFile::Host>&, bool, bool)>; ///< Plane-ready callback.
 			using WakeupCallback = std::function<void()>; ///< Wakeup callback.
 
 			/**
@@ -87,6 +94,8 @@ namespace StormByte::Network::Detail {
 			void Run(const ListenerCallback& on_listener_ready,
 				const SessionSnapshot& snapshot,
 				const SessionCallback& on_session_ready,
+				const PlaneSnapshot& plane_snapshot,
+				const PlaneCallback& on_plane_ready,
 				const WakeupCallback& on_wakeup) noexcept;
 
 		private:
@@ -95,14 +104,20 @@ namespace StormByte::Network::Detail {
 			const std::atomic<Connection::Status>& m_status; ///< Server status.
 			StormByte::Shared<Logger::Log> m_logger; ///< Diagnostic logger.
 
-			enum class EventKind: unsigned short { Timeout, Listener, Session, Wakeup }; ///< Wait event kind.
-			struct Event { EventKind kind; std::shared_ptr<Session> session; bool readable = false; bool writable = false; }; ///< Wait event.
+			enum class EventKind: unsigned short { Timeout, Listener, Session, DataPlane, Wakeup }; ///< Wait event kind.
+			struct Event {
+				EventKind kind; ///< Event type.
+				std::shared_ptr<Session> session; ///< Application session, if this is Session.
+				bool readable = false; ///< Whether the handle can be read.
+				bool writable = false; ///< Whether the handle can be written.
+				std::shared_ptr<RemoteFile::Host> plane; ///< Peer data plane, if this is DataPlane.
+			}; ///< One ready event.
 
 			/**
 			 * @brief Wait for listener, wakeup, or a session descriptor.
 			 * @param sessions Current session snapshot.
 			 * @return Wait event.
 			 */
-			Expected<Event, ConnectionClosed> Wait(const SessionList& sessions) noexcept;
+			Expected<Event, ConnectionClosed> Wait(const SessionList& sessions, const PlaneList& planes) noexcept;
 	};
 }

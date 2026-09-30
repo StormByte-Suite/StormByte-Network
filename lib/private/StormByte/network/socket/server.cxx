@@ -120,9 +120,37 @@ ExpectedVoid Socket::Server::Listen(std::string_view hostname, const unsigned sh
 			Connection::Handler::Instance().LastErrorCode());
 	}
 
+	struct sockaddr_storage bound_address{};
+#ifdef WINDOWS
+	int bound_address_size = sizeof(bound_address);
+#else
+	socklen_t bound_address_size = sizeof(bound_address);
+#endif
+	if (::getsockname(m_handle, reinterpret_cast<struct sockaddr*>(&bound_address), &bound_address_size) == -1) {
+		m_status.store(Connection::Status::Disconnected, std::memory_order_release);
+		Disconnect();
+		return Unexpected<ConnectionError>("Failed to query bound socket port: {} (error code: {})",
+			Connection::Handler::Instance().LastError(),
+			Connection::Handler::Instance().LastErrorCode());
+	}
+
+	if (bound_address.ss_family == AF_INET) {
+		m_port = ntohs(reinterpret_cast<const struct sockaddr_in*>(&bound_address)->sin_port);
+	} else if (bound_address.ss_family == AF_INET6) {
+		m_port = ntohs(reinterpret_cast<const struct sockaddr_in6*>(&bound_address)->sin6_port);
+	} else {
+		m_status.store(Connection::Status::Disconnected, std::memory_order_release);
+		Disconnect();
+		return Unexpected<ConnectionError>("Listener bound to an unsupported address family");
+	}
+
 	InitializeAfterConnect();
-	m_logger << Logger::Level::LowLevel << "Server listening on " << hostname << ":" << port << std::endl;
+	m_logger << Logger::Level::LowLevel << "Server listening on " << hostname << ":" << m_port << std::endl;
 	return {};
+}
+
+unsigned short Socket::Server::Port() const noexcept {
+	return m_port;
 }
 
 ExpectedClient Socket::Server::Accept() noexcept {

@@ -96,6 +96,12 @@ namespace StormByte::Network::Socket {
 			ExpectedVoid Listen(std::string_view hostname, const unsigned short& port) noexcept;
 
 			/**
+			 * @brief Port assigned to the listener, including an ephemeral port.
+			 * @return Bound port, or 0 when not listening.
+			 */
+			unsigned short Port() const noexcept;
+
+			/**
 			 * @brief Accept one client.
 			 * @return Shared Client or error.
 			 */
@@ -114,5 +120,6 @@ namespace StormByte::Network::Socket {
 
 		private:
 			std::vector<std::shared_ptr<Client>> m_active_clients;	///< Accepted clients
+			unsigned short m_port = 0;	///< Bound listener port.
 	};
 }

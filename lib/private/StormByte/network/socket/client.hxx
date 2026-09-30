@@ -54,6 +54,10 @@ namespace StormByte::Network::Detail {
 	class Session;
 }
 
+namespace StormByte::Network::Detail::RemoteFile {
+	class Host;
+}
+
 namespace StormByte::Network::Socket {
 	/**
 	 * @class Client
@@ -167,6 +171,7 @@ namespace StormByte::Network::Socket {
 
 		private:
 			friend class StormByte::Network::Detail::Session;
+			friend class StormByte::Network::Detail::RemoteFile::Host;
 
 			/**
 			 * @brief Attempt one non-blocking write without waiting.

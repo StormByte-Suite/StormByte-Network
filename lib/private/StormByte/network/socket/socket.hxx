@@ -130,6 +130,12 @@ namespace StormByte::Network::Socket {
 				return m_UUID;
 			}
 
+				/**
+				 * @brief Numeric local address selected by the connected socket.
+				 * @return Local IPv4/IPv6 address, or empty when unavailable.
+				 */
+				std::string LocalAddress() const noexcept;
+
 			/**
 			 * @brief Wait for readable data (or peer close / timeout).
 			 * @param usecs Timeout in microseconds.

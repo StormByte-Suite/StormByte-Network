@@ -121,6 +121,14 @@ namespace StormByte::Network::Detail {
 				m_tasks.pop_front();
 			}
 
+			if (task.operation) {
+				try {
+					task.operation();
+				} catch (...) {
+				}
+				continue;
+			}
+
 			Completion completion{ task.uuid, nullptr, CompletionReason::Error };
 			try {
 				completion.packet = m_handler(task.uuid, std::move(task.packet));

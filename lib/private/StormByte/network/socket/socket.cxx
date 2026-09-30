@@ -43,6 +43,7 @@
 #include <StormByte/system/this_thread.hxx>
 #include <StormByte/uuid.hxx>
 #ifdef UNIX
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <fcntl.h>
@@ -58,6 +59,8 @@
 #include <chrono>
 #include <format>
 #include <atomic>
+#include <array>
+#include <string>
 #ifdef LINUX
 #include <fstream>
 #include <string>
@@ -136,6 +139,38 @@ void Socket::Disconnect() noexcept {
 
 	m_status.store(Connection::Status::Disconnected, std::memory_order_release);
 	m_logger << Logger::Level::LowLevel << "Disconnected socket " << std::string_view{m_UUID} << std::endl;
+}
+
+std::string Socket::LocalAddress() const noexcept {
+#ifdef WINDOWS
+	if (m_handle == INVALID_SOCKET)
+		return {};
+#else
+	if (m_handle < 0)
+		return {};
+#endif
+	struct sockaddr_storage address{};
+#ifdef WINDOWS
+	int address_size = sizeof(address);
+#else
+	socklen_t address_size = sizeof(address);
+#endif
+	if (::getsockname(m_handle, reinterpret_cast<struct sockaddr*>(&address), &address_size) != 0)
+		return {};
+
+	std::array<char, INET6_ADDRSTRLEN> buffer{};
+	const void* source = nullptr;
+	int family = address.ss_family;
+	if (family == AF_INET) {
+		source = &reinterpret_cast<const struct sockaddr_in*>(&address)->sin_addr;
+	} else if (family == AF_INET6) {
+		source = &reinterpret_cast<const struct sockaddr_in6*>(&address)->sin6_addr;
+	} else {
+		return {};
+	}
+	if (!inet_ntop(family, source, buffer.data(), buffer.size()))
+		return {};
+	return std::string{buffer.data()};
 }
 
 StormByte::Network::ExpectedReadResult Socket::WaitForData(const long long& usecs) noexcept {

@@ -66,6 +66,7 @@ cmake --install build
 - Server event loop with bounded packet-handler workers
 - Per-session in-flight ordering, bounded output buffering and backpressure handling
 - Optional payload processing for opcodes ≥ `Packet::PROCESS_THRESHOLD`
+- Authorized, file-like remote readers and exclusive writers over private TCP channels
 
 ## Dependencies
 
@@ -104,8 +105,26 @@ Under `StormByte::Network`:
 | `Connection::Protocol` | IPv4 / IPv6 |
 | `Connection::Status` | Lifecycle |
 | `Exception` / `ConnectionError` / `ConnectionClosed` | Errors |
+| `RemoteFileMount` | Public, versioned descriptor/result for an application-authorized file mount |
+| `BufferedRemoteFileReader` / `BufferedRemoteFileWriter` | Buffer file-like handles over private channels |
 
 Sockets, frames and Winsock bootstrap are private.
+
+### Remote file channels
+
+The derived server performs its normal application-opcode dispatch and ACL check first. After authorization it calls the protected `MountRemoteFileReader` or `MountRemoteFileWriter` helper and includes the returned `RemoteFileMount` in its application response. A denied ACL can instead return an application-defined `Unauthorized` packet. The client's packet factory decodes the public DTO, then its derived client calls `CreateRemoteFileReader` or `CreateRemoteFileWriter`.
+
+`RemoteFileMount::Status` distinguishes `Authorized`, `NotAuthorized`, `Unavailable` (a missing read file), `FileBeingRead`, `FileBeingWritten`, and `Failed`. Rejected descriptors have `Port() == 0`, an empty capability token, and `Access::None`. The private channel has its own bounded opcode protocol and is not sent through the application's packet factory or `ProcessClientPacket`.
+
+The first authorized mount on a `Client` opens one peer data plane. All of that client's reader and writer leaves register capabilities on the same socket and share one heartbeat, pipeline pair and network-device snapshot. File frames carry the mount token and an absolute offset; reader cursors stay independent without wire seeks. The server keeps one synchronized host handle per canonical path and releases it when the final token closes.
+
+`InputPipeline()` and `OutputPipeline()` are cloned once per peer plane. `Pipe::Clone`/`Move` implementations must own or safely share their state and must not retain raw references to the endpoint. Stateful cryptographic pipes need independent plane state/nonces while using the application's negotiated secret/configuration.
+
+The remote reader and writer expose the same shared polymorphic `System::Device` snapshot for their plane's local network interface. Its `Throughput()` and `Window()` report the interface link speed when the operating system exposes it, with a nominal network-rate fallback otherwise.
+
+Readers of one path share the host-side handle but each operation uses its token's absolute offset, so their logical cursors remain independent. A path may have only one writer, and a writer mount is rejected while readers or another writer hold a mount. A reader mount is rejected while a writer holds it. `Close` releases that token; the final token closes the backing handle and releases the path reservation.
+
+The data plane is owned by the `Client` object and deliberately survives `Client::Disconnect()` while that object remains alive, matching the established detached-handle behavior without leaving one socket per file. Destroying the `Client`, a plane heartbeat timeout, or server shutdown closes the plane and releases all of its tokens. The descriptor is a capability, not an authorization decision: every data operation revalidates the token and access. The private protocol bounds payloads, validates opcodes/sequence numbers, and uses one configurable heartbeat timeout per plane (3 to 3600 seconds; default 30). A dead plane marks every attached `BufferedLocation*` handle `Fault` so later I/O fails visibly.
 
 `DeserializePacketFunction` accepts copyable callables. Its target storage and clone/destroy trampolines stay in the caller's module, so Network can retain and invoke the decoder without freeing callback memory through its own CRT.
 

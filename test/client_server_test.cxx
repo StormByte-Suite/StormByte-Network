@@ -39,6 +39,7 @@
  */
 
 #include <StormByte/network/client.hxx>
+#include <StormByte/network/remote_file_mount.hxx>
 #include <StormByte/network/server.hxx>
 #include <StormByte/serializable.hxx>
 #include <StormByte/logger/threaded_log.hxx>
@@ -67,17 +68,21 @@ namespace Net = SB::Network;
 namespace Buf = SB::Buffer;
 namespace SBLog = SB::Logger;
 namespace Transport = Net::Transport;
-template<typename T>
-using Serializable = SB::Serializable<T>;
+namespace Connection = Net::Connection;
+using SB::Serializable;
+using Net::DeserializePacketFunction;
+using Net::PacketPointer;
 template<typename T>
 using NetExpected = SB::Expected<T, Net::Exception>;
 using Buf::Consumer;
 using Buf::Producer;
 using Buf::ExecutionMode;
+using SBLog::Log;
+using SBLog::Level;
 using SBLog::ThreadedLog;
+using SBLog::humanreadable_bytes;
+using SBLog::nohumanreadable;
 using Buf::Pipeline;
-using namespace StormByte::Logger;
-using namespace StormByte::Network;
 StormByte::Shared<Log> logger = StormByte::Heap::MakeShared<ThreadedLog>(std::cout, Level::Info, "[%L] [T%i] %T:");
 constexpr const unsigned short timeout = 5; // 5 seconds
 constexpr const std::size_t large_data_size = 20 * 1024 * 1024; // 20 MB
@@ -833,10 +838,54 @@ int TestDeserializerFunctionCopy() {
 	return 0;
 }
 
+int TestRemoteFileMountCodec() {
+	constexpr std::string_view fn_name = "TestRemoteFileMountCodec";
+	using Mount = Net::RemoteFileMount;
+
+	for (const Mount mount: { Mount::NotAuthorized(), Mount::Unavailable() }) {
+		const StormByte::BinaryData encoded = Serializable<Mount>(mount).Serialize();
+		const auto decoded = Serializable<Mount>::Deserialize(encoded);
+		ASSERT_TRUE(fn_name, decoded.has_value());
+		ASSERT_TRUE(fn_name, decoded->Result() == mount.Result());
+		ASSERT_TRUE(fn_name, decoded->Port() == 0);
+		ASSERT_TRUE(fn_name, decoded->Mode() == Mount::Access::None);
+	}
+
+	StormByte::BinaryData authorized;
+	authorized.append(Serializable<std::uint32_t>(0x5342464Du).Serialize());
+	authorized.append(Serializable<std::uint16_t>(1).Serialize());
+	authorized.append(Serializable<std::uint16_t>(7081).Serialize());
+	authorized.append(Serializable<std::uint16_t>(30).Serialize());
+	authorized.append(Serializable<std::uint8_t>(static_cast<std::uint8_t>(Mount::Status::Authorized)).Serialize());
+	authorized.append(Serializable<std::uint8_t>(static_cast<std::uint8_t>(Mount::Access::Read)).Serialize());
+	Mount::ChannelToken token{};
+	token.back() = std::byte{0x5A};
+	authorized.append(std::span<const std::byte>{token});
+	const auto decoded_authorized = Serializable<Mount>::Deserialize(authorized);
+	ASSERT_TRUE(fn_name, decoded_authorized.has_value());
+	ASSERT_TRUE(fn_name, decoded_authorized->Result() == Mount::Status::Authorized);
+	ASSERT_TRUE(fn_name, decoded_authorized->Port() == 7081);
+	ASSERT_TRUE(fn_name, decoded_authorized->MaximumTimeoutSeconds() == 30);
+	ASSERT_TRUE(fn_name, decoded_authorized->Token() == token);
+
+	StormByte::BinaryData truncated = authorized;
+	truncated.pop_back();
+	ASSERT_FALSE(fn_name, Serializable<Mount>::Deserialize(truncated).has_value());
+	StormByte::BinaryData extended = authorized;
+	extended.push_back(std::byte{0});
+	ASSERT_FALSE(fn_name, Serializable<Mount>::Deserialize(extended).has_value());
+
+	StormByte::BinaryData forged_denial = authorized;
+	forged_denial[sizeof(std::uint32_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t)] =
+		static_cast<std::byte>(Mount::Status::NotAuthorized);
+	ASSERT_FALSE(fn_name, Serializable<Mount>::Deserialize(forged_denial).has_value());
+	return 0;
+}
+
 int TestRequestNameList() {
 	constexpr std::string_view fn_name = "TestRequestNameList";
 
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -844,7 +893,7 @@ int TestRequestNameList() {
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-	Test::Client client(logger);
+	::Test::Client client(logger);
 	if (!client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": client.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -875,7 +924,7 @@ int TestRequestNameList() {
 int TestRequestRandomNumber() {
 	constexpr std::string_view fn_name = "TestRequestRandomNumber";
 
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -883,7 +932,7 @@ int TestRequestRandomNumber() {
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-	Test::Client client(logger);
+	::Test::Client client(logger);
 	if (!client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": client.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -906,7 +955,7 @@ int TestRequestRandomNumber() {
 int TestRequestLargeDataEchoed() {
 	constexpr std::string_view fn_name = "TestRequestLargeDataEchoed";
 
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -914,7 +963,7 @@ int TestRequestLargeDataEchoed() {
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-	Test::Client client(logger);
+	::Test::Client client(logger);
 	if (!client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": client.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -941,7 +990,7 @@ int TestRequestLargeDataEchoed() {
 int TestRequestAdditionalCommands() {
 	constexpr std::string_view fn_name = "TestRequestAdditionalCommands";
 
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -949,7 +998,7 @@ int TestRequestAdditionalCommands() {
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-	Test::Client client(logger);
+	::Test::Client client(logger);
 	if (!client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": client.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -974,11 +1023,11 @@ int TestRequestAdditionalCommands() {
 
 int TestClientRetryAfterFailedConnect() {
 	constexpr std::string_view fn_name = "TestClientRetryAfterFailedConnect";
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT))
 		RETURN_TEST(fn_name, 1);
 
-	Test::Client client(logger);
+	::Test::Client client(logger);
 	const auto invalid_protocol = static_cast<Net::Connection::Protocol>(-1);
 	ASSERT_FALSE(fn_name, client.Connect(invalid_protocol, HOST, PORT));
 	ASSERT_TRUE(fn_name, client.Status() == Net::Connection::Status::Disconnected);
@@ -1000,13 +1049,13 @@ int TestClientRetryAfterFailedConnect() {
 
 int TestServerRetryAfterFailedConnectAndRestart() {
 	constexpr std::string_view fn_name = "TestServerRetryAfterFailedConnectAndRestart";
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	const auto invalid_protocol = static_cast<Net::Connection::Protocol>(-1);
 	ASSERT_FALSE(fn_name, server.Connect(invalid_protocol, HOST, PORT));
 	ASSERT_TRUE(fn_name, server.Status() == Net::Connection::Status::Disconnected);
 
 	ASSERT_TRUE(fn_name, server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	Test::Client first_client(logger);
+	::Test::Client first_client(logger);
 	ASSERT_TRUE(fn_name, first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	ASSERT_TRUE(fn_name, first_client.RequestPing());
 	first_client.Disconnect();
@@ -1014,7 +1063,7 @@ int TestServerRetryAfterFailedConnectAndRestart() {
 	ASSERT_TRUE(fn_name, server.Status() == Net::Connection::Status::Disconnected);
 
 	ASSERT_TRUE(fn_name, server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	Test::Client second_client(logger);
+	::Test::Client second_client(logger);
 	ASSERT_TRUE(fn_name, second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	ASSERT_TRUE(fn_name, second_client.RequestPing());
 	second_client.Disconnect();
@@ -1024,7 +1073,7 @@ int TestServerRetryAfterFailedConnectAndRestart() {
 
 int TestMalformedFramesDisconnectOnlyPeer() {
 	constexpr std::string_view fn_name = "TestMalformedFramesDisconnectOnlyPeer";
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT))
 		RETURN_TEST(fn_name, 1);
 
@@ -1054,7 +1103,7 @@ int TestMalformedFramesDisconnectOnlyPeer() {
 		RETURN_TEST(fn_name, 1);
 	}
 	const StormByte::BinaryData malformed_header = make_header(
-		static_cast<Transport::Packet::OpcodeType>(Test::Packet::Opcode::C_MSG_ASKNAMELIST), 1);
+		static_cast<Transport::Packet::OpcodeType>(::Test::Packet::Opcode::C_MSG_ASKNAMELIST), 1);
 	const std::byte malformed_payload{0xAB};
 	const bool malformed_sent = SendRawBytes(malformed_payload_socket,
 		std::span<const std::byte>{malformed_header.data(), malformed_header.size()})
@@ -1070,7 +1119,7 @@ int TestMalformedFramesDisconnectOnlyPeer() {
 		RETURN_TEST(fn_name, 1);
 	}
 	const StormByte::BinaryData truncated_header = make_header(
-		static_cast<Transport::Packet::OpcodeType>(Test::Packet::Opcode::C_MSG_ECHOTEXT), 16);
+		static_cast<Transport::Packet::OpcodeType>(::Test::Packet::Opcode::C_MSG_ECHOTEXT), 16);
 	const std::byte partial_payload{0xAB};
 	const bool partial_frame_sent = SendRawBytes(truncated_payload_socket,
 		std::span<const std::byte>{truncated_header.data(), truncated_header.size()})
@@ -1078,7 +1127,7 @@ int TestMalformedFramesDisconnectOnlyPeer() {
 	CloseRawSocket(truncated_payload_socket);
 	ASSERT_TRUE(fn_name, partial_frame_sent);
 
-	Test::Client healthy_client(logger);
+	::Test::Client healthy_client(logger);
 	ASSERT_TRUE(fn_name, healthy_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	ASSERT_TRUE(fn_name, healthy_client.RequestPing());
 	healthy_client.Disconnect();
@@ -1090,7 +1139,7 @@ int TestManyConcurrentClientsKeepResponsesIsolated() {
 	constexpr std::string_view fn_name = "TestManyConcurrentClientsKeepResponsesIsolated";
 	constexpr std::size_t client_count = 12;
 	constexpr std::size_t requests_per_client = 4;
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT))
 		RETURN_TEST(fn_name, 1);
 
@@ -1099,7 +1148,7 @@ int TestManyConcurrentClientsKeepResponsesIsolated() {
 	clients.reserve(client_count);
 	for (std::size_t client_index = 0; client_index < client_count; ++client_index) {
 		clients.emplace_back([&, client_index] {
-			Test::Client client(logger);
+			::Test::Client client(logger);
 			if (!client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 				client_results[client_index] = 1;
 				return;
@@ -1133,7 +1182,7 @@ int TestManyConcurrentClientsKeepResponsesIsolated() {
 int TestClientDisconnectKeepsServerAlive() {
 	constexpr std::string_view fn_name = "TestClientDisconnectKeepsServerAlive";
 
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -1141,7 +1190,7 @@ int TestClientDisconnectKeepsServerAlive() {
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-	Test::Client first_client(logger);
+	::Test::Client first_client(logger);
 	if (!first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": first client.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -1152,7 +1201,7 @@ int TestClientDisconnectKeepsServerAlive() {
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-	Test::Client second_client(logger);
+	::Test::Client second_client(logger);
 	if (!second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": second client.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -1167,13 +1216,13 @@ int TestClientDisconnectKeepsServerAlive() {
 
 int TestDisconnectRequestedByHandler() {
 	constexpr std::string_view fn_name = "TestDisconnectRequestedByHandler";
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	Test::Client first_client(logger);
+	::Test::Client first_client(logger);
 	if (!first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
 	}
@@ -1181,7 +1230,7 @@ int TestDisconnectRequestedByHandler() {
 	ASSERT_TRUE(fn_name, first_client.RequestDisconnect());
 	first_client.Disconnect();
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	Test::Client second_client(logger);
+	::Test::Client second_client(logger);
 	if (!second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
 	}
@@ -1194,14 +1243,14 @@ int TestDisconnectRequestedByHandler() {
 
 int TestSlowHandlerDoesNotBlockOtherClients() {
 	constexpr std::string_view fn_name = "TestSlowHandlerDoesNotBlockOtherClients";
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	Test::Client slow_client(logger);
-	Test::Client fast_client(logger);
+	::Test::Client slow_client(logger);
+	::Test::Client fast_client(logger);
 	ASSERT_TRUE(fn_name, slow_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	ASSERT_TRUE(fn_name, fast_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	std::atomic<bool> slow_result{false};
@@ -1225,13 +1274,13 @@ int TestSlowHandlerDoesNotBlockOtherClients() {
 
 int TestStopRequestedByHandler() {
 	constexpr std::string_view fn_name = "TestStopRequestedByHandler";
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	Test::Client client(logger);
+	::Test::Client client(logger);
 	ASSERT_TRUE(fn_name, client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	ASSERT_TRUE(fn_name, client.RequestStopServer());
 	client.Disconnect();
@@ -1245,13 +1294,13 @@ int TestStopRequestedByHandler() {
 
 int TestShutdownWithPendingTask() {
 	constexpr std::string_view fn_name = "TestShutdownWithPendingTask";
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	Test::Client client(logger);
+	::Test::Client client(logger);
 	ASSERT_TRUE(fn_name, client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	std::thread pending_thread([&]() {
 		(void)client.RequestSlow();
@@ -1269,13 +1318,13 @@ int TestShutdownWithPendingTask() {
 
 int TestDisconnectDuringSlowHandler() {
 	constexpr std::string_view fn_name = "TestDisconnectDuringSlowHandler";
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		RETURN_TEST(fn_name, 1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	Test::Client abandoned_client(logger);
+	::Test::Client abandoned_client(logger);
 	ASSERT_TRUE(fn_name, abandoned_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	std::thread pending_thread([&]() {
 		(void)abandoned_client.RequestSlow();
@@ -1286,7 +1335,7 @@ int TestDisconnectDuringSlowHandler() {
 		pending_thread.join();
 	}
 
-	Test::Client surviving_client(logger);
+	::Test::Client surviving_client(logger);
 	ASSERT_TRUE(fn_name, surviving_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	ASSERT_TRUE(fn_name, surviving_client.RequestPing());
 	surviving_client.Disconnect();
@@ -1298,7 +1347,7 @@ int TestFragmentedAndBatchedFrames() {
 	constexpr std::string_view fn_name = "TestFragmentedAndBatchedFrames";
 	constexpr std::size_t frame_header_size = sizeof(Transport::Packet::OpcodeType) + sizeof(std::size_t);
 
-	Test::Server server(logger);
+	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
 		RETURN_TEST(fn_name, 1);
@@ -1312,7 +1361,7 @@ int TestFragmentedAndBatchedFrames() {
 		RETURN_TEST(fn_name, 1);
 	}
 
-	auto make_wire_frame = [](const Test::Packet::Opcode opcode, const StormByte::BinaryData& payload) {
+	auto make_wire_frame = [](const ::Test::Packet::Opcode opcode, const StormByte::BinaryData& payload) {
 		StormByte::BinaryData frame = Serializable<Transport::Packet::OpcodeType>(
 			static_cast<Transport::Packet::OpcodeType>(opcode)).Serialize();
 		const StormByte::BinaryData payload_size = Serializable<std::size_t>(payload.size()).Serialize();
@@ -1321,7 +1370,7 @@ int TestFragmentedAndBatchedFrames() {
 		return frame;
 	};
 
-	auto receive_frame = [&](const Test::Packet::Opcode expected_opcode, const std::string* expected_text = nullptr) -> bool {
+	auto receive_frame = [&](const ::Test::Packet::Opcode expected_opcode, const std::string* expected_text = nullptr) -> bool {
 		StormByte::BinaryData header(frame_header_size);
 		if (!ReceiveRawBytes(socket_handle, std::span<std::byte>(header.data(), header.size()))) {
 			return false;
@@ -1356,10 +1405,10 @@ int TestFragmentedAndBatchedFrames() {
 		return text && *text == *expected_text;
 	};
 
-	const StormByte::BinaryData ping_data = make_wire_frame(Test::Packet::Opcode::C_MSG_PING, {});
+	const StormByte::BinaryData ping_data = make_wire_frame(::Test::Packet::Opcode::C_MSG_PING, {});
 	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(ping_data.data(), 1)));
 	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(ping_data.data() + 1, ping_data.size() - 1)));
-	ASSERT_TRUE(fn_name, receive_frame(Test::Packet::Opcode::S_MSG_PONG));
+	ASSERT_TRUE(fn_name, receive_frame(::Test::Packet::Opcode::S_MSG_PONG));
 
 	const std::string text = "fragmented payload";
 	StormByte::BinaryData text_payload = Serializable<std::string>(text).Serialize();
@@ -1367,18 +1416,18 @@ int TestFragmentedAndBatchedFrames() {
 		byte ^= std::byte{0xAB};
 	}
 
-	const StormByte::BinaryData text_data = make_wire_frame(Test::Packet::Opcode::C_MSG_ECHOTEXT, text_payload);
+	const StormByte::BinaryData text_data = make_wire_frame(::Test::Packet::Opcode::C_MSG_ECHOTEXT, text_payload);
 	const std::size_t split = frame_header_size + 2;
 	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(text_data.data(), split)));
 	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(text_data.data() + split, text_data.size() - split)));
-	ASSERT_TRUE(fn_name, receive_frame(Test::Packet::Opcode::S_MSG_REPLYTEXT, &text));
+	ASSERT_TRUE(fn_name, receive_frame(::Test::Packet::Opcode::S_MSG_REPLYTEXT, &text));
 
 	StormByte::BinaryData batched;
 	batched.insert(batched.end(), ping_data.begin(), ping_data.end());
 	batched.insert(batched.end(), ping_data.begin(), ping_data.end());
 	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(batched.data(), batched.size())));
-	ASSERT_TRUE(fn_name, receive_frame(Test::Packet::Opcode::S_MSG_PONG));
-	ASSERT_TRUE(fn_name, receive_frame(Test::Packet::Opcode::S_MSG_PONG));
+	ASSERT_TRUE(fn_name, receive_frame(::Test::Packet::Opcode::S_MSG_PONG));
+	ASSERT_TRUE(fn_name, receive_frame(::Test::Packet::Opcode::S_MSG_PONG));
 
 	CloseRawSocket(socket_handle);
 	server.Disconnect();
@@ -1387,6 +1436,7 @@ int TestFragmentedAndBatchedFrames() {
 
 int main() {
 	int result = 0;
+	result += TestRemoteFileMountCodec();
 	result += TestDeserializerFunctionCopy();
 	result += TestRequestNameList();
 	result += TestRequestRandomNumber();

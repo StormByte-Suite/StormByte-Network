@@ -14,7 +14,7 @@ buildmaster_component(
 	StormByte-Buffer
 	"StormByte Suite - Buffer"
 	"${CMAKE_CURRENT_LIST_DIR}/src"
-	"WITH_STORMBYTE=BUNDLED"
+	"WITH_STORMBYTE=BUNDLED;ENABLE_TEST=OFF"
 	${_mode}
 	"StormByte-Buffer"
 	"${STORMBYTE_BUFFER_OPTSTR}"

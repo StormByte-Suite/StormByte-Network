@@ -63,6 +63,7 @@ namespace StormByte::Network::Detail {
 			struct Task {
 				std::string uuid; ///< Client UUID.
 				PacketPointer packet; ///< Request packet.
+				std::function<void()> operation; ///< Optional bounded internal operation, such as remote-file I/O.
 			};
 
 			struct Completion {

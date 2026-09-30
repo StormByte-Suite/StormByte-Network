@@ -16,6 +16,13 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ## [Unreleased]
 
+### Added
+
+- **Authorized remote file channels**
+    - Added the public, validated `RemoteFileMount` descriptor and application-facing protected mount/attach helpers.
+    - Added file-like buffered remote readers and exclusive writers over one bounded peer data plane per Client, with per-operation capabilities and offsets, independent reader cursors, shared-reader/exclusive-writer path reservations, one heartbeat and shared NIC snapshot per peer, and token-scoped CloseToken cleanup.
+    - Clone one input/output pipeline pair per peer data plane; add dedicated authorization, conflict, deterministic file I/O, transformed framing, concurrent reader, and application-disconnect coverage.
+
 ### Changed
 
 - Doxygen (`ENABLE_DOC`) resolves Buffer, Logger and Base headers via `INCLUDE_PATH` and skips `thirdparty`. No dependency pin change.

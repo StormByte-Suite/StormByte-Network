@@ -38,12 +38,13 @@ This document records the observable behavior that the internal server redesign 
 - The server must remain usable while another client handler is slow or is disconnecting.
 - Shutdown must wake blocked I/O, stop new work, close or drain per-connection state according to the selected lifecycle policy, and complete without deadlock.
 - Any internal queues must be bounded. Backpressure must not create an unbounded allocation path.
-- The event loop owns listener, wakeup, and active session sockets.
+- The event loop owns the application listener, wakeup, active session sockets, and peer data-plane listeners/sockets.
 - `ProcessClientPacket` and synchronous replies currently run in the event loop.
 - A slow `ProcessClientPacket` or synchronous send currently blocks the whole server; a bounded worker pool and output queues are required before claiming isolation from slow handlers.
 - Packet handlers now run in a bounded private pool; the EventLoop applies completions and still performs synchronous replies until output queues are introduced.
 - Disconnect requests from pool workers are commands consumed by the EventLoop; session maps are never mutated by workers.
 - Responses are serialized into bounded per-session output streams and drained through writable events without calling the blocking public send path.
+- A peer data plane has one bounded in-flight file operation. The EventLoop parses its private frames, submits disk work to the bounded pool, and applies the queued response on a later writable event; a full pool pauses reads without discarding the frame or closing the plane.
 
 ## Platform Boundaries
 

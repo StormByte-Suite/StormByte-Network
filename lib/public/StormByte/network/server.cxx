@@ -40,10 +40,12 @@
 
 #include <StormByte/network/connection/client.hxx>
 #include <StormByte/network/event_loop.hxx>
+#include <StormByte/network/remote_file_host.hxx>
 #include <StormByte/network/server.hxx>
 #include <StormByte/network/session.hxx>
 #include <StormByte/network/socket/server.hxx>
 #include <StormByte/network/worker_pool.hxx>
+#include <StormByte/uuid.hxx>
 #ifdef UNIX
 #include <unistd.h>
 #else
@@ -51,6 +53,46 @@
 #include <ws2tcpip.h>
 #endif
 #include <algorithm>
+#include <array>
+#include <cctype>
+#include <utility>
+
+namespace {
+	std::uint8_t HexDigit(const char value) noexcept {
+		if (value >= '0' && value <= '9') return static_cast<std::uint8_t>(value - '0');
+		if (value >= 'a' && value <= 'f') return static_cast<std::uint8_t>(value - 'a' + 10);
+		if (value >= 'A' && value <= 'F') return static_cast<std::uint8_t>(value - 'A' + 10);
+		return 0;
+	}
+
+	StormByte::Network::RemoteFileMount::ChannelToken CreateRemoteFileToken() {
+		std::array<char, 64> hexadecimal{};
+		std::size_t offset = 0;
+		for (int index = 0; index < 2; ++index) {
+			const StormByte::CString uuid = StormByte::GenerateUUIDv4();
+			const std::string_view text = static_cast<std::string_view>(uuid);
+			for (const char value: text) {
+				if (value != '-') {
+					if (offset >= hexadecimal.size()) {
+						return {};
+					}
+					hexadecimal[offset++] = value;
+				}
+			}
+		}
+
+		StormByte::Network::RemoteFileMount::ChannelToken token{};
+		if (offset != hexadecimal.size()) {
+			return {};
+		}
+		for (std::size_t index = 0; index < token.size(); ++index) {
+			token[index] = static_cast<std::byte>((HexDigit(hexadecimal[index * 2]) << 4)
+				| HexDigit(hexadecimal[index * 2 + 1]));
+		}
+		return token;
+	}
+}
+
 using namespace StormByte::Network;
 Server::Server(DeserializePacketFunction deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept:
 	Endpoint(std::move(deserialize_packet_function), std::move(logger)),
@@ -73,7 +115,15 @@ Server::Server(Server&& other) noexcept:
 	m_wakeup_read(other.m_wakeup_read),
 	m_wakeup_write(other.m_wakeup_write),
 	m_sessions(std::move(other.m_sessions)),
-	m_pool(std::move(other.m_pool)) {
+	m_pool(std::move(other.m_pool)),
+	m_protocol(other.m_protocol),
+	m_bind_address(std::move(other.m_bind_address)) {
+	{
+		std::scoped_lock lock(m_remote_file_mutex, other.m_remote_file_mutex);
+		m_remote_files = std::move(other.m_remote_files);
+		m_remote_planes = std::move(other.m_remote_planes);
+		m_remote_file_registry = std::move(other.m_remote_file_registry);
+	}
 #ifdef WINDOWS
 	other.m_wakeup_read = INVALID_SOCKET;
 	other.m_wakeup_write = INVALID_SOCKET;
@@ -98,11 +148,19 @@ Server& Server::operator=(Server&& other) noexcept {
 		Endpoint::operator=(std::move(other));
 		m_socket_server = std::move(other.m_socket_server);
 		m_status.store(other.m_status.load(std::memory_order_relaxed), std::memory_order_relaxed);
+		m_protocol = other.m_protocol;
+		m_bind_address = std::move(other.m_bind_address);
 		m_accept_thread = std::move(other.m_accept_thread);
 		m_wakeup_read = other.m_wakeup_read;
 		m_wakeup_write = other.m_wakeup_write;
 		m_sessions = std::move(other.m_sessions);
 		m_pool = std::move(other.m_pool);
+		{
+			std::scoped_lock lock(m_remote_file_mutex, other.m_remote_file_mutex);
+			m_remote_files = std::move(other.m_remote_files);
+			m_remote_planes = std::move(other.m_remote_planes);
+			m_remote_file_registry = std::move(other.m_remote_file_registry);
+		}
 #ifdef WINDOWS
 		other.m_wakeup_read = INVALID_SOCKET;
 		other.m_wakeup_write = INVALID_SOCKET;
@@ -123,6 +181,11 @@ bool Server::Connect(const Connection::Protocol& protocol, std::string_view addr
 	}
 
 	try {
+		if (!m_remote_file_registry) {
+			m_remote_file_registry = std::make_shared<Detail::RemoteFile::MountRegistry>();
+		}
+		m_protocol = protocol;
+		m_bind_address = address;
 		m_socket_server = std::make_unique<Socket::Server>(protocol, m_logger);
 		if (!m_socket_server->Listen(address, port)) {
 			m_logger << Logger::Level::Error << "Failed to listen on " << std::string_view{address} << ":" << port
@@ -167,6 +230,7 @@ bool Server::Connect(const Connection::Protocol& protocol, std::string_view addr
 
 void Server::Disconnect() noexcept {
 	if (!m_socket_server && !m_accept_thread.joinable() && !m_pool) {
+		RevokeAllRemoteFiles();
 		return;
 	}
 
@@ -193,6 +257,187 @@ void Server::Disconnect() noexcept {
 		if (!from_worker) {
 			m_pool->Join();
 		}
+	}
+	RevokeAllRemoteFiles();
+}
+
+RemoteFileMount Server::MountRemoteFileReader(std::string_view client_uuid,
+	const std::filesystem::path& path, const std::uint16_t maximum_timeout_seconds) noexcept {
+	if (client_uuid.empty() || path.empty() || maximum_timeout_seconds < 3 || maximum_timeout_seconds > 3600
+		|| !Connection::IsConnected(m_status.load(std::memory_order_acquire))) {
+		return RemoteFileMount::Failed();
+	}
+
+	try {
+		std::error_code file_error;
+		const bool exists = std::filesystem::exists(path, file_error);
+		if (file_error) {
+			return RemoteFileMount::Failed();
+		}
+		if (!exists) {
+			return RemoteFileMount::Unavailable();
+		}
+		if (!std::filesystem::is_regular_file(path, file_error) || file_error) {
+			return RemoteFileMount::Failed();
+		}
+		std::error_code path_error;
+		const std::filesystem::path normalized = std::filesystem::weakly_canonical(path, path_error);
+		if (path_error) {
+			return RemoteFileMount::Failed();
+		}
+		std::string path_key = normalized.generic_string();
+#ifdef WINDOWS
+		std::ranges::transform(path_key, path_key.begin(), [](const unsigned char character) {
+			return static_cast<char>(std::tolower(character));
+		});
+#endif
+		auto token = CreateRemoteFileToken();
+		if (std::ranges::all_of(token, [](const std::byte value) { return value == std::byte{0}; })) {
+			return RemoteFileMount::Failed();
+		}
+		std::shared_ptr<Detail::RemoteFile::Host> host;
+		bool started_plane = false;
+		{
+			std::scoped_lock lock(m_remote_file_mutex);
+			if (!Connection::IsConnected(m_status.load(std::memory_order_acquire)) || !m_remote_file_registry) {
+				return RemoteFileMount::Failed();
+			}
+			std::erase_if(m_remote_files, [this](const MountedRemoteFile& mounted) {
+				return !m_remote_file_registry->HasToken(mounted.token);
+			});
+			if (std::ranges::any_of(m_remote_files, [&path_key](const MountedRemoteFile& mounted) {
+				return mounted.path_key == path_key && mounted.access == RemoteFileMount::Access::Write;
+			})) {
+				return RemoteFileMount::FileBeingWritten();
+			}
+			if (m_remote_files.size() >= MAX_REMOTE_FILE_CHANNELS) {
+				return RemoteFileMount::Failed();
+			}
+			auto plane_it = m_remote_planes.find(std::string{client_uuid});
+			if (plane_it != m_remote_planes.end()) {
+				host = plane_it->second;
+				if (!host || host->Finished()) return RemoteFileMount::Failed();
+			} else {
+				host = std::make_shared<Detail::RemoteFile::Host>(m_protocol, m_bind_address,
+					InputPipeline(), OutputPipeline(), maximum_timeout_seconds, m_remote_file_registry, m_logger);
+				if (!host->Start()) return RemoteFileMount::Failed();
+				m_remote_planes.emplace(std::string{client_uuid}, host);
+				started_plane = true;
+			}
+			if (!m_remote_file_registry->AddMount(token, normalized, RemoteFileMount::Access::Read)) {
+				return RemoteFileMount::Failed();
+			}
+			if (!host->RegisterToken(token)) {
+				(void)m_remote_file_registry->ReleaseToken(token);
+				return RemoteFileMount::Failed();
+			}
+			try {
+				m_remote_files.push_back({ host, path_key, RemoteFileMount::Access::Read, token });
+			} catch (...) {
+				host->UnregisterToken(token);
+				throw;
+			}
+		}
+		if (started_plane) SignalWakeup();
+
+		return RemoteFileMount{RemoteFileMount::Status::Authorized, std::move(token), host->Port(),
+		host->TimeoutSeconds(), RemoteFileMount::Access::Read};
+	} catch (...) {
+		return RemoteFileMount::Failed();
+	}
+}
+
+RemoteFileMount Server::MountRemoteFileWriter(std::string_view client_uuid,
+	const std::filesystem::path& path, const std::uint16_t maximum_timeout_seconds) noexcept {
+	if (client_uuid.empty() || path.empty() || maximum_timeout_seconds < 3 || maximum_timeout_seconds > 3600
+		|| !Connection::IsConnected(m_status.load(std::memory_order_acquire))) {
+		return RemoteFileMount::Failed();
+	}
+
+	try {
+		std::error_code path_error;
+		std::filesystem::path normalized = std::filesystem::weakly_canonical(path, path_error);
+		if (path_error) {
+			path_error.clear();
+			normalized = std::filesystem::absolute(path, path_error).lexically_normal();
+		}
+		if (path_error) {
+			return RemoteFileMount::Failed();
+		}
+		std::string writer_path = normalized.generic_string();
+#ifdef WINDOWS
+		std::ranges::transform(writer_path, writer_path.begin(), [](const unsigned char character) {
+			return static_cast<char>(std::tolower(character));
+		});
+#endif
+
+		auto token = CreateRemoteFileToken();
+		if (std::ranges::all_of(token, [](const std::byte value) { return value == std::byte{0}; })) {
+			return RemoteFileMount::Failed();
+		}
+		std::shared_ptr<Detail::RemoteFile::Host> host;
+		bool started_plane = false;
+		{
+			std::scoped_lock lock(m_remote_file_mutex);
+			if (!Connection::IsConnected(m_status.load(std::memory_order_acquire)) || !m_remote_file_registry) {
+				return RemoteFileMount::Failed();
+			}
+			std::erase_if(m_remote_files, [this](const MountedRemoteFile& mounted) {
+				return !m_remote_file_registry->HasToken(mounted.token);
+			});
+			const auto conflict = std::ranges::find_if(m_remote_files, [&writer_path](const MountedRemoteFile& mounted) {
+				return mounted.path_key == writer_path;
+			});
+			if (conflict != m_remote_files.end()) {
+				return conflict->access == RemoteFileMount::Access::Read
+					? RemoteFileMount::FileBeingRead() : RemoteFileMount::FileBeingWritten();
+			}
+			if (m_remote_files.size() >= MAX_REMOTE_FILE_CHANNELS) {
+				return RemoteFileMount::Failed();
+			}
+			auto plane_it = m_remote_planes.find(std::string{client_uuid});
+			if (plane_it != m_remote_planes.end()) {
+				host = plane_it->second;
+				if (!host || host->Finished()) return RemoteFileMount::Failed();
+			} else {
+				host = std::make_shared<Detail::RemoteFile::Host>(m_protocol, m_bind_address,
+					InputPipeline(), OutputPipeline(), maximum_timeout_seconds, m_remote_file_registry, m_logger);
+				if (!host->Start()) return RemoteFileMount::Failed();
+				m_remote_planes.emplace(std::string{client_uuid}, host);
+				started_plane = true;
+			}
+			if (!m_remote_file_registry->AddMount(token, normalized, RemoteFileMount::Access::Write)) {
+				return RemoteFileMount::Failed();
+			}
+			if (!host->RegisterToken(token)) {
+				(void)m_remote_file_registry->ReleaseToken(token);
+				return RemoteFileMount::Failed();
+			}
+			try {
+				m_remote_files.push_back({ host, writer_path, RemoteFileMount::Access::Write, token });
+			} catch (...) {
+				host->UnregisterToken(token);
+				throw;
+			}
+		}
+		if (started_plane) SignalWakeup();
+
+		return RemoteFileMount{RemoteFileMount::Status::Authorized, std::move(token), host->Port(),
+			host->TimeoutSeconds(), RemoteFileMount::Access::Write};
+	} catch (...) {
+		return RemoteFileMount::Failed();
+	}
+}
+
+void Server::RevokeAllRemoteFiles() noexcept {
+	std::unordered_map<std::string, std::shared_ptr<Detail::RemoteFile::Host>> revoked;
+	{
+		std::scoped_lock lock(m_remote_file_mutex);
+		m_remote_files.clear();
+		revoked.swap(m_remote_planes);
+	}
+	for (const auto& [_, host]: revoked) {
+		if (host) host->Stop();
 	}
 }
 
@@ -424,9 +669,25 @@ void Server::AcceptClients() noexcept {
 
 			ProcessSession(session, readable, writable);
 		},
+		[this]() {
+			Detail::EventLoop::PlaneList planes;
+			std::scoped_lock lock(m_remote_file_mutex);
+			planes.reserve(m_remote_planes.size());
+			for (const auto& [_, host]: m_remote_planes) {
+				if (host && !host->Finished()) planes.push_back(host);
+			}
+			return planes;
+		},
+		[this](const std::shared_ptr<Detail::RemoteFile::Host>& host, bool readable, bool writable) noexcept {
+			ProcessRemotePlane(host, readable, writable);
+		},
 		[this]() noexcept {
 			DrainCommands();
 			DrainCompletions();
+			std::scoped_lock lock(m_remote_file_mutex);
+			for (const auto& [_, host]: m_remote_planes) {
+				if (host) host->SetTaskBlocked(false);
+			}
 		}
 
 	);
@@ -498,5 +759,46 @@ void Server::ProcessSession(const std::shared_ptr<Detail::Session>& session, boo
 	if (!m_pool->Submit({ client_uuid, std::move(packet) })) {
 		session->SetInFlight(false);
 		session->SetTaskBlocked(true);
+	}
+}
+
+void Server::ProcessRemotePlane(const std::shared_ptr<Detail::RemoteFile::Host>& host,
+	const bool readable, const bool writable) noexcept {
+	if (!host || host->Finished()) return;
+	if (host->Expired()) {
+		host->Stop();
+		return;
+	}
+	if (host->WaitingForAccept()) {
+		if (readable) (void)host->AcceptReady();
+		return;
+	}
+	if (writable && host->HasOutput()) {
+		auto flushed = host->FlushOutput();
+		if (!flushed) {
+			host->Stop();
+			return;
+		}
+	}
+	if (readable && host->CanRead()) {
+		if (!host->ReadReady()) {
+			host->Stop();
+			return;
+		}
+	}
+	if (!host->ReadyForProcessing()) return;
+	if (!m_pool || !m_pool->HasCapacity()) {
+		host->SetTaskBlocked(true);
+		return;
+	}
+	Detail::RemoteFile::Message request = host->TakeRequest();
+	if (request.request_id == 0) return;
+	auto queued_request = std::make_shared<Detail::RemoteFile::Message>(std::move(request));
+	if (!m_pool->Submit({{}, nullptr, [this, host, queued_request]() {
+		const Detail::RemoteFile::Message response = host->ProcessRequest(*queued_request);
+		if (!host->QueueResponse(response)) host->Stop();
+		SignalWakeup();
+	}})) {
+		host->RequeueRequest(std::move(*queued_request));
 	}
 }

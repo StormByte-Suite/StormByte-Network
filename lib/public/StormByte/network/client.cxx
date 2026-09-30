@@ -40,6 +40,8 @@
 
 #include <StormByte/network/connection/client.hxx>
 #include <StormByte/network/client.hxx>
+#include <StormByte/network/remote_file_protocol.hxx>
+#include <StormByte/network/socket/client.hxx>
 #include <StormByte/network/transport/frame.hxx>
 #include <StormByte/network/transport/packet.hxx>
 using namespace StormByte::Network;
@@ -52,9 +54,29 @@ Client::~Client() noexcept {
 	Disconnect();
 }
 
-Client::Client(Client&& other) noexcept = default;
+Client::Client(Client&& other) noexcept:
+	Endpoint(std::move(other)), m_connection(std::move(other.m_connection)),
+	m_remote_address(std::move(other.m_remote_address)), m_protocol(other.m_protocol) {
+	std::scoped_lock lock(other.m_remote_file_mutex);
+	m_remote_file_plane = std::move(other.m_remote_file_plane);
+}
 
-Client& Client::operator=(Client&& other) noexcept = default;
+Client& Client::operator=(Client&& other) noexcept {
+	if (this == &other) return *this;
+	Disconnect();
+	{
+		std::scoped_lock lock(m_remote_file_mutex);
+		if (m_remote_file_plane) m_remote_file_plane->Stop();
+		m_remote_file_plane.reset();
+	}
+	std::scoped_lock lock(m_remote_file_mutex, other.m_remote_file_mutex);
+	Endpoint::operator=(std::move(other));
+	m_connection = std::move(other.m_connection);
+	m_remote_address = std::move(other.m_remote_address);
+	m_protocol = other.m_protocol;
+	m_remote_file_plane = std::move(other.m_remote_file_plane);
+	return *this;
+}
 
 bool Client::Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) {
 	if (m_connection) {
@@ -70,7 +92,15 @@ bool Client::Connect(const Connection::Protocol& protocol, std::string_view addr
 			return false;
 		}
 
-		m_connection = CreateConnection(socket);
+		auto connection = CreateConnection(socket);
+		m_remote_address = address;
+		m_protocol = protocol;
+		{
+			std::scoped_lock lock(m_remote_file_mutex);
+			if (m_remote_file_plane) m_remote_file_plane->Stop();
+			m_remote_file_plane.reset();
+		}
+		m_connection = std::move(connection);
 		m_logger << Logger::Level::LowLevel << "Successfully connected to " << address << ":" << port
 				<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
 		return true;
@@ -93,4 +123,104 @@ Connection::Status Client::Status() const noexcept {
 
 PacketPointer Client::Send(const Transport::Packet& packet) noexcept {
 	return Endpoint::Send(m_connection, packet);
+}
+
+RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mount) noexcept {
+	if (mount.Result() != RemoteFileMount::Status::Authorized
+		|| mount.Mode() != RemoteFileMount::Access::Read || mount.Port() == 0
+		|| mount.MaximumTimeoutSeconds() < 3 || m_remote_address.empty()) {
+		return {};
+	}
+
+	try {
+		std::scoped_lock lock(m_remote_file_mutex);
+		std::shared_ptr<Detail::RemoteFile::DataPlane> plane = m_remote_file_plane;
+		const bool created = !plane;
+		if (plane && (plane->Failed() || plane->Port() != mount.Port())) return {};
+		if (!plane) {
+			auto socket = std::make_shared<Socket::Client>(m_protocol, m_logger);
+			if (!socket->Connect(m_remote_address, mount.Port())) return {};
+			std::string local_address = socket->LocalAddress();
+			if (local_address.empty()) {
+				socket->Disconnect();
+				return {};
+			}
+			auto device = Detail::RemoteFile::CreateNetworkDevice(local_address);
+			plane = std::make_shared<Detail::RemoteFile::DataPlane>(std::move(socket),
+				InputPipeline(), OutputPipeline(), mount.MaximumTimeoutSeconds(), m_logger,
+				std::move(local_address), std::move(device), mount.Port());
+		}
+
+		const std::string locator = "remote://" + m_remote_address + ":" + std::to_string(mount.Port());
+		RemoteFileReaderHandle reader{new BufferedRemoteFileReader(StormByte::String::String{locator}, plane, mount.Token())};
+		if (!plane->RegisterToken(mount.Token(), [instance = reader.get()]() noexcept { instance->MarkFailed(); })) {
+			reader->m_token_released = true;
+			reader.reset();
+			if (created) plane->Stop();
+			return {};
+		}
+		if (created) {
+			if (!plane->StartHeartbeat()) {
+				(void)plane->ReleaseToken(mount.Token());
+				reader->m_token_released = true;
+				reader.reset();
+				plane->Stop();
+				return {};
+			}
+			m_remote_file_plane = plane;
+		}
+		return reader;
+	} catch (...) {
+		return {};
+	}
+}
+
+RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mount) noexcept {
+	if (mount.Result() != RemoteFileMount::Status::Authorized
+		|| mount.Mode() != RemoteFileMount::Access::Write || mount.Port() == 0
+		|| mount.MaximumTimeoutSeconds() < 3 || m_remote_address.empty()) {
+		return {};
+	}
+
+	try {
+		std::scoped_lock lock(m_remote_file_mutex);
+		std::shared_ptr<Detail::RemoteFile::DataPlane> plane = m_remote_file_plane;
+		const bool created = !plane;
+		if (plane && (plane->Failed() || plane->Port() != mount.Port())) return {};
+		if (!plane) {
+			auto socket = std::make_shared<Socket::Client>(m_protocol, m_logger);
+			if (!socket->Connect(m_remote_address, mount.Port())) return {};
+			std::string local_address = socket->LocalAddress();
+			if (local_address.empty()) {
+				socket->Disconnect();
+				return {};
+			}
+			auto device = Detail::RemoteFile::CreateNetworkDevice(local_address);
+			plane = std::make_shared<Detail::RemoteFile::DataPlane>(std::move(socket),
+				InputPipeline(), OutputPipeline(), mount.MaximumTimeoutSeconds(), m_logger,
+				std::move(local_address), std::move(device), mount.Port());
+		}
+
+		const std::string locator = "remote://" + m_remote_address + ":" + std::to_string(mount.Port());
+		RemoteFileWriterHandle writer{new BufferedRemoteFileWriter(StormByte::String::String{locator}, plane, mount.Token())};
+		if (!plane->RegisterToken(mount.Token(), [instance = writer.get()]() noexcept { instance->MarkFailed(); })) {
+			writer->m_token_released = true;
+			writer.reset();
+			if (created) plane->Stop();
+			return {};
+		}
+		if (created) {
+			if (!plane->StartHeartbeat()) {
+				(void)plane->ReleaseToken(mount.Token());
+				writer->m_token_released = true;
+				writer.reset();
+				plane->Stop();
+				return {};
+			}
+			m_remote_file_plane = plane;
+		}
+		return writer;
+	} catch (...) {
+		return {};
+	}
 }

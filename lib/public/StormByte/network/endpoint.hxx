@@ -128,14 +128,26 @@ namespace StormByte::Network {
 			std::shared_ptr<Connection::Client> CreateConnection(std::shared_ptr<Socket::Client> socket) noexcept;
 
 			/**
-			 * @brief Pipeline applied to inbound frame payloads.
+			 * @brief Build the endpoint's inbound byte transformation pipeline.
 			 * @return Pipeline.
+			 *
+			 * The returned pipeline is owned by its connection. Remote-file
+			 * channels build another instance from this hook and may outlive the
+			 * application connection. Pipes must own or share every object they
+			 * use; they must not retain raw references to the Endpoint or derived
+			 * object. Clone/Move must preserve that ownership contract.
 			 */
 			virtual Buffer::Pipeline InputPipeline() const noexcept = 0;
 
 			/**
-			 * @brief Pipeline applied to outbound frame payloads.
+			 * @brief Build the endpoint's outbound byte transformation pipeline.
 			 * @return Pipeline.
+			 *
+			 * The returned pipeline is owned by its connection. Remote-file
+			 * channels build another instance from this hook and may outlive the
+			 * application connection. Pipes must own or share every object they
+			 * use; they must not retain raw references to the Endpoint or derived
+			 * object. Clone/Move must preserve that ownership contract.
 			 */
 			virtual Buffer::Pipeline OutputPipeline() const noexcept = 0;
 

@@ -41,13 +41,17 @@
 #pragma once
 
 #include <StormByte/network/endpoint.hxx>
+#include <StormByte/network/remote_file_mount.hxx>
 
 #include <atomic>
+#include <filesystem>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <deque>
 #include <string_view>
+#include <vector>
 
 /**
  * @brief Network module of the StormByte suite.
@@ -64,6 +68,10 @@ namespace StormByte::Network {
 	namespace Detail {
 		class Session;	///< Forward declaration
 		class WorkerPool;	///< Forward declaration
+		namespace RemoteFile {
+			class Host;	///< Forward declaration
+			class MountRegistry; ///< New class for managing mount registrations
+		}
 	}
 
 	/**
@@ -130,6 +138,26 @@ namespace StormByte::Network {
 
 		protected:
 			/**
+			 * @brief Mount a server-owned file for an already authorized client session.
+			 * @param client_uuid Client session which owns this capability.
+			 * @param path Server-local path selected by application policy.
+			 * @param maximum_timeout_seconds Heartbeat timeout in [3, 3600] seconds.
+			 * @return Authorized descriptor, or Unavailable when mounting failed.
+			 */
+			RemoteFileMount MountRemoteFileReader(std::string_view client_uuid,
+				const std::filesystem::path& path, std::uint16_t maximum_timeout_seconds = 30) noexcept;
+
+			/**
+			 * @brief Mount a server-owned file for exclusive writing after application authorization.
+			 * @param client_uuid Requesting application session.
+			 * @param path Server-local file path selected by application policy.
+			 * @param maximum_timeout_seconds Heartbeat timeout in [3, 3600] seconds.
+			 * @return Authorized descriptor, or Unavailable when mounting failed or another writer owns the path.
+			 */
+			RemoteFileMount MountRemoteFileWriter(std::string_view client_uuid,
+				const std::filesystem::path& path, std::uint16_t maximum_timeout_seconds = 30) noexcept;
+
+			/**
 			 * @brief Disconnect a client by UUID.
 			 * @param uuid Client UUID.
 			 */
@@ -150,6 +178,19 @@ namespace StormByte::Network {
 				CompletionReason reason; ///< Completion outcome
 			};
 			std::deque<Completion> m_completions; ///< Worker completions
+			Connection::Protocol m_protocol{Connection::Protocol::IPv4}; ///< Bound protocol.
+			std::string m_bind_address; ///< Bound address for private listeners.
+			struct MountedRemoteFile {
+				std::shared_ptr<Detail::RemoteFile::Host> host; ///< Authorized private channel.
+				std::string path_key; ///< Canonical path used for shared/exclusive mount reservation.
+				RemoteFileMount::Access access; ///< Shared reader or exclusive writer reservation.
+				RemoteFileMount::ChannelToken token; ///< Capability reservation released by CloseToken.
+			};
+			std::vector<MountedRemoteFile> m_remote_files; ///< Authorized private channels.
+			std::unordered_map<std::string, std::shared_ptr<Detail::RemoteFile::Host>> m_remote_planes; ///< One plane per peer UUID.
+			std::shared_ptr<Detail::RemoteFile::MountRegistry> m_remote_file_registry; ///< Shared path handles and token table.
+			std::mutex m_remote_file_mutex; ///< Protects private channel registration.
+			static constexpr std::size_t MAX_REMOTE_FILE_CHANNELS = 128; ///< Bound channel resource use.
 			std::mutex m_completion_mutex; ///< Protects completions
 			enum class CommandType: unsigned short { DisconnectClient, DisconnectAll, Stop }; ///< Loop command
 			struct Command { CommandType type; std::string uuid; }; ///< Loop command
@@ -202,6 +243,13 @@ namespace StormByte::Network {
 
 			/** @brief Direct session removal, called only by EventLoop. */
 			void DisconnectClientOnLoop(std::string_view uuid) noexcept;
+
+			/** @brief Revoke and stop every private file channel. */
+			void RevokeAllRemoteFiles() noexcept;
+
+			/** @brief Read one peer data plane and enqueue its file operation on WorkerPool. */
+			void ProcessRemotePlane(const std::shared_ptr<Detail::RemoteFile::Host>& host,
+				bool readable, bool writable) noexcept;
 
 			/**
 			 * @brief Application packet handler.
