@@ -73,7 +73,7 @@ namespace StormByte::Network::Transport {
 			/**
 			 * @brief Destructor.
 			 */
-			virtual ~Packet() noexcept = default;
+			virtual ~Packet() noexcept;
 
 			/**
 			 * @brief Copy assignment.

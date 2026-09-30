@@ -77,6 +77,9 @@ namespace StormByte::Network::Detail {
 				const std::atomic<Connection::Status>& status,
 				StormByte::Shared<Logger::Log> logger) noexcept;
 
+				/** @brief Releases the loop state in the Network library. */
+				~EventLoop() noexcept;
+
 			/**
 			 * @brief Run until the server stops or the wakeup is signalled.
 			 * @param on_listener_ready Called when the listener is readable.

@@ -126,9 +126,7 @@ namespace StormByte::Network {
 			 * @brief Listener / server status.
 			 * @return Status.
 			 */
-			inline Connection::Status Status() const noexcept override {
-				return m_status.load();
-			}
+			Connection::Status Status() const noexcept override;
 
 		protected:
 			/**

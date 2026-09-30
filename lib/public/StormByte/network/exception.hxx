@@ -66,6 +66,11 @@ namespace StormByte::Network {
 				StormByte::Exception::Path{std::string{"Network::"}.append(component)},
 				fmt, std::forward<Args>(args)...) {}
 
+			/**
+			 * @brief Destructor. Defined in the Network library to anchor RTTI.
+			 */
+			~Exception() noexcept override;
+
 			using StormByte::Exception::Exception;
 	};
 
@@ -73,7 +78,7 @@ namespace StormByte::Network {
 	 * @class ConnectionError
 	 * @brief Connection or socket operation failed.
 	 */
-	class ConnectionError: public Exception {
+	class STORMBYTE_NETWORK_PUBLIC ConnectionError: public Exception {
 		public:
 			/**
 			 * @brief Construct from a format string.
@@ -84,6 +89,11 @@ namespace StormByte::Network {
 			template <typename... Args>
 			ConnectionError(std::format_string<Args...> fmt, Args&&... args):
 			Exception("Connection", fmt, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Destructor. Defined in the Network library to anchor RTTI.
+			 */
+			~ConnectionError() noexcept override;
 
 			using Exception::Exception;
 	};
@@ -105,6 +115,11 @@ namespace StormByte::Network {
 			Exception("Connection", "Connection closed: {}",
 				std::format(fmt, std::forward<Args>(args)...)) {}
 
+			/**
+			 * @brief Destructor. Defined in the Network library to anchor RTTI.
+			 */
+			~ConnectionClosed() noexcept override;
+
 			using Exception::Exception;
 	};
 
@@ -124,6 +139,11 @@ namespace StormByte::Network {
 			PacketError(std::format_string<Args...> fmt, Args&&... args):
 			Exception("Transport::Packet: ", fmt, std::forward<Args>(args)...) {}
 
+			/**
+			 * @brief Destructor. Defined in the Network library to anchor RTTI.
+			 */
+			~PacketError() noexcept override;
+
 			using Exception::Exception;
 	};
 
@@ -142,6 +162,11 @@ namespace StormByte::Network {
 			template <typename... Args>
 			FrameError(std::format_string<Args...> fmt, Args&&... args):
 			Exception("Transport::Frame: ", fmt, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Destructor. Defined in the Network library to anchor RTTI.
+			 */
+			~FrameError() noexcept override;
 
 			using Exception::Exception;
 	};

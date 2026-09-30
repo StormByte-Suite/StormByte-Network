@@ -75,7 +75,7 @@ namespace StormByte::Network::Socket {
 			/**
 			 * @brief Destructor.
 			 */
-			~Server() noexcept override = default;
+			~Server() noexcept override;
 
 			/**
 			 * @brief Copy assignment (deleted).

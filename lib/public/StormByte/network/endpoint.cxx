@@ -44,6 +44,13 @@ using namespace StormByte::Network;
 Endpoint::Endpoint(const DeserializePacketFunction& deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept:
 	m_deserialize_packet_function(deserialize_packet_function),
 	m_logger(logger) {}
+
+Endpoint::~Endpoint() noexcept = default;
+
+Endpoint::Endpoint(Endpoint&& other) noexcept = default;
+
+Endpoint& Endpoint::operator=(Endpoint&& other) noexcept = default;
+
 PacketPointer Endpoint::Send(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept {
 	if (!SendPacket(client_connection, packet)) {
 		return nullptr;

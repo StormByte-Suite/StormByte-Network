@@ -49,6 +49,11 @@ namespace StormByte::Network::Detail {
 	Session::Session(std::string uuid, std::shared_ptr<Connection::Client> client) noexcept:
 	m_uuid(std::move(uuid)), m_client(std::move(client)) {}
 
+	Session::~Session() noexcept = default;
+
+	Session::OutputStream::OutputStream(Buffer::Consumer&& consumer) noexcept:
+		source(std::move(consumer)) {}
+
 	const std::string& Session::UUID() const noexcept {
 		return m_uuid;
 	}

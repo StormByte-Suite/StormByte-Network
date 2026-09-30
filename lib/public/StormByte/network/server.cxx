@@ -88,6 +88,10 @@ Server::~Server() noexcept {
 	Disconnect();
 }
 
+Connection::Status Server::Status() const noexcept {
+	return m_status.load(std::memory_order_acquire);
+}
+
 Server& Server::operator=(Server&& other) noexcept {
 	if (this != &other) {
 		Disconnect();

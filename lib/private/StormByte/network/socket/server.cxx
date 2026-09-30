@@ -57,6 +57,8 @@ Socket(protocol, logger) {
 	m_logger << Logger::Level::LowLevel << "Created server socket with UUID: " << std::string_view{m_UUID} << std::endl;
 }
 
+Socket::Server::~Server() noexcept = default;
+
 ExpectedVoid Socket::Server::Listen(std::string_view hostname, const unsigned short& port) noexcept {
 	if (Connection::IsConnected(m_status.load(std::memory_order_acquire)))
 		return Unexpected<ConnectionError>("Server is already connected");

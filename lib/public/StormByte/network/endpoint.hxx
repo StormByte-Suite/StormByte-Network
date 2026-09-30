@@ -79,12 +79,12 @@ namespace StormByte::Network {
 			/**
 			 * @brief Move constructor.
 			 */
-			Endpoint(Endpoint&& other) noexcept = default;
+			Endpoint(Endpoint&& other) noexcept;
 
 			/**
 			 * @brief Destructor.
 			 */
-			virtual ~Endpoint() noexcept = default;
+			virtual ~Endpoint() noexcept;
 
 			/**
 			 * @brief Copy assignment (deleted).
@@ -94,7 +94,7 @@ namespace StormByte::Network {
 			/**
 			 * @brief Move assignment.
 			 */
-			Endpoint& operator=(Endpoint&& other) noexcept = default;
+			Endpoint& operator=(Endpoint&& other) noexcept;
 
 			/**
 			 * @brief Connect or listen (meaning depends on the derived class).

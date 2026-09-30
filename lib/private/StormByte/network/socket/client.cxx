@@ -100,6 +100,8 @@ Socket::Client::Client(const Connection::Protocol& protocol, StormByte::Shared<L
 	m_logger << Logger::Level::LowLevel << "Created client socket with UUID: " << std::string_view{m_UUID} << std::endl;
 }
 
+Socket::Client::~Client() noexcept = default;
+
 ExpectedVoid Socket::Client::Connect(std::string_view hostname, const unsigned short& port) noexcept {
 	m_logger << Logger::Level::LowLevel << "Connecting to " << std::string_view{hostname} << ":" << port << std::endl;
 	if (m_status.load(std::memory_order_acquire) != Connection::Status::Disconnected) {

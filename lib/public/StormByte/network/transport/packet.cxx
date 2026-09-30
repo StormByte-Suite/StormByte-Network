@@ -43,6 +43,9 @@
 using StormByte::BinaryData;
 using StormByte::Buffer::FIFO;
 using namespace StormByte::Network::Transport;
+
+Packet::~Packet() noexcept = default;
+
 FIFO Packet::Serialize() const noexcept {
 	FIFO result;
 	result.Write(Serializable<OpcodeType>(m_opcode).Serialize());

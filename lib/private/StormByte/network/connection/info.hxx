@@ -79,7 +79,7 @@ namespace StormByte::Network::Connection {
 			/**
 			 * @brief Destructor.
 			 */
-			~Info() noexcept = default;
+			~Info() noexcept;
 
 			/**
 			 * @brief Copy assignment (deleted).

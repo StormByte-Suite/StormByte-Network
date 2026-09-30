@@ -58,6 +58,8 @@ Info::Info(std::shared_ptr<sockaddr> sock_addr) noexcept:
 	Initialize(sock_addr);
 }
 
+Info::~Info() noexcept = default;
+
 StormByte::Expected<Info, Exception> Info::FromHost(std::string_view hostname, const unsigned short& port, const Protocol& protocol) noexcept {
 	auto expected_sock_addr = Info::ResolveHostname(hostname, port, protocol);
 	if (!expected_sock_addr)

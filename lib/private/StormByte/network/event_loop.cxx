@@ -56,6 +56,8 @@ namespace StormByte::Network::Detail {
 		StormByte::Shared<Logger::Log> logger) noexcept:
 	m_listener(listener), m_wakeup_read(wakeup_read), m_status(status), m_logger(std::move(logger)) {}
 
+EventLoop::~EventLoop() noexcept = default;
+
 	Expected<EventLoop::Event, ConnectionClosed> EventLoop::Wait(const SessionList& sessions) noexcept {
 		for (const auto& session: sessions) {
 			if (session->ReadyForProcessing()) {

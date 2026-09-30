@@ -63,6 +63,9 @@ namespace StormByte::Network::Detail {
 			 */
 			Session(std::string uuid, std::shared_ptr<Connection::Client> client) noexcept;
 
+			/** @brief Releases session buffers and queued output in the Network library. */
+			~Session() noexcept;
+
 			/** @brief Client UUID. */
 			const std::string& UUID() const noexcept;
 
@@ -149,8 +152,7 @@ namespace StormByte::Network::Detail {
 				StormByte::BinaryData data; ///< Currently buffered chunk.
 				StormByte::ByteSize offset{0}; ///< Bytes already written from chunk.
 
-				explicit OutputStream(Buffer::Consumer&& consumer) noexcept:
-					source(std::move(consumer)) {}
+				explicit OutputStream(Buffer::Consumer&& consumer) noexcept;
 			};
 			std::deque<OutputStream> m_output_frames; ///< Serialized output streams.
 			StormByte::ByteSize m_output_bytes{0}; ///< Queued output bytes.

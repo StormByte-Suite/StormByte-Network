@@ -68,9 +68,7 @@ namespace StormByte::Network {
 			 * @param deserialize_packet_function Builds domain packets from wire data.
 			 * @param logger Diagnostic logger.
 			 */
-			inline Client(const DeserializePacketFunction& deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept:
-				Endpoint(deserialize_packet_function, logger),
-				m_connection(nullptr) {}
+			Client(const DeserializePacketFunction& deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Copy constructor (deleted).
@@ -80,7 +78,7 @@ namespace StormByte::Network {
 			/**
 			 * @brief Move constructor.
 			 */
-			Client(Client&& other) noexcept = default;
+			Client(Client&& other) noexcept;
 
 			/**
 			 * @brief Destructor (out-of-line in .cxx).
@@ -95,7 +93,7 @@ namespace StormByte::Network {
 			/**
 			 * @brief Move assignment.
 			 */
-			Client& operator=(Client&& other) noexcept = default;
+			Client& operator=(Client&& other) noexcept;
 
 			/**
 			 * @brief Connect to a remote host.

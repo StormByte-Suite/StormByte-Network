@@ -45,6 +45,9 @@ Client::Client(std::shared_ptr<Socket::Client> socket, Buffer::Pipeline in_pipel
 	m_in_pipeline(in_pipeline),
 	m_out_pipeline(out_pipeline)
 {}
+
+Client::~Client() noexcept = default;
+
 bool Client::Send(Transport::Frame&& frame, StormByte::Shared<Logger::Log> logger) noexcept {
 	ExpectedVoid result = m_socket->Send(frame.ProcessOutput(m_out_pipeline, logger));
 	if (!result) {

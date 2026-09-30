@@ -75,27 +75,27 @@ namespace StormByte::Network::Transport {
 			/**
 			 * @brief Copy constructor.
 			 */
-			Frame(const Frame& other) noexcept = default;
+			Frame(const Frame& other);
 
 			/**
 			 * @brief Move constructor.
 			 */
-			Frame(Frame&& other) noexcept = default;
+			Frame(Frame&& other) noexcept;
 
 			/**
 			 * @brief Destructor.
 			 */
-			virtual ~Frame() noexcept = default;
+			virtual ~Frame() noexcept;
 
 			/**
 			 * @brief Copy assignment.
 			 */
-			Frame& operator=(const Frame& other) = default;
+			Frame& operator=(const Frame& other);
 
 			/**
 			 * @brief Move assignment.
 			 */
-			Frame& operator=(Frame&& other) noexcept = default;
+			Frame& operator=(Frame&& other) noexcept;
 
 			/**
 			 * @brief Read one frame from the socket.
@@ -140,15 +140,13 @@ namespace StormByte::Network::Transport {
 			/**
 			 * @brief Empty frame (error path).
 			 */
-			Frame() noexcept = default;
+			Frame() noexcept;
 
 			/**
 			 * @brief Construct from opcode and payload.
 			 * @param opcode Opcode.
 			 * @param payload Payload (moved).
 			 */
-			Frame(Packet::OpcodeType opcode, StormByte::BinaryData&& payload) noexcept:
-			m_opcode(opcode),
-			m_payload(std::move(payload)) {}
+			Frame(Packet::OpcodeType opcode, StormByte::BinaryData&& payload) noexcept;
 	};
 }

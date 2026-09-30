@@ -46,6 +46,38 @@ using namespace StormByte::Buffer;
 using namespace StormByte::Network;
 using namespace StormByte::Network::Transport;
 
+Frame::~Frame() noexcept = default;
+
+Frame::Frame(const Frame& other):
+	m_opcode(other.m_opcode),
+	m_payload(other.m_payload) {}
+
+Frame::Frame(Frame&& other) noexcept:
+	m_opcode(other.m_opcode),
+	m_payload(std::move(other.m_payload)) {}
+
+Frame& Frame::operator=(const Frame& other) {
+	if (this != &other) {
+		m_opcode = other.m_opcode;
+		m_payload = other.m_payload;
+	}
+	return *this;
+}
+
+Frame& Frame::operator=(Frame&& other) noexcept {
+	if (this != &other) {
+		m_opcode = other.m_opcode;
+		m_payload = std::move(other.m_payload);
+	}
+	return *this;
+}
+
+Frame::Frame() noexcept = default;
+
+Frame::Frame(Packet::OpcodeType opcode, StormByte::BinaryData&& payload) noexcept:
+	m_opcode(opcode),
+	m_payload(std::move(payload)) {}
+
 Frame::Frame(const Packet& packet) noexcept {
 	FIFO packet_raw = packet.Serialize();
 	m_opcode = packet.Opcode();
