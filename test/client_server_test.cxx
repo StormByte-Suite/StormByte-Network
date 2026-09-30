@@ -54,6 +54,7 @@
 #ifdef UNIX
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #else
@@ -161,6 +162,24 @@ bool ReceiveRawBytes(RawSocket socket_handle, std::span<std::byte> data) {
 	}
 
 	return true;
+}
+
+bool WaitForRawDisconnect(RawSocket socket_handle, const std::chrono::seconds timeout_duration) {
+	fd_set read_fds;
+	FD_ZERO(&read_fds);
+	FD_SET(socket_handle, &read_fds);
+	timeval timeout_value{};
+	timeout_value.tv_sec = static_cast<decltype(timeout_value.tv_sec)>(timeout_duration.count());
+#ifdef WINDOWS
+	const int ready = select(0, &read_fds, nullptr, nullptr, &timeout_value);
+#else
+	const int ready = select(socket_handle + 1, &read_fds, nullptr, nullptr, &timeout_value);
+#endif
+	if (ready <= 0)
+		return false;
+
+	char byte = 0;
+	return ::recv(socket_handle, &byte, 1, 0) <= 0;
 }
 
 namespace Test {
@@ -953,6 +972,164 @@ int TestRequestAdditionalCommands() {
 	RETURN_TEST(fn_name, 0);
 }
 
+int TestClientRetryAfterFailedConnect() {
+	constexpr std::string_view fn_name = "TestClientRetryAfterFailedConnect";
+	Test::Server server(logger);
+	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT))
+		RETURN_TEST(fn_name, 1);
+
+	Test::Client client(logger);
+	const auto invalid_protocol = static_cast<Net::Connection::Protocol>(-1);
+	ASSERT_FALSE(fn_name, client.Connect(invalid_protocol, HOST, PORT));
+	ASSERT_TRUE(fn_name, client.Status() == Net::Connection::Status::Disconnected);
+	ASSERT_TRUE(fn_name, client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, client.RequestPing());
+
+	ASSERT_FALSE(fn_name, client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, client.Status() == Net::Connection::Status::Connected);
+	ASSERT_TRUE(fn_name, client.RequestPing());
+
+	client.Disconnect();
+	ASSERT_TRUE(fn_name, client.Status() == Net::Connection::Status::Disconnected);
+	ASSERT_TRUE(fn_name, client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, client.RequestPing());
+	client.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(fn_name, 0);
+}
+
+int TestServerRetryAfterFailedConnectAndRestart() {
+	constexpr std::string_view fn_name = "TestServerRetryAfterFailedConnectAndRestart";
+	Test::Server server(logger);
+	const auto invalid_protocol = static_cast<Net::Connection::Protocol>(-1);
+	ASSERT_FALSE(fn_name, server.Connect(invalid_protocol, HOST, PORT));
+	ASSERT_TRUE(fn_name, server.Status() == Net::Connection::Status::Disconnected);
+
+	ASSERT_TRUE(fn_name, server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	Test::Client first_client(logger);
+	ASSERT_TRUE(fn_name, first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, first_client.RequestPing());
+	first_client.Disconnect();
+	server.Disconnect();
+	ASSERT_TRUE(fn_name, server.Status() == Net::Connection::Status::Disconnected);
+
+	ASSERT_TRUE(fn_name, server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	Test::Client second_client(logger);
+	ASSERT_TRUE(fn_name, second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, second_client.RequestPing());
+	second_client.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(fn_name, 0);
+}
+
+int TestMalformedFramesDisconnectOnlyPeer() {
+	constexpr std::string_view fn_name = "TestMalformedFramesDisconnectOnlyPeer";
+	Test::Server server(logger);
+	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT))
+		RETURN_TEST(fn_name, 1);
+
+	auto make_header = [](const Transport::Packet::OpcodeType opcode, const std::size_t payload_size) {
+		StormByte::BinaryData header = Serializable<Transport::Packet::OpcodeType>(opcode).Serialize();
+		const StormByte::BinaryData size_bytes = Serializable<std::size_t>(payload_size).Serialize();
+		header.insert(header.end(), size_bytes.begin(), size_bytes.end());
+		return header;
+	};
+
+	const RawSocket unknown_opcode_socket = ConnectRawSocket();
+	if (unknown_opcode_socket == invalid_raw_socket) {
+		server.Disconnect();
+		RETURN_TEST(fn_name, 1);
+	}
+	const StormByte::BinaryData unknown_opcode_frame = make_header(
+		static_cast<Transport::Packet::OpcodeType>(0xFFFF), 0);
+	const bool unknown_sent = SendRawBytes(unknown_opcode_socket,
+		std::span<const std::byte>{unknown_opcode_frame.data(), unknown_opcode_frame.size()});
+	const bool unknown_closed = unknown_sent && WaitForRawDisconnect(unknown_opcode_socket, std::chrono::seconds{3});
+	CloseRawSocket(unknown_opcode_socket);
+	ASSERT_TRUE(fn_name, unknown_closed);
+
+	const RawSocket malformed_payload_socket = ConnectRawSocket();
+	if (malformed_payload_socket == invalid_raw_socket) {
+		server.Disconnect();
+		RETURN_TEST(fn_name, 1);
+	}
+	const StormByte::BinaryData malformed_header = make_header(
+		static_cast<Transport::Packet::OpcodeType>(Test::Packet::Opcode::C_MSG_ASKNAMELIST), 1);
+	const std::byte malformed_payload{0xAB};
+	const bool malformed_sent = SendRawBytes(malformed_payload_socket,
+		std::span<const std::byte>{malformed_header.data(), malformed_header.size()})
+		&& SendRawBytes(malformed_payload_socket, std::span<const std::byte>{&malformed_payload, 1});
+	const bool malformed_closed = malformed_sent
+		&& WaitForRawDisconnect(malformed_payload_socket, std::chrono::seconds{3});
+	CloseRawSocket(malformed_payload_socket);
+	ASSERT_TRUE(fn_name, malformed_closed);
+
+	const RawSocket truncated_payload_socket = ConnectRawSocket();
+	if (truncated_payload_socket == invalid_raw_socket) {
+		server.Disconnect();
+		RETURN_TEST(fn_name, 1);
+	}
+	const StormByte::BinaryData truncated_header = make_header(
+		static_cast<Transport::Packet::OpcodeType>(Test::Packet::Opcode::C_MSG_ECHOTEXT), 16);
+	const std::byte partial_payload{0xAB};
+	const bool partial_frame_sent = SendRawBytes(truncated_payload_socket,
+		std::span<const std::byte>{truncated_header.data(), truncated_header.size()})
+		&& SendRawBytes(truncated_payload_socket, std::span<const std::byte>{&partial_payload, 1});
+	CloseRawSocket(truncated_payload_socket);
+	ASSERT_TRUE(fn_name, partial_frame_sent);
+
+	Test::Client healthy_client(logger);
+	ASSERT_TRUE(fn_name, healthy_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, healthy_client.RequestPing());
+	healthy_client.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(fn_name, 0);
+}
+
+int TestManyConcurrentClientsKeepResponsesIsolated() {
+	constexpr std::string_view fn_name = "TestManyConcurrentClientsKeepResponsesIsolated";
+	constexpr std::size_t client_count = 12;
+	constexpr std::size_t requests_per_client = 4;
+	Test::Server server(logger);
+	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT))
+		RETURN_TEST(fn_name, 1);
+
+	std::vector<int> client_results(client_count, 0);
+	std::vector<std::thread> clients;
+	clients.reserve(client_count);
+	for (std::size_t client_index = 0; client_index < client_count; ++client_index) {
+		clients.emplace_back([&, client_index] {
+			Test::Client client(logger);
+			if (!client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
+				client_results[client_index] = 1;
+				return;
+			}
+
+			for (std::size_t request_index = 0; request_index < requests_per_client; ++request_index) {
+				const std::string request = std::format("client-{} request-{}", client_index, request_index);
+				auto response = client.RequestEchoText(request);
+				if (!response || response.value() != request) {
+					client_results[client_index] = 1;
+					break;
+				}
+			}
+
+			client.Disconnect();
+		});
+	}
+
+	for (auto& client_thread : clients) {
+		if (client_thread.joinable())
+			client_thread.join();
+	}
+
+	for (const int result : client_results)
+		ASSERT_EQUAL(fn_name, result, 0);
+
+	server.Disconnect();
+	RETURN_TEST(fn_name, 0);
+}
+
 int TestClientDisconnectKeepsServerAlive() {
 	constexpr std::string_view fn_name = "TestClientDisconnectKeepsServerAlive";
 
@@ -1215,6 +1392,10 @@ int main() {
 	result += TestRequestRandomNumber();
 	result += TestRequestLargeDataEchoed();
 	result += TestRequestAdditionalCommands();
+	result += TestClientRetryAfterFailedConnect();
+	result += TestServerRetryAfterFailedConnectAndRestart();
+	result += TestMalformedFramesDisconnectOnlyPeer();
+	result += TestManyConcurrentClientsKeepResponsesIsolated();
 	result += TestClientDisconnectKeepsServerAlive();
 	result += TestDisconnectRequestedByHandler();
 	result += TestSlowHandlerDoesNotBlockOtherClients();
