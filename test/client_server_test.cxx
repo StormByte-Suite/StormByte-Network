@@ -782,6 +782,38 @@ namespace Test {
 	};
 }
 
+int TestDeserializerFunctionCopy() {
+	constexpr std::string_view test_name = "TestDeserializerFunctionCopy";
+	int invocation_count = 0;
+	int destruction_count = 0;
+	struct Probe {
+		int* invocations;
+		int* destructions;
+
+		~Probe() noexcept {
+			++*destructions;
+		}
+
+		PacketPointer operator()(Transport::Packet::OpcodeType, Consumer,
+			StormByte::Shared<Log>) const {
+			++*invocations;
+			return nullptr;
+		}
+	};
+
+	{
+		Probe probe{&invocation_count, &destruction_count};
+		DeserializePacketFunction original{probe};
+		DeserializePacketFunction copy = original;
+		(void)copy(0, Consumer{}, {});
+		ASSERT_TRUE(test_name, invocation_count == 1);
+	}
+
+	ASSERT_TRUE(test_name, invocation_count == 1);
+	ASSERT_TRUE(test_name, destruction_count == 3);
+	return 0;
+}
+
 int TestRequestNameList() {
 	constexpr std::string_view fn_name = "TestRequestNameList";
 
@@ -1178,6 +1210,7 @@ int TestFragmentedAndBatchedFrames() {
 
 int main() {
 	int result = 0;
+	result += TestDeserializerFunctionCopy();
 	result += TestRequestNameList();
 	result += TestRequestRandomNumber();
 	result += TestRequestLargeDataEchoed();

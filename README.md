@@ -107,18 +107,21 @@ Under `StormByte::Network`:
 
 Sockets, frames and Winsock bootstrap are private.
 
+`DeserializePacketFunction` accepts copyable callables. Its target storage and clone/destroy trampolines stay in the caller's module, so Network can retain and invoke the decoder without freeing callback memory through its own CRT.
+
 ## Examples
 
 ### A client
 
 ```cpp
 #include <StormByte/network/client.hxx>
+#include <utility>
 
 class AppClient : public StormByte::Network::Client {
 public:
-	AppClient(const StormByte::Network::DeserializePacketFunction& fn,
+	AppClient(StormByte::Network::DeserializePacketFunction fn,
 	          StormByte::Shared<StormByte::Logger::Log> log)
-		: Client(fn, log) {}
+		: Client(std::move(fn), std::move(log)) {}
 
 protected:
 	StormByte::Buffer::Pipeline InputPipeline() const noexcept override {

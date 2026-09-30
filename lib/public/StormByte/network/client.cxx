@@ -43,9 +43,9 @@
 #include <StormByte/network/transport/frame.hxx>
 #include <StormByte/network/transport/packet.hxx>
 using namespace StormByte::Network;
-Client::Client(const DeserializePacketFunction& deserialize_packet_function,
+Client::Client(DeserializePacketFunction deserialize_packet_function,
 	StormByte::Shared<Logger::Log> logger) noexcept:
-	Endpoint(deserialize_packet_function, std::move(logger)),
+	Endpoint(std::move(deserialize_packet_function), std::move(logger)),
 	m_connection(nullptr) {}
 
 Client::~Client() noexcept {

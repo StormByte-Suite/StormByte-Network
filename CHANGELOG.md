@@ -23,6 +23,8 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 - Ported Network APIs and payload handling to the StormByte 2.0 types and Buffer interfaces, including `BinaryData`, `ByteSize`, `string_view`, `Shared<Log>`, and `ReadOnly`/`WriteOnly` pipes.
 - Network's original source is now dual-licensed under LGPL-3.0-or-later or a commercial license; third-party and bundled module licenses remain separate.
 - Moved heap-owning public/private lifecycle operations, frame payload operations, and exported exception RTTI anchors out of headers to keep DLL allocation and destruction inside their owning modules.
+- Replaced the deserializer's `std::function` storage with caller-allocated callback trampolines so the Network DLL never allocates, clones, or frees the callback target across CRTs.
+- Propagated the selected shared/static mode to the bundled Buffer component instead of forcing it shared in Network's wrapper.
 
 ## [1.1.0] - 2026-09-13
 

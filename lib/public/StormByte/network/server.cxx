@@ -52,8 +52,8 @@
 #endif
 #include <algorithm>
 using namespace StormByte::Network;
-Server::Server(const DeserializePacketFunction& deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept:
-	Endpoint(deserialize_packet_function, logger),
+Server::Server(DeserializePacketFunction deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept:
+	Endpoint(std::move(deserialize_packet_function), std::move(logger)),
 	m_socket_server(nullptr),
 	m_status(Connection::Status::Disconnected),
 	m_accept_thread(),

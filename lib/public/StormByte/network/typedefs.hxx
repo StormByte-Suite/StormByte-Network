@@ -41,6 +41,7 @@
 #pragma once
 
 #include <StormByte/buffer/fifo.hxx>
+#include <StormByte/buffer/consumer.hxx>
 #include <StormByte/expected.hxx>
 #include <StormByte/logger/log.hxx>
 #include <StormByte/network/connection/protocol.hxx>
@@ -48,13 +49,14 @@
 #include <StormByte/network/connection/status.hxx>
 #include <StormByte/network/exception.hxx>
 #include <StormByte/network/transport/packet.hxx>
+#include <StormByte/type_traits.hxx>
 
 #ifdef WINDOWS
 #include <winsock2.h>
 #endif
 
-#include <functional>
 #include <memory>
+#include <utility>
 
 /**
  * @brief Network module of the StormByte suite.
@@ -80,11 +82,122 @@ namespace StormByte::Network {
 	using PacketPointer = std::shared_ptr<Transport::Packet>;								///< Shared packet
 
 	/**
-	 * @brief Callback that builds a Packet from opcode + payload consumer.
+	 * @class DeserializePacketFunction
+	 * @brief Caller-owned callback that builds a packet from opcode and payload.
+	 *
+	 * The context is allocated, cloned, invoked, and destroyed by function
+	 * pointers instantiated in the caller's translation unit. The Network DLL
+	 * stores only the context pointer and those trampolines; it never allocates
+	 * or frees the callback target across the CRT boundary.
 	 */
-	using DeserializePacketFunction = std::function<PacketPointer(
-		Transport::Packet::OpcodeType,
-		Buffer::Consumer,
-		StormByte::Shared<Logger::Log>
-	)>;
+	class DeserializePacketFunction {
+		public:
+			using OpcodeType = Transport::Packet::OpcodeType; ///< Wire opcode type.
+			using InvokeFunction = PacketPointer (*)(void*, OpcodeType, Buffer::Consumer, StormByte::Shared<Logger::Log>); ///< Invocation trampoline.
+			using CloneFunction = void* (*)(const void*); ///< Caller-allocator clone trampoline.
+			using DestroyFunction = void (*)(void*) noexcept; ///< Caller-allocator destroy trampoline.
+
+			/** @brief Empty callback. */
+			DeserializePacketFunction() noexcept = default;
+
+			/**
+			 * @brief Own a caller-allocated callback target.
+			 * @tparam Callable Copy-constructible callback type.
+			 * @param callable Callback taking opcode, payload Consumer, and Shared logger.
+			 */
+			template<typename Callable>
+			requires (!StormByte::Type::SameAs<std::decay_t<Callable>, DeserializePacketFunction>
+				&& StormByte::Type::CopyConstructible<std::decay_t<Callable>>)
+			DeserializePacketFunction(Callable&& callable):
+				m_context(new std::decay_t<Callable>(std::forward<Callable>(callable))),
+				m_invoke(&Invoke<std::decay_t<Callable>>),
+				m_clone(&Clone<std::decay_t<Callable>>),
+				m_destroy(&Destroy<std::decay_t<Callable>>) {}
+
+			/**
+			 * @brief Clone using the caller's target allocator trampoline.
+			 * @param other Source callback.
+			 */
+			STORMBYTE_NETWORK_PUBLIC DeserializePacketFunction(const DeserializePacketFunction& other);
+
+			/**
+			 * @brief Transfer callback ownership without touching its target.
+			 * @param other Source callback.
+			 */
+			STORMBYTE_NETWORK_PUBLIC DeserializePacketFunction(DeserializePacketFunction&& other) noexcept;
+
+			/** @brief Destroy through the caller's destruction trampoline. */
+			STORMBYTE_NETWORK_PUBLIC ~DeserializePacketFunction() noexcept;
+
+			/**
+			 * @brief Clone-assign using the caller's target allocator trampoline.
+			 * @param other Source callback.
+			 * @return This callback.
+			 */
+			STORMBYTE_NETWORK_PUBLIC DeserializePacketFunction& operator=(const DeserializePacketFunction& other);
+
+			/**
+			 * @brief Transfer-assign callback ownership.
+			 * @param other Source callback.
+			 * @return This callback.
+			 */
+			STORMBYTE_NETWORK_PUBLIC DeserializePacketFunction& operator=(DeserializePacketFunction&& other) noexcept;
+
+			/**
+			 * @brief Invoke the packet decoder.
+			 * @param opcode Packet opcode.
+			 * @param payload Payload consumer.
+			 * @param logger Shared diagnostic logger.
+			 * @return Decoded packet, or empty pointer.
+			 */
+			STORMBYTE_NETWORK_PUBLIC PacketPointer operator()(OpcodeType opcode, Buffer::Consumer payload,
+				StormByte::Shared<Logger::Log> logger) const;
+
+			/** @brief Whether a callable target is present. */
+			explicit operator bool() const noexcept {
+				return m_context != nullptr;
+			}
+
+		private:
+			/**
+			 * @brief Invoke @p context's callback in the caller's module.
+			 * @tparam Callable Concrete callback type.
+			 * @param context Caller-owned callback storage.
+			 * @param opcode Packet opcode.
+			 * @param payload Payload consumer.
+			 * @param logger Shared logger.
+			 * @return Decoded packet.
+			 */
+			template<typename Callable>
+			static PacketPointer Invoke(void* context, OpcodeType opcode, Buffer::Consumer payload,
+				StormByte::Shared<Logger::Log> logger) {
+				return (*static_cast<Callable*>(context))(opcode, std::move(payload), std::move(logger));
+			}
+
+			/**
+			 * @brief Clone @p context using the caller's allocator.
+			 * @tparam Callable Concrete callback type.
+			 * @param context Caller-owned callback storage.
+			 * @return Cloned storage allocated by the caller module.
+			 */
+			template<typename Callable>
+			static void* Clone(const void* context) {
+				return new Callable(*static_cast<const Callable*>(context));
+			}
+
+			/**
+			 * @brief Destroy @p context using the caller's allocator.
+			 * @tparam Callable Concrete callback type.
+			 * @param context Caller-owned callback storage.
+			 */
+			template<typename Callable>
+			static void Destroy(void* context) noexcept {
+				delete static_cast<Callable*>(context);
+			}
+
+			void* m_context = nullptr; ///< Target owned and destroyed by caller trampolines.
+			InvokeFunction m_invoke = nullptr; ///< Caller-compiled invoke trampoline.
+			CloneFunction m_clone = nullptr; ///< Caller-compiled clone trampoline.
+			DestroyFunction m_destroy = nullptr; ///< Caller-compiled destroy trampoline.
+	};
 }

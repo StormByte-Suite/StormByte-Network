@@ -41,9 +41,51 @@
 #include <StormByte/network/connection/client.hxx>
 #include <StormByte/network/endpoint.hxx>
 using namespace StormByte::Network;
-Endpoint::Endpoint(const DeserializePacketFunction& deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept:
-	m_deserialize_packet_function(deserialize_packet_function),
-	m_logger(logger) {}
+DeserializePacketFunction::DeserializePacketFunction(const DeserializePacketFunction& other):
+	m_context(other.m_context ? other.m_clone(other.m_context) : nullptr),
+	m_invoke(other.m_invoke),
+	m_clone(other.m_clone),
+	m_destroy(other.m_destroy) {}
+
+DeserializePacketFunction::DeserializePacketFunction(DeserializePacketFunction&& other) noexcept:
+	m_context(std::exchange(other.m_context, nullptr)),
+	m_invoke(std::exchange(other.m_invoke, nullptr)),
+	m_clone(std::exchange(other.m_clone, nullptr)),
+	m_destroy(std::exchange(other.m_destroy, nullptr)) {}
+
+DeserializePacketFunction::~DeserializePacketFunction() noexcept {
+	if (m_context)
+		m_destroy(m_context);
+}
+
+DeserializePacketFunction& DeserializePacketFunction::operator=(const DeserializePacketFunction& other) {
+	if (this == &other)
+		return *this;
+	DeserializePacketFunction copy(other);
+	return *this = std::move(copy);
+}
+
+DeserializePacketFunction& DeserializePacketFunction::operator=(DeserializePacketFunction&& other) noexcept {
+	if (this != &other) {
+		if (m_context)
+			m_destroy(m_context);
+		m_context = std::exchange(other.m_context, nullptr);
+		m_invoke = std::exchange(other.m_invoke, nullptr);
+		m_clone = std::exchange(other.m_clone, nullptr);
+		m_destroy = std::exchange(other.m_destroy, nullptr);
+	}
+	return *this;
+}
+
+PacketPointer DeserializePacketFunction::operator()(OpcodeType opcode, Buffer::Consumer payload,
+	StormByte::Shared<Logger::Log> logger) const {
+	return m_context ? m_invoke(m_context, opcode, std::move(payload), std::move(logger)) : PacketPointer{};
+}
+
+Endpoint::Endpoint(DeserializePacketFunction deserialize_packet_function,
+	StormByte::Shared<Logger::Log> logger) noexcept:
+	m_deserialize_packet_function(std::move(deserialize_packet_function)),
+	m_logger(std::move(logger)) {}
 
 Endpoint::~Endpoint() noexcept = default;
 
