@@ -8,6 +8,11 @@ else()
 	set(_mode static)
 endif()
 
+set(_opt "BACKEND=host;ALIAS=StormByte::Network")
+if(WIN32)
+	set(_opt "${_opt};LINK={ws2_32;iphlpapi}")
+endif()
+
 buildmaster_component(
 	StormByte-Network
 	"StormByte Suite - Network"
@@ -15,7 +20,7 @@ buildmaster_component(
 	""
 	${_mode}
 	"StormByte-Network"
-	"BACKEND=host;ALIAS=StormByte::Network"
+	"${_opt}"
 )
 
 if(BUILD_SHARED_LIBS)
@@ -33,10 +38,6 @@ set_target_properties(StormByte-Network PROPERTIES
 	CXX_VISIBILITY_PRESET hidden
 	VISIBILITY_INLINES_HIDDEN ON
 )
-
-if(WIN32)
-	target_link_libraries(StormByte-Network PRIVATE ws2_32 iphlpapi)
-endif()
 
 if(MSVC)
 	target_compile_options(StormByte-Network PRIVATE

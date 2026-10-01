@@ -34,6 +34,11 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 - Replaced the deserializer's `std::function` storage with caller-allocated callback trampolines so the Network DLL never allocates, clones, or frees the callback target across CRTs.
 - Propagated the selected shared/static mode to the bundled Buffer component instead of forcing it shared in Network's wrapper.
 
+### Fixed
+
+- Fixed missing `<ws2tcpip.h>` header in Windows server socket implementation when inspecting bound IPv6 addresses.
+- Propagated Windows network system libraries (`ws2_32`, `iphlpapi`) via BuildMaster `LINK=` option string in [lib/CMakeLists.txt](lib/CMakeLists.txt).
+
 ## [1.1.0] - 2026-09-13
 
 ### Changed
