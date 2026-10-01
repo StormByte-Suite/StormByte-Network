@@ -16,6 +16,7 @@ It is not a thin socket wrapper. You inherit `Client` or `Server`, define packet
 ## Table of Contents
 
 - [Repository](#repository)
+- [Documentation](#documentation)
 - [Installation](#installation)
 - [Why StormByte-Network](#why-stormbyte-network)
 - [Features](#features)
@@ -34,6 +35,11 @@ It is not a thin socket wrapper. You inherit `Client` or `Server`, define packet
 ## Repository
 
 - [StormByte-Network](https://github.com/StormBytePP/StormByte-Network)
+
+## Documentation
+
+- This README: how to build, architecture, and examples.
+- Doxygen class reference: [https://dev.stormbyte.org/StormByte-Network/](https://dev.stormbyte.org/StormByte-Network/).
 
 ## Installation
 
