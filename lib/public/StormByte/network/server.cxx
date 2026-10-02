@@ -782,7 +782,7 @@ void Server::ProcessSession(const std::shared_ptr<Detail::Session>& session, boo
 	}
 
 	session->SetInFlight(true);
-	if (!m_pool->Submit({ client_uuid, std::move(packet) })) {
+	if (!m_pool->Submit({ client_uuid, std::move(packet), {} })) {
 		session->SetInFlight(false);
 		session->SetTaskBlocked(true);
 	}

@@ -16,6 +16,14 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ## [Unreleased]
 
+### Changed
+
+- Remote writer lifecycle tests distinguish incomplete writes, failed flushes, unexpected file sizes, and the first mismatching byte offset to diagnose platform-specific visibility failures.
+
+### Fixed
+
+- Explicitly initialized the optional worker operation for packet tasks, eliminating Clang's missing-field-initializer warning without changing task behavior.
+
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.0...HEAD
 
 ## [2.0.0] - 2026-10-02
