@@ -18,6 +18,7 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ### Added
 
+- Added Base-clock telemetry snapshots for each Client and aggregate Server, with shared handles that can outlive their endpoints.
 - **Authorized remote file channels**
     - Added the public, validated `RemoteFileMount` descriptor and application-facing protected mount/attach helpers.
     - Added file-like buffered remote readers and exclusive writers over one bounded peer data plane per Client, with per-operation capabilities and offsets, independent reader cursors, shared-reader/exclusive-writer path reservations, one heartbeat and shared NIC snapshot per peer, and token-scoped CloseToken cleanup.
@@ -25,6 +26,7 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ### Changed
 
+- Aligned Network exceptions with Base's `Path` hierarchy and `std::string_view` message inputs, keeping formatting in the caller module.
 - Updated repository and documentation links for the StormByte-Suite move, refreshed the suite catalog, and removed retired StormByte-String references.
 - Migrated Network to Base 2.0's `Safe::Shared`, `Safe::String` and `Safe::WString` APIs and the current UUID return type. Remote file leaves continue to use Buffer telemetry, whose counters derive from `StormByte::Telemetry` and use Base's named clocks.
 - Doxygen (`ENABLE_DOC`) resolves Buffer, Logger and Base headers via `INCLUDE_PATH` and skips `thirdparty`. No dependency pin change.

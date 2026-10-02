@@ -42,6 +42,7 @@
 
 #include <StormByte/network/endpoint.hxx>
 #include <StormByte/network/remote_file_mount.hxx>
+#include <StormByte/network/server_telemetry.hxx>
 
 #include <atomic>
 #include <filesystem>
@@ -89,7 +90,7 @@ namespace StormByte::Network {
 			 * @param deserialize_packet_function Builds domain packets from wire data.
 			 * @param logger Diagnostic logger.
 			 */
-			Server(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+			Server(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger);
 
 			/**
 			 * @brief Copy constructor (deleted).
@@ -135,6 +136,12 @@ namespace StormByte::Network {
 			 * @return Status.
 			 */
 			Connection::Status Status() const noexcept override;
+
+			/**
+			 * @brief Shared live telemetry aggregated across this Server's sessions.
+			 * @return Server-owned aggregate counters and handler latency.
+			 */
+			StormByte::Safe::Shared<ServerTelemetry> Telemetry() const noexcept;
 
 		protected:
 			/**
@@ -196,6 +203,7 @@ namespace StormByte::Network {
 			struct Command { CommandType type; std::string uuid; }; ///< Loop command
 			std::deque<Command> m_commands; ///< Commands from workers/user callbacks
 			std::mutex m_command_mutex; ///< Protects commands
+			StormByte::Safe::Shared<ServerTelemetry> m_telemetry; ///< Aggregate counters for this Server instance.
 
 			/**
 			 * @brief Accept-loop thread body.

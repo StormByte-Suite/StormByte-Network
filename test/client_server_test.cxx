@@ -1434,8 +1434,92 @@ int TestFragmentedAndBatchedFrames() {
 	RETURN_TEST(fn_name, 0);
 }
 
+int TestTelemetrySnapshotsAndLifetime() {
+	constexpr std::string_view fn_name = "TestTelemetrySnapshotsAndLifetime";
+	StormByte::Safe::Shared<Net::ServerTelemetry> server_telemetry;
+	StormByte::Safe::Shared<Net::ClientTelemetry> first_telemetry;
+	StormByte::Safe::Shared<Net::ClientTelemetry> second_telemetry;
+
+	{
+		auto server = std::make_unique<::Test::Server>(logger);
+		ASSERT_TRUE(fn_name, server->Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+		server_telemetry = server->Telemetry();
+		ASSERT_TRUE(fn_name, static_cast<bool>(server_telemetry));
+
+		{
+			::Test::Client first_client(logger);
+			::Test::Client second_client(logger);
+			ASSERT_TRUE(fn_name, first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+			ASSERT_TRUE(fn_name, second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+			first_telemetry = first_client.Telemetry();
+			second_telemetry = second_client.Telemetry();
+			ASSERT_TRUE(fn_name, static_cast<bool>(first_telemetry));
+			ASSERT_TRUE(fn_name, static_cast<bool>(second_telemetry));
+			ASSERT_TRUE(fn_name, first_telemetry.get() != second_telemetry.get());
+
+			ASSERT_TRUE(fn_name, first_client.RequestPing());
+			ASSERT_TRUE(fn_name, second_client.RequestPing());
+
+			ASSERT_TRUE(fn_name, first_telemetry->ConnectionAttempts() == 1);
+			ASSERT_TRUE(fn_name, first_telemetry->ConnectionsEstablished() == 1);
+			ASSERT_TRUE(fn_name, first_telemetry->ConnectionFailures() == 0);
+			ASSERT_TRUE(fn_name, first_telemetry->Connected());
+			ASSERT_TRUE(fn_name, first_telemetry->Requests() == 1);
+			ASSERT_TRUE(fn_name, first_telemetry->Responses() == 1);
+			ASSERT_TRUE(fn_name, first_telemetry->RequestsWithoutResponse() == 0);
+			ASSERT_TRUE(fn_name, first_telemetry->RequestLatencySamples() == 1);
+			ASSERT_TRUE(fn_name, first_telemetry->MeanRequestLatency().count() >= 0);
+
+			ASSERT_TRUE(fn_name, second_telemetry->ConnectionAttempts() == 1);
+			ASSERT_TRUE(fn_name, second_telemetry->ConnectionsEstablished() == 1);
+			ASSERT_TRUE(fn_name, second_telemetry->Requests() == 1);
+			ASSERT_TRUE(fn_name, second_telemetry->Responses() == 1);
+			ASSERT_TRUE(fn_name, second_telemetry->RequestsWithoutResponse() == 0);
+			ASSERT_TRUE(fn_name, second_telemetry->RequestLatencySamples() == 1);
+
+			ASSERT_TRUE(fn_name, server_telemetry->CurrentConnections() == 2);
+			ASSERT_TRUE(fn_name, server_telemetry->AcceptedConnections() == 2);
+			ASSERT_TRUE(fn_name, server_telemetry->ClosedConnections() == 0);
+			ASSERT_TRUE(fn_name, server_telemetry->PeakConnections() == 2);
+			ASSERT_TRUE(fn_name, server_telemetry->PacketsDispatched() == 2);
+			ASSERT_TRUE(fn_name, server_telemetry->HandlersCompleted() == 2);
+			ASSERT_TRUE(fn_name, server_telemetry->HandlersWithoutResponse() == 0);
+			ASSERT_TRUE(fn_name, server_telemetry->HandlerErrors() == 0);
+			ASSERT_TRUE(fn_name, server_telemetry->HandlerLatencySamples() == 2);
+			ASSERT_TRUE(fn_name, server_telemetry->MeanHandlerLatency().count() >= 0);
+
+			first_client.Disconnect();
+			second_client.Disconnect();
+			ASSERT_FALSE(fn_name, first_telemetry->Connected());
+		}
+
+		server->Disconnect();
+		ASSERT_TRUE(fn_name, server_telemetry->CurrentConnections() == 0);
+		ASSERT_TRUE(fn_name, server_telemetry->ClosedConnections() == 2);
+	}
+
+	ASSERT_TRUE(fn_name, server_telemetry->AcceptedConnections() == 2);
+	ASSERT_TRUE(fn_name, server_telemetry->PacketsDispatched() == 2);
+	ASSERT_TRUE(fn_name, first_telemetry->Responses() == 1);
+	ASSERT_TRUE(fn_name, second_telemetry->Responses() == 1);
+	return 0;
+}
+
+int TestNetworkExceptionStringView() {
+	constexpr std::string_view fn_name = "TestNetworkExceptionStringView";
+	const Net::Exception network_error{std::string_view{"request failed"}};
+	const Net::ConnectionError connection_error{std::string_view{"socket closed"}};
+	const Net::FrameError frame_error{std::string_view{"invalid frame"}};
+	ASSERT_TRUE(fn_name, std::string_view{network_error.what()} == "StormByte.Network: request failed");
+	ASSERT_TRUE(fn_name, std::string_view{connection_error.what()} == "StormByte.Network.Connection: socket closed");
+	ASSERT_TRUE(fn_name, std::string_view{frame_error.what()} == "StormByte.Network.Transport.Frame: invalid frame");
+	return 0;
+}
+
 int main() {
 	int result = 0;
+	result += TestNetworkExceptionStringView();
+	result += TestTelemetrySnapshotsAndLifetime();
 	result += TestRemoteFileMountCodec();
 	result += TestDeserializerFunctionCopy();
 	result += TestRequestNameList();

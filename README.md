@@ -109,10 +109,17 @@ Under `StormByte::Network`:
 | `Connection::Protocol` | IPv4 / IPv6 |
 | `Connection::Status` | Lifecycle |
 | `Exception` / `ConnectionError` / `ConnectionClosed` | Errors |
+| `Telemetry` / `ClientTelemetry` / `ServerTelemetry` | Base-clock measurements and retained per-client / aggregate-server snapshots |
 | `RemoteFileMount` | Public, versioned descriptor/result for an application-authorized file mount |
 | `BufferedRemoteFileReader` / `BufferedRemoteFileWriter` | Buffer file-like handles over private channels |
 
 Sockets, frames and Winsock bootstrap are private.
+
+### Network telemetry
+
+`Client::Telemetry()` returns `StormByte::Safe::Shared<ClientTelemetry>` for that client instance. It records connection attempts/results and application `Send` request/response/no-response counts with mean round-trip latency. A no-response result is not necessarily a transport failure: applications may intentionally use one-way commands. `Server::Telemetry()` returns `StormByte::Safe::Shared<ServerTelemetry>` aggregated across all application sessions handled by that server. It records current, accepted, closed and peak connections; packets dispatched; handlers completed, empty and errored; mean handler duration; and worker-queue backpressure events. Counters are cumulative for the telemetry object's lifetime; connection count is a live gauge.
+
+Keep either shared handle to retain its last snapshot after the owning `Client` or `Server` is destroyed. Timed samples use named clocks from `StormByte::Telemetry`. Remote-file byte/read/write statistics remain on Buffer's existing per-handle telemetry and are not folded into the application-protocol counters.
 
 ### Remote file channels
 

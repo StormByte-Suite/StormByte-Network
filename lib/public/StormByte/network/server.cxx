@@ -94,17 +94,19 @@ namespace {
 }
 
 using namespace StormByte::Network;
-Server::Server(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger) noexcept:
+Server::Server(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger):
 	Endpoint(std::move(deserialize_packet_function), std::move(logger)),
 	m_socket_server(nullptr),
 	m_status(Connection::Status::Disconnected),
 	m_accept_thread(),
 #ifdef WINDOWS
 	m_wakeup_read(INVALID_SOCKET),
-	m_wakeup_write(INVALID_SOCKET)
+	m_wakeup_write(INVALID_SOCKET),
+	m_telemetry(StormByte::Safe::Heap::MakeShared<ServerTelemetry>())
 #else
 	m_wakeup_read(-1),
-	m_wakeup_write(-1)
+	m_wakeup_write(-1),
+	m_telemetry(StormByte::Safe::Heap::MakeShared<ServerTelemetry>())
 #endif
 {}
 Server::Server(Server&& other) noexcept:
@@ -117,7 +119,8 @@ Server::Server(Server&& other) noexcept:
 	m_sessions(std::move(other.m_sessions)),
 	m_pool(std::move(other.m_pool)),
 	m_protocol(other.m_protocol),
-	m_bind_address(std::move(other.m_bind_address)) {
+	m_bind_address(std::move(other.m_bind_address)),
+	m_telemetry(std::move(other.m_telemetry)) {
 	{
 		std::scoped_lock lock(m_remote_file_mutex, other.m_remote_file_mutex);
 		m_remote_files = std::move(other.m_remote_files);
@@ -142,6 +145,10 @@ Connection::Status Server::Status() const noexcept {
 	return m_status.load(std::memory_order_acquire);
 }
 
+StormByte::Safe::Shared<ServerTelemetry> Server::Telemetry() const noexcept {
+	return m_telemetry;
+}
+
 Server& Server::operator=(Server&& other) noexcept {
 	if (this != &other) {
 		Disconnect();
@@ -150,6 +157,7 @@ Server& Server::operator=(Server&& other) noexcept {
 		m_status.store(other.m_status.load(std::memory_order_relaxed), std::memory_order_relaxed);
 		m_protocol = other.m_protocol;
 		m_bind_address = std::move(other.m_bind_address);
+		m_telemetry = std::move(other.m_telemetry);
 		m_accept_thread = std::move(other.m_accept_thread);
 		m_wakeup_read = other.m_wakeup_read;
 		m_wakeup_write = other.m_wakeup_write;
@@ -175,6 +183,7 @@ Server& Server::operator=(Server&& other) noexcept {
 }
 
 bool Server::Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) {
+	if (!m_telemetry) m_telemetry = StormByte::Safe::Heap::MakeShared<ServerTelemetry>();
 	if (m_socket_server) {
 		m_logger << Logger::Level::Error << "Server is already running." << std::endl;
 		return false;
@@ -205,14 +214,26 @@ bool Server::Connect(const Connection::Protocol& protocol, std::string_view addr
 		worker_count = worker_count == 0 ? 4 : std::min(worker_count, static_cast<std::size_t>(8));
 		m_pool = std::make_unique<Detail::WorkerPool>(worker_count, 64,
 			[this](std::string_view uuid, PacketPointer packet) {
-				return ProcessClientPacket(uuid, std::move(packet));
+				if (!m_telemetry) return ProcessClientPacket(uuid, std::move(packet));
+				m_telemetry->RecordPacketDispatched();
+				auto sample = m_telemetry->MeasureHandler();
+				PacketPointer response = ProcessClientPacket(uuid, std::move(packet));
+				m_telemetry->RecordHandlerResult(sample.Stop(), static_cast<bool>(response));
+				return response;
 			},
 			[this](Detail::WorkerPool::Completion completion) {
 				CompletionReason reason = CompletionReason::Error;
 				switch (completion.reason) {
-					case Detail::WorkerPool::CompletionReason::Success: reason = CompletionReason::Success; break;
-					case Detail::WorkerPool::CompletionReason::NullHandler: reason = CompletionReason::NullHandler; break;
-					case Detail::WorkerPool::CompletionReason::Error: reason = CompletionReason::Error; break;
+					case Detail::WorkerPool::CompletionReason::Success:
+						reason = CompletionReason::Success;
+						break;
+					case Detail::WorkerPool::CompletionReason::NullHandler:
+						reason = CompletionReason::NullHandler;
+						break;
+					case Detail::WorkerPool::CompletionReason::Error:
+						reason = CompletionReason::Error;
+						if (m_telemetry) m_telemetry->RecordHandlerError();
+						break;
 				}
 
 				PostCompletion({ std::move(completion.uuid), std::move(completion.packet), reason });
@@ -538,6 +559,7 @@ void Server::DisconnectClientOnLoop(std::string_view uuid) noexcept {
 
 	auto session = session_it->second;
 	m_sessions.erase(session_it);
+	if (m_telemetry) m_telemetry->RecordConnectionClosed();
 	session->Close();
 	if (session->Client() && session->Client()->Socket()) {
 		session->Client()->Socket()->Disconnect();
@@ -563,7 +585,9 @@ void Server::AcceptOneClient() noexcept {
 #endif
 	const std::string client_uuid = expected_client.value()->UUID();
 	auto connection = CreateConnection(expected_client.value());
-	m_sessions.emplace(client_uuid, std::make_shared<Detail::Session>(client_uuid, std::move(connection)));
+	const auto [_, inserted] = m_sessions.emplace(client_uuid,
+		std::make_shared<Detail::Session>(client_uuid, std::move(connection)));
+	if (inserted && m_telemetry) m_telemetry->RecordConnectionAccepted();
 	m_logger << Logger::Level::LowLevel << "AcceptClients: accepted client uuid=" << std::string_view{client_uuid} << std::endl;
 }
 
@@ -693,6 +717,7 @@ void Server::AcceptClients() noexcept {
 	);
 	for (auto& [uuid, session]: m_sessions) {
 		(void)uuid;
+		if (m_telemetry) m_telemetry->RecordConnectionClosed();
 		session->Close();
 		if (session->Client() && session->Client()->Socket()) {
 			session->Client()->Socket()->Disconnect();
@@ -744,6 +769,7 @@ void Server::ProcessSession(const std::shared_ptr<Detail::Session>& session, boo
 	}
 
 	if (!m_pool->HasCapacity()) {
+		if (m_telemetry) m_telemetry->RecordWorkerQueueBackpressure();
 		session->SetTaskBlocked(true);
 		return;
 	}
