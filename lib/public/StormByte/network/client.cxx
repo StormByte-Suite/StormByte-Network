@@ -46,9 +46,9 @@
 #include <StormByte/network/transport/packet.hxx>
 using namespace StormByte::Network;
 Client::Client(DeserializePacketFunction deserialize_packet_function,
-	StormByte::Safe::Shared<Logger::Log> logger) noexcept:
+	StormByte::Safe::Shared<Logger::Log> logger):
 	Endpoint(std::move(deserialize_packet_function), std::move(logger)),
-	m_connection(nullptr) {}
+	m_connection(nullptr), m_telemetry(StormByte::Safe::Heap::MakeShared<ClientTelemetry>()) {}
 
 Client::~Client() noexcept {
 	Disconnect();
@@ -56,7 +56,8 @@ Client::~Client() noexcept {
 
 Client::Client(Client&& other) noexcept:
 	Endpoint(std::move(other)), m_connection(std::move(other.m_connection)),
-	m_remote_address(std::move(other.m_remote_address)), m_protocol(other.m_protocol) {
+	m_remote_address(std::move(other.m_remote_address)), m_protocol(other.m_protocol),
+	m_telemetry(std::move(other.m_telemetry)) {
 	std::scoped_lock lock(other.m_remote_file_mutex);
 	m_remote_file_plane = std::move(other.m_remote_file_plane);
 }
@@ -75,11 +76,14 @@ Client& Client::operator=(Client&& other) noexcept {
 	m_remote_address = std::move(other.m_remote_address);
 	m_protocol = other.m_protocol;
 	m_remote_file_plane = std::move(other.m_remote_file_plane);
+	m_telemetry = std::move(other.m_telemetry);
 	return *this;
 }
 
 bool Client::Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) {
+	if (m_telemetry) m_telemetry->RecordConnectionAttempt();
 	if (m_connection) {
+		if (m_telemetry) m_telemetry->RecordConnectionFailed();
 		m_logger << Logger::Level::Error << "Client is already connected." << std::endl;
 		return false;
 	}
@@ -87,6 +91,7 @@ bool Client::Connect(const Connection::Protocol& protocol, std::string_view addr
 	try {
 		std::shared_ptr<Socket::Client> socket = std::make_shared<Socket::Client>(protocol, m_logger);
 		if (!socket->Connect(address, port)) {
+			if (m_telemetry) m_telemetry->RecordConnectionFailed();
 			m_logger << Logger::Level::Error << "Failed to connect to " << std::string_view{address} << ":" << port
 					<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
 			return false;
@@ -101,10 +106,12 @@ bool Client::Connect(const Connection::Protocol& protocol, std::string_view addr
 			m_remote_file_plane.reset();
 		}
 		m_connection = std::move(connection);
+		if (m_telemetry) m_telemetry->RecordConnectionEstablished();
 		m_logger << Logger::Level::LowLevel << "Successfully connected to " << address << ":" << port
 				<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
 		return true;
 	} catch (const std::bad_alloc& bd) {
+		if (m_telemetry) m_telemetry->RecordConnectionFailed();
 		m_logger << Logger::Level::Error << "Failed to allocate memory for socket: " << bd.what() << std::endl;
 		return false;
 	}
@@ -114,6 +121,7 @@ void Client::Disconnect() noexcept {
 	if (m_connection) {
 		m_logger << Logger::Level::LowLevel << "Disconnecting client." << std::endl;
 		m_connection.reset();
+		if (m_telemetry) m_telemetry->RecordDisconnected();
 	}
 }
 
@@ -122,7 +130,16 @@ Connection::Status Client::Status() const noexcept {
 }
 
 PacketPointer Client::Send(const Transport::Packet& packet) noexcept {
-	return Endpoint::Send(m_connection, packet);
+	if (!m_telemetry) return Endpoint::Send(m_connection, packet);
+	m_telemetry->RecordRequest();
+	auto sample = m_telemetry->MeasureRequest();
+	PacketPointer response = Endpoint::Send(m_connection, packet);
+	m_telemetry->RecordRequestResult(sample.Stop(), static_cast<bool>(response));
+	return response;
+}
+
+StormByte::Safe::Shared<ClientTelemetry> Client::Telemetry() const noexcept {
+	return m_telemetry;
 }
 
 RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mount) noexcept {

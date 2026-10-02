@@ -41,6 +41,7 @@
 #pragma once
 
 #include <StormByte/network/endpoint.hxx>
+#include <StormByte/network/client_telemetry.hxx>
 #include <StormByte/network/remote_file.hxx>
 
 #include <memory>
@@ -70,7 +71,7 @@ namespace StormByte::Network {
 			 * @param deserialize_packet_function Builds domain packets from wire data.
 			 * @param logger Diagnostic logger.
 			 */
-			Client(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+			Client(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger);
 
 			/**
 			 * @brief Copy constructor (deleted).
@@ -117,6 +118,12 @@ namespace StormByte::Network {
 			 */
 			Connection::Status Status() const noexcept override;
 
+			/**
+			 * @brief Shared live telemetry for this Client instance only.
+			 * @return Client-owned counters and request latency.
+			 */
+			StormByte::Safe::Shared<ClientTelemetry> Telemetry() const noexcept;
+
 		protected:
 			/**
 			 * @brief Send @p packet and return the response (or nullptr).
@@ -145,5 +152,6 @@ namespace StormByte::Network {
 			Connection::Protocol m_protocol{Connection::Protocol::IPv4}; ///< Last connected address family.
 			std::mutex m_remote_file_mutex; ///< Serializes peer-plane creation and mount registration.
 			std::shared_ptr<Detail::RemoteFile::DataPlane> m_remote_file_plane; ///< One plane shared by this Client's leaves.
+			StormByte::Safe::Shared<ClientTelemetry> m_telemetry; ///< Counters owned by this Client instance.
 	};
 }

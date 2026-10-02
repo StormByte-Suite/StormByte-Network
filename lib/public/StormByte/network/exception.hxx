@@ -43,6 +43,10 @@
 #include <StormByte/exception.hxx>
 #include <StormByte/network/visibility.h>
 
+#include <string>
+#include <string_view>
+#include <utility>
+
 /**
  * @brief Network module of the StormByte suite.
  */
@@ -54,24 +58,57 @@ namespace StormByte::Network {
 	class STORMBYTE_NETWORK_PUBLIC Exception: public StormByte::Exception {
 		public:
 			/**
-			 * @brief Construct with a component prefix and a format string.
+			 * @brief Copy plain exception text under `StormByte.Network`.
+			 * @param message Exception text; it is not a format string.
+			 */
+			explicit Exception(std::string_view message):
+				StormByte::Exception(StormByte::Exception::Path{"Network"}, "{}", message) {}
+
+			/**
+			 * @brief Copy Base-owned text under `StormByte.Network`.
+			 * @param message Exception text.
+			 */
+			explicit Exception(const StormByte::Safe::String& message):
+				Exception(static_cast<std::string_view>(message)) {}
+
+			/**
+			 * @brief Format an exception under `StormByte.Network`.
 			 * @tparam Args Format argument types.
-			 * @param component Subsystem name.
 			 * @param fmt Format string.
 			 * @param args Format arguments.
 			 */
 			template <typename... Args>
-			Exception(std::string_view component, std::format_string<Args...> fmt, Args&&... args):
-			StormByte::Exception(
-				StormByte::Exception::Path{std::string{"Network::"}.append(component)},
-				fmt, std::forward<Args>(args)...) {}
+			explicit Exception(std::format_string<Args...> fmt, Args&&... args):
+				StormByte::Exception(StormByte::Exception::Path{"Network"}, fmt,
+					std::forward<Args>(args)...) {}
+
+			/**
+				 * @brief Construct with a child path and a format string.
+			 * @tparam Args Format argument types.
+				 * @param child Path below `Network`.
+			 * @param fmt Format string.
+			 * @param args Format arguments.
+			 */
+			template <typename... Args>
+			explicit Exception(StormByte::Exception::Path child, std::format_string<Args...> fmt,
+				Args&&... args):
+				StormByte::Exception(
+					StormByte::Exception::Path{std::string{"Network."}.append(child.text)},
+					fmt, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy plain text under a Network child component.
+			 * @param child Component path under Network.
+			 * @param message Exception text; it is not a format string.
+			 */
+			explicit Exception(StormByte::Exception::Path child, std::string_view message):
+				StormByte::Exception(
+					StormByte::Exception::Path{std::string{"Network."}.append(child.text)}, "{}", message) {}
 
 			/**
 			 * @brief Destructor. Defined in the Network library to anchor RTTI.
 			 */
 			~Exception() noexcept override;
-
-			using StormByte::Exception::Exception;
 	};
 
 	/**
@@ -81,6 +118,12 @@ namespace StormByte::Network {
 	class STORMBYTE_NETWORK_PUBLIC ConnectionError: public Exception {
 		public:
 			/**
+			 * @brief Copy plain connection-error text.
+			 * @param message Exception text; it is not a format string.
+			 */
+			explicit ConnectionError(std::string_view message): Exception(StormByte::Exception::Path{"Connection"}, message) {}
+
+			/**
 			 * @brief Construct from a format string.
 			 * @tparam Args Format argument types.
 			 * @param fmt Format string.
@@ -88,7 +131,7 @@ namespace StormByte::Network {
 			 */
 			template <typename... Args>
 			ConnectionError(std::format_string<Args...> fmt, Args&&... args):
-			Exception("Connection", fmt, std::forward<Args>(args)...) {}
+			Exception(StormByte::Exception::Path{"Connection"}, fmt, std::forward<Args>(args)...) {}
 
 			/**
 			 * @brief Destructor. Defined in the Network library to anchor RTTI.
@@ -105,6 +148,13 @@ namespace StormByte::Network {
 	class STORMBYTE_NETWORK_PUBLIC ConnectionClosed final: public Exception {
 		public:
 			/**
+			 * @brief Copy plain connection-closed text.
+			 * @param message Exception text; it is not a format string.
+			 */
+			explicit ConnectionClosed(std::string_view message):
+				Exception(StormByte::Exception::Path{"Connection"}, "Connection closed: {}", message) {}
+
+			/**
 			 * @brief Construct from a format string.
 			 * @tparam Args Format argument types.
 			 * @param fmt Format string.
@@ -112,7 +162,7 @@ namespace StormByte::Network {
 			 */
 			template <typename... Args>
 			ConnectionClosed(std::format_string<Args...> fmt, Args&&... args):
-			Exception("Connection", "Connection closed: {}",
+			Exception(StormByte::Exception::Path{"Connection"}, "Connection closed: {}",
 				std::format(fmt, std::forward<Args>(args)...)) {}
 
 			/**
@@ -130,6 +180,13 @@ namespace StormByte::Network {
 	class STORMBYTE_NETWORK_PUBLIC PacketError final: public Exception {
 		public:
 			/**
+			 * @brief Copy plain packet-error text.
+			 * @param message Exception text; it is not a format string.
+			 */
+			explicit PacketError(std::string_view message):
+				Exception(StormByte::Exception::Path{"Transport.Packet"}, message) {}
+
+			/**
 			 * @brief Construct from a format string.
 			 * @tparam Args Format argument types.
 			 * @param fmt Format string.
@@ -137,7 +194,7 @@ namespace StormByte::Network {
 			 */
 			template <typename... Args>
 			PacketError(std::format_string<Args...> fmt, Args&&... args):
-			Exception("Transport::Packet: ", fmt, std::forward<Args>(args)...) {}
+			Exception(StormByte::Exception::Path{"Transport.Packet"}, fmt, std::forward<Args>(args)...) {}
 
 			/**
 			 * @brief Destructor. Defined in the Network library to anchor RTTI.
@@ -154,6 +211,13 @@ namespace StormByte::Network {
 	class STORMBYTE_NETWORK_PUBLIC FrameError final: public Exception {
 		public:
 			/**
+			 * @brief Copy plain frame-error text.
+			 * @param message Exception text; it is not a format string.
+			 */
+			explicit FrameError(std::string_view message):
+				Exception(StormByte::Exception::Path{"Transport.Frame"}, message) {}
+
+			/**
 			 * @brief Construct from a format string.
 			 * @tparam Args Format argument types.
 			 * @param fmt Format string.
@@ -161,7 +225,7 @@ namespace StormByte::Network {
 			 */
 			template <typename... Args>
 			FrameError(std::format_string<Args...> fmt, Args&&... args):
-			Exception("Transport::Frame: ", fmt, std::forward<Args>(args)...) {}
+			Exception(StormByte::Exception::Path{"Transport.Frame"}, fmt, std::forward<Args>(args)...) {}
 
 			/**
 			 * @brief Destructor. Defined in the Network library to anchor RTTI.
