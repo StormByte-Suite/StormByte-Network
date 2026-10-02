@@ -14,7 +14,7 @@ Match the surrounding Network code when this document is silent. This repository
 ## Public API and DLL boundaries
 
 - Preserve `STORMBYTE_NETWORK_PUBLIC` / `STORMBYTE_NETWORK_PRIVATE`, platform macros, and established StormByte aliases and helpers.
-- Keep heap-owning allocation and destruction inside Network. Public handles use the module's deleters; shared polymorphic StormByte objects use their StormByte heap factory.
+- Keep internal heap-owning allocation and destruction inside Network. Public remote-file handles use `Safe::Unique` with Base's heap factory; shared polymorphic StormByte objects use their StormByte heap factory. Construct remote leaves inside Network and preserve virtual destruction when transferring ownership to Buffer base types.
 - Do not expose socket, framing, event-loop, or peer-plane implementation types as public API.
 - Prefer `StormByte::Expected`, `StormByte::Shared`, `StormByte::BinaryData`, and `StormByte::ByteSize` when they express the existing module contract.
 - Keep behavior portable across Windows, Linux, and macOS; guard OS-specific implementation and tests.

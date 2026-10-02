@@ -16,14 +16,6 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ## [Unreleased]
 
-### Changed
-
-- Remote writer lifecycle tests distinguish incomplete writes, failed flushes, unexpected file sizes, and the first mismatching byte offset to diagnose platform-specific visibility failures.
-
-### Fixed
-
-- Explicitly initialized the optional worker operation for packet tasks, eliminating Clang's missing-field-initializer warning without changing task behavior.
-
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.0...HEAD
 
 ## [2.0.0] - 2026-10-02
@@ -54,12 +46,16 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
     - Doxygen (`ENABLE_DOC`) resolves Buffer, Logger and Base headers via `INCLUDE_PATH` and skips `thirdparty`. No dependency pin change.
 - **Public API and licensing**
     - Ported Network APIs and payload handling to the StormByte 2.0 types and Buffer interfaces, including `BinaryData`, `ByteSize`, `string_view`, `Shared<Log>`, and `ReadOnly`/`WriteOnly` pipes.
+    - Remote file handles now use `Safe::Unique`, allowing ownership transfer to `BufferedLocationReader`/`BufferedLocationWriter` consumers without slicing or relocating the remote leaf. Storage is allocated and freed on Base's heap; virtual destruction releases mount tokens. The handle-type change replaces Network's custom deleters and requires consumers to rebuild.
     - Network's original source is now dual-licensed under LGPL-3.0-or-later or a commercial license; third-party and bundled module licenses remain separate.
 - **Integration coverage**
     - Expanded integration coverage for failed-connect/listen retry, server restart, malformed and truncated peer frames, and concurrent clients issuing repeated requests.
+    - Remote writer lifecycle tests distinguish incomplete writes, failed flushes, unexpected file sizes, and the first mismatching byte offset to diagnose platform-specific visibility failures.
 
 ### Fixed
 
+- **Worker task initialization**
+    - Explicitly initialized the optional worker operation for packet tasks, eliminating Clang's missing-field-initializer warning without changing task behavior.
 - **Windows build and socket compatibility**
     - Included `<ws2tcpip.h>` in the server socket implementation when inspecting bound IPv6 addresses.
     - Propagated Windows network system libraries (`ws2_32`, `iphlpapi`) via BuildMaster `LINK=` option string in [lib/CMakeLists.txt](lib/CMakeLists.txt).

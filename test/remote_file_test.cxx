@@ -479,7 +479,15 @@ namespace RemoteFileTest {
 
 		auto [mount, rejected] = client.RequestMount(false);
 		Check(!rejected && mount.Result() == Mount::Status::Authorized, "reader mount was not authorized");
-		auto first = client.AttachReader(mount);
+		auto remote_reader = client.AttachReader(mount);
+		const auto* reader_address = remote_reader.get();
+		auto consume_reader = [](StormByte::Safe::Unique<Buf::IO::BufferedLocationReader> reader) {
+			return reader;
+		};
+		auto first = consume_reader(std::move(remote_reader));
+		Check(!remote_reader && first.get() == reader_address
+			&& dynamic_cast<Net::BufferedRemoteFileReader*>(first.get()) != nullptr,
+			"reader ownership transfer must preserve the remote leaf and its address");
 		Check(first && first->Open(), "first reader open failed");
 		CheckNetworkDevice(first->Device());
 		Check(first->Size() == StormByte::ByteSize{16}, "reader size mismatch");
@@ -510,10 +518,14 @@ namespace RemoteFileTest {
 		two.join();
 		Check(std::string(reinterpret_cast<const char*>(a.data()), 2) == "67"
 			&& std::string(reinterpret_cast<const char*>(b.data()), 2) == "23", "concurrent reads mismatch");
-		Check(first->Close().status == Buf::IO::Status::Ok && second->Close().status == Buf::IO::Status::Ok,
-			"reader close failed");
+		Check(second->Close().status == Buf::IO::Status::Ok, "reader close failed");
 		first.reset();
 		second.reset();
+		auto [released_mount, released_rejected] = client.RequestMount(true, false, 1);
+		Check(!released_rejected && released_mount.Result() == Mount::Status::Authorized,
+			"reader destruction through the base owner must release the path reservation");
+		auto released_writer = client.AttachWriter(released_mount);
+		Check(released_writer && released_writer->Close(), "released reader path cleanup failed");
 		Check(ReadFile(read_path) == "0123456789ABCDEF", "reader modified fixture file");
 	}
 
@@ -524,7 +536,15 @@ namespace RemoteFileTest {
 		server.allow_write = true;
 		auto [mount, rejected] = client.RequestMount(true);
 		Check(!rejected && mount.Result() == Mount::Status::Authorized, "writer mount was not authorized");
-		auto writer = client.AttachWriter(mount);
+		auto remote_writer = client.AttachWriter(mount);
+		const auto* writer_address = remote_writer.get();
+		auto consume_writer = [](StormByte::Safe::Unique<Buf::IO::BufferedLocationWriter> writer) {
+			return writer;
+		};
+		auto writer = consume_writer(std::move(remote_writer));
+		Check(!remote_writer && writer.get() == writer_address
+			&& dynamic_cast<Net::BufferedRemoteFileWriter*>(writer.get()) != nullptr,
+			"writer ownership transfer must preserve the remote leaf and its address");
 		Check(writer && writer->Open(), "writer open failed");
 		CheckNetworkDevice(writer->Device());
 		auto [second_writer, second_rejected] = client.RequestMount(true);
@@ -543,9 +563,13 @@ namespace RemoteFileTest {
 		Check(writer->Write(std::as_bytes(std::span{patch.data(), patch.size()})).status == Buf::IO::Status::Ok,
 			"overwrite failed");
 		Check(writer->Flush().status == Buf::IO::Status::Ok, "flush failed");
-		Check(writer->Close(), "writer close failed");
 		writer.reset();
 		Check(ReadFile(path) == "ABCDxyGHIJ", "writer deterministic result mismatch after close");
+		auto [released_mount, released_rejected] = client.RequestMount(true);
+		Check(!released_rejected && released_mount.Result() == Mount::Status::Authorized,
+			"writer destruction through the base owner must release the path reservation");
+		auto released_writer = client.AttachWriter(released_mount);
+		Check(released_writer && released_writer->Close(), "released writer path cleanup failed");
 	}
 
 	void TestSharedPipelineAndDisconnect(Server& server, Client& client,
