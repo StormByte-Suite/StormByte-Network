@@ -80,6 +80,10 @@ namespace StormByte {
 				bool m_token_released{false}; ///< Whether CloseToken was already sent.
 
 				friend class Client;
+
+				/** @brief Allow the Base heap factory to construct this private Network leaf. */
+				template<class T, class... Args>
+				friend StormByte::Safe::Unique<T> StormByte::Safe::Heap::MakeUnique(Args&&...);
 		};
 
 		/**
@@ -145,30 +149,16 @@ namespace StormByte {
 				bool m_token_released{false}; ///< Whether CloseToken was already sent.
 
 				friend class Client;
+
+				/** @brief Allow the Base heap factory to construct this private Network leaf. */
+				template<class T, class... Args>
+				friend StormByte::Safe::Unique<T> StormByte::Safe::Heap::MakeUnique(Args&&...);
 		};
 
-		/**
-		 * @struct RemoteFileReaderDeleter
-		 * @brief Deletes the Network-allocated reader inside the Network module.
-		 */
-		struct STORMBYTE_NETWORK_PUBLIC RemoteFileReaderDeleter {
-			/** @brief Destroy one reader in the allocating module. */
-			void operator()(BufferedRemoteFileReader* reader) const noexcept;
-		};
+		/** @brief Base-heap owner movable to Unique<Buffer::IO::BufferedLocationReader> without slicing. */
+		using RemoteFileReaderHandle = StormByte::Safe::Unique<BufferedRemoteFileReader>;
 
-		/** @brief Caller-owned handle for a Network-allocated remote reader. */
-		using RemoteFileReaderHandle = std::unique_ptr<BufferedRemoteFileReader, RemoteFileReaderDeleter>;
-
-		/**
-		 * @struct RemoteFileWriterDeleter
-		 * @brief Deletes the Network-allocated writer inside the Network module.
-		 */
-		struct STORMBYTE_NETWORK_PUBLIC RemoteFileWriterDeleter {
-			/** @brief Destroy one writer in the allocating module. */
-			void operator()(BufferedRemoteFileWriter* writer) const noexcept;
-		};
-
-		/** @brief Caller-owned handle for a Network-allocated remote writer. */
-		using RemoteFileWriterHandle = std::unique_ptr<BufferedRemoteFileWriter, RemoteFileWriterDeleter>;
+		/** @brief Base-heap owner movable to Unique<Buffer::IO::BufferedLocationWriter> without slicing. */
+		using RemoteFileWriterHandle = StormByte::Safe::Unique<BufferedRemoteFileWriter>;
 	}
 }

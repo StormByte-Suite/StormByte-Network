@@ -169,7 +169,7 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 		}
 
 		const std::string locator = "remote://" + m_remote_address + ":" + std::to_string(mount.Port());
-		RemoteFileReaderHandle reader{new BufferedRemoteFileReader(StormByte::Safe::String{locator}, plane, mount.Token())};
+		auto reader = StormByte::Safe::Heap::MakeUnique<BufferedRemoteFileReader>(StormByte::Safe::String{locator}, plane, mount.Token());
 		if (!plane->RegisterToken(mount.Token(), [instance = reader.get()]() noexcept { instance->MarkFailed(); })) {
 			reader->m_token_released = true;
 			reader.reset();
@@ -219,7 +219,7 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 		}
 
 		const std::string locator = "remote://" + m_remote_address + ":" + std::to_string(mount.Port());
-		RemoteFileWriterHandle writer{new BufferedRemoteFileWriter(StormByte::Safe::String{locator}, plane, mount.Token())};
+		auto writer = StormByte::Safe::Heap::MakeUnique<BufferedRemoteFileWriter>(StormByte::Safe::String{locator}, plane, mount.Token());
 		if (!plane->RegisterToken(mount.Token(), [instance = writer.get()]() noexcept { instance->MarkFailed(); })) {
 			writer->m_token_released = true;
 			writer.reset();

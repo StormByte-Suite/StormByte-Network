@@ -481,11 +481,4 @@ namespace StormByte::Network {
 		return false;
 	}
 
-	void RemoteFileReaderDeleter::operator()(BufferedRemoteFileReader* reader) const noexcept {
-		delete reader;
-	}
-
-	void RemoteFileWriterDeleter::operator()(BufferedRemoteFileWriter* writer) const noexcept {
-		delete writer;
-	}
 }
