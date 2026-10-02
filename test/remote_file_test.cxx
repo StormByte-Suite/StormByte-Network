@@ -726,10 +726,20 @@ namespace RemoteFileTest {
 		auto writer = client.AttachWriter(mount);
 		Check(writer && writer->Open(), "pattern writer open failed");
 		Check(writer->Truncate().status == Buf::IO::Status::Ok, "pattern Truncate failed");
-		Check(writer->Write(std::span<const std::byte>{expected.data(), expected.size()}).status == Buf::IO::Status::Ok,
-			"full pattern write failed");
-		Check(writer->Flush().status == Buf::IO::Status::Ok && EqualBytes(ReadBytes(path), expected),
-			"Flush did not make expected bytes visible on disk");
+		const auto written = writer->Write(std::span<const std::byte>{expected.data(), expected.size()});
+		Check(written.status == Buf::IO::Status::Ok && written.count == expected.size(),
+			"full pattern write failed or accepted an unexpected byte count");
+		const auto flush = writer->Flush();
+		Check(flush.status == Buf::IO::Status::Ok, "pattern Flush returned status "
+			+ std::to_string(static_cast<unsigned int>(flush.status)) + " with writer state "
+			+ std::to_string(static_cast<unsigned int>(writer->State())));
+		const StormByte::BinaryData flushed = ReadBytes(path);
+		Check(flushed.size() == expected.size(), "pattern Flush left an unexpected file size: "
+			+ std::to_string(static_cast<std::size_t>(flushed.size())) + " instead of "
+			+ std::to_string(static_cast<std::size_t>(expected.size())));
+		const auto mismatch = std::mismatch(flushed.begin(), flushed.end(), expected.begin());
+		Check(mismatch.first == flushed.end(), "pattern Flush left incorrect bytes at offset "
+			+ std::to_string(static_cast<std::size_t>(std::distance(flushed.begin(), mismatch.first))));
 
 		const StormByte::BinaryData start_patch = MakePattern(23);
 		Check(writer->Seek(0, Buf::Position::Absolute).status == Buf::IO::Status::Ok
