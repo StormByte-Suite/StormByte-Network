@@ -9,16 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 StormByte Network is the C++26 networking layer of the StormByte suite.
 
-It depends on [StormByte Base 1.1.0](https://github.com/StormByte-Suite/StormByte/releases/tag/1.1.0), [StormByte Logger 1.1.0](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/1.1.0), and [StormByte Buffer 1.1.0](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/1.1.0).
+It depends on [StormByte Base 2.0.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.0.0), [StormByte Buffer 2.0.0](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.0), [StormByte Logger 2.0.0](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.0), and [StormByte System 2.0.0](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.0).
 
 Inherit `Client` or `Server`, define packets, and attach Buffer pipelines.
 IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public API.
 
 ## [Unreleased]
 
+[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.0...HEAD
+
+## [2.0.0] - 2026-10-02
+
 ### Added
 
-- Added Base-clock telemetry snapshots for each Client and aggregate Server, with shared handles that can outlive their endpoints.
+- **Client/server telemetry**
+    - Added Base-clock telemetry snapshots scoped per Client and aggregated across all Server sessions.
+    - Return telemetry through `Safe::Shared` handles that remain valid after the owning endpoint is destroyed.
 - **Authorized remote file channels**
     - Added the public, validated `RemoteFileMount` descriptor and application-facing protected mount/attach helpers.
     - Added file-like buffered remote readers and exclusive writers over one bounded peer data plane per Client, with per-operation capabilities and offsets, independent reader cursors, shared-reader/exclusive-writer path reservations, one heartbeat and shared NIC snapshot per peer, and token-scoped CloseToken cleanup.
@@ -26,22 +32,31 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ### Changed
 
-- Aligned Network exceptions with Base's `Path` hierarchy and `std::string_view` message inputs, keeping formatting in the caller module.
-- Updated repository and documentation links for the StormByte-Suite move, refreshed the suite catalog, and removed retired StormByte-String references.
-- Migrated Network to Base 2.0's `Safe::Shared`, `Safe::String` and `Safe::WString` APIs and the current UUID return type. Remote file leaves continue to use Buffer telemetry, whose counters derive from `StormByte::Telemetry` and use Base's named clocks.
-- Doxygen (`ENABLE_DOC`) resolves Buffer, Logger and Base headers via `INCLUDE_PATH` and skips `thirdparty`. No dependency pin change.
-- Ported the library to BuildMaster's in-process CMake backend with selectable shared/static builds; static consumers receive the bundled components' private link closure without vendor repacking.
-- Ported Network APIs and payload handling to the StormByte 2.0 types and Buffer interfaces, including `BinaryData`, `ByteSize`, `string_view`, `Shared<Log>`, and `ReadOnly`/`WriteOnly` pipes.
-- Network's original source is now dual-licensed under LGPL-3.0-or-later or a commercial license; third-party and bundled module licenses remain separate.
-- Expanded integration coverage for failed-connect/listen retry, server restart, malformed and truncated peer frames, and concurrent clients issuing repeated requests.
-- Moved heap-owning public/private lifecycle operations, frame payload operations, and exported exception RTTI anchors out of headers to keep DLL allocation and destruction inside their owning modules.
-- Replaced the deserializer's `std::function` storage with caller-allocated callback trampolines so the Network DLL never allocates, clones, or frees the callback target across CRTs.
-- Propagated the selected shared/static mode to the bundled Buffer component instead of forcing it shared in Network's wrapper.
+- **StormByte Base 2.0 compatibility**
+    - Migrated Network to Base 2.0's `Safe::Shared`, `Safe::String` and `Safe::WString` APIs and the current UUID return type.
+    - Aligned Network exceptions with Base's `Path` hierarchy and `std::string_view` message inputs, keeping formatting in the caller module.
+    - Remote file leaves retain Buffer telemetry, whose counters derive from `StormByte::Telemetry` and use Base's named clocks.
+- **Build, ABI and packaging**
+    - Ported the library to BuildMaster's in-process CMake backend with selectable shared/static builds; static consumers receive the bundled components' private link closure without vendor repacking.
+    - Moved heap-owning public/private lifecycle operations, frame payload operations, and exported exception RTTI anchors out of headers to keep DLL allocation and destruction inside their owning modules.
+    - Replaced the deserializer's `std::function` storage with caller-allocated callback trampolines so the Network DLL never allocates, clones, or frees the callback target across CRTs.
+    - Propagated the selected shared/static mode to the bundled Buffer component instead of forcing it shared in Network's wrapper.
+- **Suite integration and documentation**
+    - Updated repository and documentation links for the StormByte-Suite move, refreshed the suite catalog, and removed retired StormByte-String references.
+    - Doxygen (`ENABLE_DOC`) resolves Buffer, Logger and Base headers via `INCLUDE_PATH` and skips `thirdparty`. No dependency pin change.
+- **Public API and licensing**
+    - Ported Network APIs and payload handling to the StormByte 2.0 types and Buffer interfaces, including `BinaryData`, `ByteSize`, `string_view`, `Shared<Log>`, and `ReadOnly`/`WriteOnly` pipes.
+    - Network's original source is now dual-licensed under LGPL-3.0-or-later or a commercial license; third-party and bundled module licenses remain separate.
+- **Integration coverage**
+    - Expanded integration coverage for failed-connect/listen retry, server restart, malformed and truncated peer frames, and concurrent clients issuing repeated requests.
 
 ### Fixed
 
-- Fixed missing `<ws2tcpip.h>` header in Windows server socket implementation when inspecting bound IPv6 addresses.
-- Propagated Windows network system libraries (`ws2_32`, `iphlpapi`) via BuildMaster `LINK=` option string in [lib/CMakeLists.txt](lib/CMakeLists.txt).
+- **Windows build and socket compatibility**
+    - Included `<ws2tcpip.h>` in the server socket implementation when inspecting bound IPv6 addresses.
+    - Propagated Windows network system libraries (`ws2_32`, `iphlpapi`) via BuildMaster `LINK=` option string in [lib/CMakeLists.txt](lib/CMakeLists.txt).
+
+[2.0.0]: https://github.com/StormByte-Suite/StormByte-Network/compare/1.1.0...2.0.0
 
 ## [1.1.0] - 2026-09-13
 
@@ -68,6 +83,8 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 - Fixed the Windows test target's Winsock linkage using a consistent CMake link signature.
 
 - Guarded polymorphic large-data packet handling against unexpected packet types.
+
+[1.1.0]: https://github.com/StormByte-Suite/StormByte-Network/releases/tag/1.1.0
 
 ## [1.0.0] - 2026-09-05
 
@@ -111,6 +128,4 @@ Initial public release of StormByte-Network.
 - `Client` and `Server` are designed to be **subclassed**, not used as generic drop-in types without derivation.
 - Public API surface is stable for the 1.x series; private socket/connection types remain implementation details.
 
-[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/1.1.0...HEAD
-[1.1.0]: https://github.com/StormByte-Suite/StormByte-Network/releases/tag/1.1.0
 [1.0.0]: https://github.com/StormByte-Suite/StormByte-Network/releases/tag/1.0.0
