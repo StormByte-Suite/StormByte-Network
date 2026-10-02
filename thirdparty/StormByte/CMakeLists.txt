@@ -5,7 +5,7 @@ else()
 endif()
 
 if(WITH_STORMBYTE STREQUAL "SYSTEM")
-	find_package(StormByte REQUIRED Buffer Logger String System)
+	find_package(StormByte REQUIRED Buffer Logger System)
 else()
 	add_subdirectory(buffer)
 endif()
