@@ -3,6 +3,8 @@
 #include <StormByte/buffer/io/buffered_location_reader.hxx>
 #include <StormByte/buffer/io/buffered_location_writer.hxx>
 #include <StormByte/network/remote_file_mount.hxx>
+#include <StormByte/safe/pointers.hxx>
+#include <StormByte/safe/string.hxx>
 
 #include <memory>
 
@@ -45,10 +47,10 @@ namespace StormByte {
 
 			protected:
 				/** @brief Network-interface snapshot for this connected origin. */
-				StormByte::Shared<StormByte::System::Device> OriginDevice() const override;
+				StormByte::Safe::Shared<StormByte::System::Device> OriginDevice() const override;
 
 				/** @brief Accept the network device without probing its accessor as a filesystem path. */
-				bool OriginDeviceUsable(const StormByte::Shared<StormByte::System::Device>& device) const noexcept override;
+				bool OriginDeviceUsable(const StormByte::Safe::Shared<StormByte::System::Device>& device) const noexcept override;
 
 				/** @brief Open the token's server-side reader handle. */
 				Buffer::IO::Result OriginOpen() override;
@@ -66,7 +68,7 @@ namespace StormByte {
 				std::optional<StormByte::ByteSize> OriginSize() const noexcept override;
 
 			private:
-				BufferedRemoteFileReader(StormByte::String::String locator,
+				BufferedRemoteFileReader(StormByte::Safe::String locator,
 					std::weak_ptr<Detail::RemoteFile::DataPlane> plane, RemoteFileMount::ChannelToken token);
 
 				void MarkFailed() noexcept;
@@ -104,10 +106,10 @@ namespace StormByte {
 
 			protected:
 				/** @brief Network-interface snapshot for this connected origin. */
-				StormByte::Shared<StormByte::System::Device> OriginDevice() const override;
+				StormByte::Safe::Shared<StormByte::System::Device> OriginDevice() const override;
 
 				/** @brief Accept the network device without probing its accessor as a filesystem path. */
-				bool OriginDeviceUsable(const StormByte::Shared<StormByte::System::Device>& device) const noexcept override;
+				bool OriginDeviceUsable(const StormByte::Safe::Shared<StormByte::System::Device>& device) const noexcept override;
 
 				/** @brief Open this writer token on the peer plane. */
 				Buffer::IO::Result OriginOpen() override;
@@ -131,7 +133,7 @@ namespace StormByte {
 				StormByte::ByteSize OriginSize() const noexcept override;
 
 			private:
-				BufferedRemoteFileWriter(StormByte::String::String locator,
+				BufferedRemoteFileWriter(StormByte::Safe::String locator,
 					std::weak_ptr<Detail::RemoteFile::DataPlane> plane, RemoteFileMount::ChannelToken token);
 
 				void MarkFailed() noexcept;

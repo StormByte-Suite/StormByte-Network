@@ -45,8 +45,8 @@
 #else
 #include <winsock2.h>
 #endif
-#include <StormByte/string/string.hxx>
-#include <StormByte/string/wstring.hxx>
+#include <StormByte/safe/string.hxx>
+#include <StormByte/safe/wstring.hxx>
 using namespace StormByte::Network::Connection;
 Handler::Handler() noexcept {
 	#ifdef WINDOWS
@@ -77,8 +77,8 @@ std::string Handler::LastError() const noexcept {
 				nullptr, WSAGetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
 				reinterpret_cast<LPWSTR>(&errorMsg), 0, nullptr);
 	if (res != 0 && errorMsg != nullptr) {
-		const StormByte::String::WString wide_message{std::wstring_view{errorMsg}};
-		const StormByte::String::String utf8_message{wide_message};
+		const StormByte::Safe::WString wide_message{std::wstring_view{errorMsg}};
+		const StormByte::Safe::String utf8_message{wide_message};
 		error_string.assign(static_cast<std::string_view>(utf8_message));
 		LocalFree(errorMsg);
 	} else {

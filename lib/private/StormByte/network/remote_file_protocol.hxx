@@ -102,8 +102,8 @@ namespace StormByte {
 				 */
 				DataPlane(std::shared_ptr<Socket::Client> socket, Buffer::Pipeline input,
 					Buffer::Pipeline output, std::uint16_t timeout_seconds,
-					StormByte::Shared<StormByte::Logger::Log> logger, std::string local_address,
-					StormByte::Shared<StormByte::System::Device> device, std::uint16_t port) noexcept;
+					StormByte::Safe::Shared<StormByte::Logger::Log> logger, std::string local_address,
+					StormByte::Safe::Shared<StormByte::System::Device> device, std::uint16_t port) noexcept;
 
 				/** @brief Stop heartbeat and close the shared peer plane. */
 				~DataPlane() noexcept;
@@ -130,7 +130,7 @@ namespace StormByte {
 				const std::string& LocalAddress() const noexcept;
 
 				/** @brief Shared device snapshot for every leaf on this plane. */
-				StormByte::Shared<StormByte::System::Device> Device() const noexcept;
+				StormByte::Safe::Shared<StormByte::System::Device> Device() const noexcept;
 
 				/** @brief Server port assigned to this peer plane. */
 				std::uint16_t Port() const noexcept;
@@ -145,9 +145,9 @@ namespace StormByte {
 				Buffer::Pipeline m_input;
 				Buffer::Pipeline m_output;
 				const std::uint16_t m_timeout_seconds;
-				StormByte::Shared<StormByte::Logger::Log> m_logger;
+				StormByte::Safe::Shared<StormByte::Logger::Log> m_logger;
 				std::string m_local_address;
-				StormByte::Shared<StormByte::System::Device> m_device;
+				StormByte::Safe::Shared<StormByte::System::Device> m_device;
 				const std::uint16_t m_port;
 				mutable std::mutex m_mutex;
 				std::mutex m_heartbeat_mutex;
@@ -161,7 +161,7 @@ namespace StormByte {
 			};
 
 			/** @brief Build a polymorphic network-interface snapshot for a connected socket. */
-			StormByte::Shared<StormByte::System::Device> CreateNetworkDevice(const std::string& local_address);
+			StormByte::Safe::Shared<StormByte::System::Device> CreateNetworkDevice(const std::string& local_address);
 
 			/** @brief Serialize a message field-by-field. */
 			StormByte::BinaryData Serialize(const Message& message);
@@ -173,7 +173,7 @@ namespace StormByte {
 			/** @brief Run bytes through the supplied pipeline synchronously. */
 			StormByte::Expected<StormByte::BinaryData, ConnectionError> Process(
 				Buffer::Pipeline& pipeline, StormByte::BinaryData input,
-				StormByte::Shared<StormByte::Logger::Log> logger);
+				StormByte::Safe::Shared<StormByte::Logger::Log> logger);
 
 			/** @brief Read a fixed-width message size and bounded payload from the socket. */
 			StormByte::Expected<StormByte::BinaryData, ConnectionError> ReceivePayload(

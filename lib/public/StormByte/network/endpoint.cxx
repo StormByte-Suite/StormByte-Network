@@ -78,12 +78,12 @@ DeserializePacketFunction& DeserializePacketFunction::operator=(DeserializePacke
 }
 
 PacketPointer DeserializePacketFunction::operator()(OpcodeType opcode, Buffer::Consumer payload,
-	StormByte::Shared<Logger::Log> logger) const {
+	StormByte::Safe::Shared<Logger::Log> logger) const {
 	return m_context ? m_invoke(m_context, opcode, std::move(payload), std::move(logger)) : PacketPointer{};
 }
 
 Endpoint::Endpoint(DeserializePacketFunction deserialize_packet_function,
-	StormByte::Shared<Logger::Log> logger) noexcept:
+	StormByte::Safe::Shared<Logger::Log> logger) noexcept:
 	m_deserialize_packet_function(std::move(deserialize_packet_function)),
 	m_logger(std::move(logger)) {}
 

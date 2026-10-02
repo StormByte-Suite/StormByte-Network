@@ -82,7 +82,7 @@ namespace StormByte::Network::Detail {
 			 */
 			EventLoop(Socket::Server& listener, Connection::HandlerType wakeup_read,
 				const std::atomic<Connection::Status>& status,
-				StormByte::Shared<Logger::Log> logger) noexcept;
+				StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 				/** @brief Releases the loop state in the Network library. */
 				~EventLoop() noexcept;
@@ -102,7 +102,7 @@ namespace StormByte::Network::Detail {
 			Socket::Server& m_listener; ///< Listening socket.
 			Connection::HandlerType m_wakeup_read; ///< Wakeup read handle.
 			const std::atomic<Connection::Status>& m_status; ///< Server status.
-			StormByte::Shared<Logger::Log> m_logger; ///< Diagnostic logger.
+			StormByte::Safe::Shared<Logger::Log> m_logger; ///< Diagnostic logger.
 
 			enum class EventKind: unsigned short { Timeout, Listener, Session, DataPlane, Wakeup }; ///< Wait event kind.
 			struct Event {

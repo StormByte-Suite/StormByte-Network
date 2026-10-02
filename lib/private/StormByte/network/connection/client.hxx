@@ -117,7 +117,7 @@ namespace StormByte::Network::Connection {
 			 * @param logger Logger.
 			 * @return true on success.
 			 */
-			bool Send(Transport::Frame&& frame, StormByte::Shared<Logger::Log> logger) noexcept;
+			bool Send(Transport::Frame&& frame, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Status from the socket (or Disconnected).
@@ -132,7 +132,7 @@ namespace StormByte::Network::Connection {
 			 * @param logger Logger.
 			 * @return Frame (empty on failure).
 			 */
-			Transport::Frame Receive(StormByte::Shared<Logger::Log> logger) noexcept;
+			Transport::Frame Receive(StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 		private:
 			std::shared_ptr<Socket::Client> m_socket;	///< Socket

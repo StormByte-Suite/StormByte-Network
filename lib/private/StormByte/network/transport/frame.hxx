@@ -104,7 +104,7 @@ namespace StormByte::Network::Transport {
 			 * @param logger Logger.
 			 * @return Frame (default-constructed on failure).
 			 */
-			static Frame ProcessInput(std::shared_ptr<Socket::Client> client, Buffer::Pipeline& in_pipeline, StormByte::Shared<Logger::Log> logger) noexcept;
+			static Frame ProcessInput(std::shared_ptr<Socket::Client> client, Buffer::Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Deserialize payload into a Packet.
@@ -112,7 +112,7 @@ namespace StormByte::Network::Transport {
 			 * @param logger Logger.
 			 * @return Packet pointer, or nullptr on failure.
 			 */
-			PacketPointer ProcessPacket(const DeserializePacketFunction& packet_fn, StormByte::Shared<Logger::Log> logger) noexcept;
+			PacketPointer ProcessPacket(const DeserializePacketFunction& packet_fn, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Serialize this frame to a Consumer.
@@ -120,7 +120,7 @@ namespace StormByte::Network::Transport {
 			 * @param logger Logger.
 			 * @return Consumer of framed bytes.
 			 */
-			Buffer::Consumer ProcessOutput(Buffer::Pipeline& out_pipeline, StormByte::Shared<Logger::Log> logger) noexcept;
+			Buffer::Consumer ProcessOutput(Buffer::Pipeline& out_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 		private:
 			Packet::OpcodeType m_opcode;	///< Opcode
@@ -135,7 +135,7 @@ namespace StormByte::Network::Transport {
 			 * @return Parsed frame.
 			 */
 			static Frame FromWire(Packet::OpcodeType opcode, StormByte::BinaryData&& payload,
-				Buffer::Pipeline& in_pipeline, StormByte::Shared<Logger::Log> logger) noexcept;
+				Buffer::Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Empty frame (error path).

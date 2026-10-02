@@ -69,7 +69,7 @@ namespace StormByte::Network {
 			 * @param deserialize_packet_function Builds domain packets from wire data.
 			 * @param logger Diagnostic logger.
 			 */
-			Endpoint(DeserializePacketFunction deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept;
+			Endpoint(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Copy constructor (deleted).
@@ -118,7 +118,7 @@ namespace StormByte::Network {
 
 		protected:
 			DeserializePacketFunction m_deserialize_packet_function;	///< Packet factory
-			StormByte::Shared<Logger::Log> m_logger;						///< Logger
+			StormByte::Safe::Shared<Logger::Log> m_logger;						///< Logger
 
 			/**
 			 * @brief Wrap a socket client with input/output pipelines.

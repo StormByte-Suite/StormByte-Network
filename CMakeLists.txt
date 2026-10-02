@@ -10,7 +10,7 @@ string(STRIP "${_sb_ver}" _sb_ver)
 project("StormByte C++ Library: Network module"
 	VERSION ${_sb_ver}
 	DESCRIPTION "StormByte-Network is the C++26 networking module of the StormByte suite."
-	HOMEPAGE_URL "https://dev.stormbyte.org/StormByte-Network"
+	HOMEPAGE_URL "http://suite.stormbyte.org/StormByte-Network"
 )
 
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)

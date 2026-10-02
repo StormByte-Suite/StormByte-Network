@@ -206,7 +206,7 @@ namespace StormByte::Network::Detail::RemoteFile {
 
 	Host::Host(Connection::Protocol protocol, std::string bind_address, Buffer::Pipeline input,
 		Buffer::Pipeline output, const std::uint16_t timeout_seconds,
-		std::shared_ptr<MountRegistry> registry, StormByte::Shared<StormByte::Logger::Log> logger):
+		std::shared_ptr<MountRegistry> registry, StormByte::Safe::Shared<StormByte::Logger::Log> logger):
 		m_protocol(protocol), m_bind_address(std::move(bind_address)), m_input(std::move(input)),
 		m_output(std::move(output)), m_timeout_seconds(timeout_seconds), m_registry(std::move(registry)),
 		m_logger(std::move(logger)), m_last_activity(std::chrono::steady_clock::now()) {}

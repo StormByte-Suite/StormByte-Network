@@ -64,7 +64,7 @@ namespace StormByte::Network::Detail::RemoteFile {
 	}
 
 	StormByte::Expected<BinaryData, ConnectionError> Process(Buffer::Pipeline& pipeline, BinaryData input,
-		StormByte::Shared<StormByte::Logger::Log> logger) {
+		StormByte::Safe::Shared<StormByte::Logger::Log> logger) {
 		if (input.empty() || input.size() > max_message_size) {
 			return Unexpected<ConnectionError>("Invalid remote file pipeline input size");
 		}
@@ -134,8 +134,8 @@ namespace StormByte::Network::Detail::RemoteFile {
 
 	DataPlane::DataPlane(std::shared_ptr<Socket::Client> socket, Buffer::Pipeline input,
 		Buffer::Pipeline output, const std::uint16_t timeout_seconds,
-		StormByte::Shared<StormByte::Logger::Log> logger, std::string local_address,
-		StormByte::Shared<StormByte::System::Device> device, const std::uint16_t port) noexcept:
+		StormByte::Safe::Shared<StormByte::Logger::Log> logger, std::string local_address,
+		StormByte::Safe::Shared<StormByte::System::Device> device, const std::uint16_t port) noexcept:
 		m_socket(std::move(socket)), m_input(std::move(input)), m_output(std::move(output)),
 		m_timeout_seconds(timeout_seconds), m_logger(std::move(logger)),
 		m_local_address(std::move(local_address)), m_device(std::move(device)), m_port(port) {}
@@ -307,7 +307,7 @@ namespace StormByte::Network::Detail::RemoteFile {
 		return m_local_address;
 	}
 
-	StormByte::Shared<StormByte::System::Device> DataPlane::Device() const noexcept {
+	StormByte::Safe::Shared<StormByte::System::Device> DataPlane::Device() const noexcept {
 		return m_device;
 	}
 

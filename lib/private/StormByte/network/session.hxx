@@ -109,7 +109,7 @@ namespace StormByte::Network::Detail {
 			 * @return Complete frames, or connection error.
 			 */
 			StormByte::Expected<FrameList, ConnectionError> ReadReady(
-				Buffer::Pipeline& in_pipeline, StormByte::Shared<Logger::Log> logger) noexcept;
+				Buffer::Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/** @brief Close the session. */
 			void Close() noexcept;
@@ -123,7 +123,7 @@ namespace StormByte::Network::Detail {
 			 * @param logger Diagnostic logger.
 			 * @return false when the per-session cap is exceeded.
 			 */
-			bool QueueResponse(const PacketPointer& packet, StormByte::Shared<Logger::Log> logger) noexcept;
+			bool QueueResponse(const PacketPointer& packet, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Attempt one non-blocking output write.
@@ -172,6 +172,6 @@ namespace StormByte::Network::Detail {
 			 */
 			StormByte::Expected<FrameList, ConnectionError> AppendReceived(
 				StormByte::BinaryData&& received, Buffer::Pipeline& in_pipeline,
-				StormByte::Shared<Logger::Log> logger) noexcept;
+				StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 	};
 }

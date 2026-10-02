@@ -97,7 +97,7 @@ namespace StormByte {
 				Host(Connection::Protocol protocol, std::string bind_address, Buffer::Pipeline input,
 					Buffer::Pipeline output, std::uint16_t timeout_seconds,
 					std::shared_ptr<MountRegistry> registry,
-					StormByte::Shared<StormByte::Logger::Log> logger);
+					StormByte::Safe::Shared<StormByte::Logger::Log> logger);
 
 				/** @brief Stop accepting and release this peer's mounts. */
 				~Host() noexcept;
@@ -180,7 +180,7 @@ namespace StormByte {
 				Buffer::Pipeline m_output;
 				std::uint16_t m_timeout_seconds;
 				std::shared_ptr<MountRegistry> m_registry;
-				StormByte::Shared<StormByte::Logger::Log> m_logger;
+				StormByte::Safe::Shared<StormByte::Logger::Log> m_logger;
 				std::unique_ptr<Socket::Server> m_listener;
 				std::shared_ptr<Socket::Client> m_active_client;
 				mutable std::mutex m_mutex; ///< Protects queued operation/output from worker completions.
