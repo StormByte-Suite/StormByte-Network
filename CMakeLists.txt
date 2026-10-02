@@ -19,7 +19,7 @@ include(cmake/optimizations.cmake)
 include(cmake/asan.cmake)
 cmake_policy(SET CMP0079 NEW)
 
-add_subdirectory(buildmaster)
+include(cmake/load_buildmaster.cmake)
 add_subdirectory(doc)
 add_subdirectory(thirdparty)
 add_subdirectory(lib)
