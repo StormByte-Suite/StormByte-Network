@@ -115,7 +115,7 @@ namespace StormByte::Network::Detail {
 		return !m_output_frames.empty() && PrepareOutput();
 	}
 
-	bool Session::QueueResponse(const PacketPointer& packet, StormByte::Shared<Logger::Log> logger) noexcept {
+	bool Session::QueueResponse(const PacketPointer& packet, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 		if (!packet || m_closed || m_output_frame_count >= MAX_OUTPUT_FRAMES) {
 			return false;
 		}
@@ -210,7 +210,7 @@ namespace StormByte::Network::Detail {
 
 	StormByte::Expected<Session::FrameList, ConnectionError> Session::AppendReceived(
 		StormByte::BinaryData&& received, Buffer::Pipeline& in_pipeline,
-		StormByte::Shared<Logger::Log> logger) noexcept {
+		StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 		if (m_closed) {
 			return Unexpected<ConnectionError>("Session is closed");
 		}
@@ -271,7 +271,7 @@ namespace StormByte::Network::Detail {
 	}
 
 	StormByte::Expected<Session::FrameList, ConnectionError> Session::ReadReady(
-		Buffer::Pipeline& in_pipeline, StormByte::Shared<Logger::Log> logger) noexcept {
+		Buffer::Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 		if (m_closed || !m_client || !m_client->Socket()) {
 			m_closed = true;
 			return Unexpected<ConnectionError>("Session is closed");

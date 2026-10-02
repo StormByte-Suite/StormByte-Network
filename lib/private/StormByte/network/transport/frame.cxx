@@ -87,7 +87,7 @@ Frame::Frame(const Packet& packet) noexcept {
 }
 
 Frame Frame::FromWire(Packet::OpcodeType opcode, StormByte::BinaryData&& payload,
-	Pipeline& in_pipeline, StormByte::Shared<Logger::Log> logger) noexcept {
+	Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 	if (opcode >= Packet::PROCESS_THRESHOLD) {
 		Producer payload_producer;
 		payload_producer.Write(std::move(payload));
@@ -102,7 +102,7 @@ Frame Frame::FromWire(Packet::OpcodeType opcode, StormByte::BinaryData&& payload
 }
 
 Frame Frame::ProcessInput(std::shared_ptr<Socket::Client> client,
-	Pipeline& in_pipeline, StormByte::Shared<Logger::Log> logger) noexcept {
+	Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 	ExpectedBuffer expected_opcode_buffer = client->Receive(sizeof(Packet::OpcodeType));
 	if (!expected_opcode_buffer) {
 		logger << Logger::Level::Error << "Failed to read opcode from socket: "
@@ -146,14 +146,14 @@ Frame Frame::ProcessInput(std::shared_ptr<Socket::Client> client,
 }
 
 PacketPointer Frame::ProcessPacket(const DeserializePacketFunction& packet_fn,
-	StormByte::Shared<Logger::Log> logger) noexcept {
+	StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 	Producer payload_producer;
 	payload_producer.Write(std::move(m_payload));
 	payload_producer.Close();
 	return packet_fn(m_opcode, payload_producer.Consumer(), std::move(logger));
 }
 
-Consumer Frame::ProcessOutput(Pipeline& pipeline, StormByte::Shared<Logger::Log> logger) noexcept {
+Consumer Frame::ProcessOutput(Pipeline& pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 	Producer producer;
 	producer.Write(sizeof(Packet::OpcodeType), Serializable<Packet::OpcodeType>(m_opcode).Serialize());
 	StormByte::BinaryData payload = std::move(m_payload);

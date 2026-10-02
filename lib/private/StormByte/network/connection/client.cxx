@@ -48,7 +48,7 @@ Client::Client(std::shared_ptr<Socket::Client> socket, Buffer::Pipeline in_pipel
 
 Client::~Client() noexcept = default;
 
-bool Client::Send(Transport::Frame&& frame, StormByte::Shared<Logger::Log> logger) noexcept {
+bool Client::Send(Transport::Frame&& frame, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 	ExpectedVoid result = m_socket->Send(frame.ProcessOutput(m_out_pipeline, logger));
 	if (!result) {
 		logger << Logger::Level::Error << "Failed to send frame to socket: " << result.error()->what();
@@ -58,6 +58,6 @@ bool Client::Send(Transport::Frame&& frame, StormByte::Shared<Logger::Log> logge
 	return true;
 }
 
-StormByte::Network::Transport::Frame Client::Receive(StormByte::Shared<Logger::Log> logger) noexcept {
+StormByte::Network::Transport::Frame Client::Receive(StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 	return Transport::Frame::ProcessInput(m_socket, m_in_pipeline, logger);
 }

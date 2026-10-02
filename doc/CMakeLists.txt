@@ -17,11 +17,10 @@ if(ENABLE_DOC)
 		set(${name}_TAG_FILE "${tag_file}" PARENT_SCOPE)
 	endfunction()
 
-	download_doxygen_tag(StormByte "https://dev.stormbyte.org/StormByte/StormByte.tag")
-	download_doxygen_tag(StormByte-Buffer "https://dev.stormbyte.org/StormByte-Buffer/StormByte-Buffer.tag")
-	download_doxygen_tag(StormByte-Logger "https://dev.stormbyte.org/StormByte-Logger/StormByte-Logger.tag")
-	download_doxygen_tag(StormByte-String "https://dev.stormbyte.org/StormByte-String/StormByte-String.tag")
-	download_doxygen_tag(StormByte-System "https://dev.stormbyte.org/StormByte-System/StormByte-System.tag")
+	download_doxygen_tag(StormByte "http://suite.stormbyte.org/StormByte/StormByte.tag")
+	download_doxygen_tag(StormByte-Buffer "http://suite.stormbyte.org/StormByte-Buffer/StormByte-Buffer.tag")
+	download_doxygen_tag(StormByte-Logger "http://suite.stormbyte.org/StormByte-Logger/StormByte-Logger.tag")
+	download_doxygen_tag(StormByte-System "http://suite.stormbyte.org/StormByte-System/StormByte-System.tag")
 
 	set(DOXYGEN_PROJECT_NAME "StormByte-Network")
 	set(DOXYGEN_PROJECT_NUMBER "${PROJECT_VERSION}")
@@ -41,8 +40,7 @@ if(ENABLE_DOC)
 		"${CMAKE_SOURCE_DIR}/thirdparty/StormByte/buffer/src/lib/public"
 		"${CMAKE_SOURCE_DIR}/thirdparty/StormByte/buffer/src/thirdparty/StormByte/logger/src/lib/public"
 		"${CMAKE_SOURCE_DIR}/thirdparty/StormByte/buffer/src/thirdparty/StormByte/system/src/lib/public"
-		"${CMAKE_SOURCE_DIR}/thirdparty/StormByte/buffer/src/thirdparty/StormByte/system/src/thirdparty/StormByte/string/src/lib/public"
-		"${CMAKE_SOURCE_DIR}/thirdparty/StormByte/buffer/src/thirdparty/StormByte/system/src/thirdparty/StormByte/string/src/thirdparty/StormByte/base/src/lib/public"
+		"${CMAKE_SOURCE_DIR}/thirdparty/StormByte/buffer/src/thirdparty/StormByte/system/src/thirdparty/StormByte/base/src/lib/public"
 	)
 	set(DOXYGEN_STRIP_FROM_PATH "${CMAKE_SOURCE_DIR}")
 	set(DOXYGEN_STRIP_FROM_INC_PATH "${CMAKE_SOURCE_DIR}/lib/public")
@@ -57,7 +55,6 @@ if(ENABLE_DOC)
 		"STORMBYTE_BUFFER_PUBLIC:="
 		"STORMBYTE_BUFFER_PRIVATE:="
 		"STORMBYTE_SYSTEM_PUBLIC:="
-		"STORMBYTE_STRING_PUBLIC:="
 		"STORMBYTE_LOGGER_PUBLIC:="
 		"STORMBYTE_PUBLIC:="
 		"WINDOWS="
@@ -94,11 +91,10 @@ if(ENABLE_DOC)
 
 	set(DOXYGEN_GENERATE_TAGFILE "${CMAKE_SOURCE_DIR}/docs/StormByte-Network.tag")
 	set(DOXYGEN_TAGFILES
-		"${StormByte_TAG_FILE}=https://dev.stormbyte.org/StormByte"
-		"${StormByte-Buffer_TAG_FILE}=https://dev.stormbyte.org/StormByte-Buffer"
-		"${StormByte-Logger_TAG_FILE}=https://dev.stormbyte.org/StormByte-Logger"
-		"${StormByte-String_TAG_FILE}=https://dev.stormbyte.org/StormByte-String"
-		"${StormByte-System_TAG_FILE}=https://dev.stormbyte.org/StormByte-System"
+		"${StormByte_TAG_FILE}=http://suite.stormbyte.org/StormByte"
+		"${StormByte-Buffer_TAG_FILE}=http://suite.stormbyte.org/StormByte-Buffer"
+		"${StormByte-Logger_TAG_FILE}=http://suite.stormbyte.org/StormByte-Logger"
+		"${StormByte-System_TAG_FILE}=http://suite.stormbyte.org/StormByte-System"
 	)
 
 	set(DOXYGEN_GENERATE_MAN NO)

@@ -149,7 +149,7 @@ namespace StormByte::Network::Socket {
 			Connection::HandlerType m_handle;					///< Native handle
 			std::unique_ptr<Connection::Info> m_conn_info;		///< Peer info
 			unsigned long m_mtu;								///< MTU
-			mutable StormByte::Shared<Logger::Log> m_logger;		///< Logger
+			mutable StormByte::Safe::Shared<Logger::Log> m_logger;		///< Logger
 
 			int m_effective_send_buf = 65536;	///< SO_SNDBUF effective
 			int m_effective_recv_buf = 65536;	///< SO_RCVBUF effective
@@ -159,7 +159,7 @@ namespace StormByte::Network::Socket {
 			 * @param protocol Address family.
 			 * @param logger Logger.
 			 */
-			Socket(const Connection::Protocol& protocol, StormByte::Shared<Logger::Log> logger) noexcept;
+			Socket(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Create the OS socket.

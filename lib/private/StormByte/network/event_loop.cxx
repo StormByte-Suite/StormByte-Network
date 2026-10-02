@@ -54,7 +54,7 @@
 namespace StormByte::Network::Detail {
 	EventLoop::EventLoop(Socket::Server& listener, Connection::HandlerType wakeup_read,
 		const std::atomic<Connection::Status>& status,
-		StormByte::Shared<Logger::Log> logger) noexcept:
+		StormByte::Safe::Shared<Logger::Log> logger) noexcept:
 	m_listener(listener), m_wakeup_read(wakeup_read), m_status(status), m_logger(std::move(logger)) {}
 
 EventLoop::~EventLoop() noexcept = default;

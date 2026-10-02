@@ -53,7 +53,7 @@
 #include <algorithm>
 #include <memory>
 using namespace StormByte::Network;
-Socket::Server::Server(const Connection::Protocol& protocol, StormByte::Shared<Logger::Log> logger) noexcept:
+Socket::Server::Server(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger) noexcept:
 Socket(protocol, logger) {
 	m_logger << Logger::Level::LowLevel << "Created server socket with UUID: " << std::string_view{m_UUID} << std::endl;
 }

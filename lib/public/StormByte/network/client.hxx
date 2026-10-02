@@ -70,7 +70,7 @@ namespace StormByte::Network {
 			 * @param deserialize_packet_function Builds domain packets from wire data.
 			 * @param logger Diagnostic logger.
 			 */
-			Client(DeserializePacketFunction deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept;
+			Client(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Copy constructor (deleted).

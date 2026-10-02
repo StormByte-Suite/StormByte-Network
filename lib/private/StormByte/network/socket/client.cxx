@@ -95,7 +95,7 @@ namespace {
 	}
 }
 
-Socket::Client::Client(const Connection::Protocol& protocol, StormByte::Shared<Logger::Log> logger) noexcept
+Socket::Client::Client(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger) noexcept
 :Socket(protocol, logger) {
 	m_logger << Logger::Level::LowLevel << "Created client socket with UUID: " << std::string_view{m_UUID} << std::endl;
 }

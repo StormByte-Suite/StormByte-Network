@@ -187,13 +187,13 @@ namespace StormByte::Network {
 	}
 
 	namespace Detail::RemoteFile {
-		StormByte::Shared<StormByte::System::Device> CreateNetworkDevice(const std::string& local_address) {
-			return StormByte::Shared<StormByte::System::Device>::MakePointer<RemoteNetworkDevice>(
+		StormByte::Safe::Shared<StormByte::System::Device> CreateNetworkDevice(const std::string& local_address) {
+			return StormByte::Safe::Shared<StormByte::System::Device>::MakePointer<RemoteNetworkDevice>(
 				local_address, GetNetworkThroughput(local_address));
 		}
 	}
 
-	BufferedRemoteFileReader::BufferedRemoteFileReader(StormByte::String::String locator,
+	BufferedRemoteFileReader::BufferedRemoteFileReader(StormByte::Safe::String locator,
 		std::weak_ptr<DataPlane> plane, RemoteFileMount::ChannelToken token):
 		BufferedLocationReader(std::move(locator), Buffer::IO::Location::Remote,
 			StormByte::ByteSize{0}, StormByte::ByteSize{0}, std::chrono::milliseconds{0}, true),
@@ -206,13 +206,13 @@ namespace StormByte::Network {
 		ReleaseToken();
 	}
 
-	StormByte::Shared<StormByte::System::Device> BufferedRemoteFileReader::OriginDevice() const {
+	StormByte::Safe::Shared<StormByte::System::Device> BufferedRemoteFileReader::OriginDevice() const {
 		if (auto plane = m_plane.lock()) return plane->Device();
 		return {};
 	}
 
 	bool BufferedRemoteFileReader::OriginDeviceUsable(
-		const StormByte::Shared<StormByte::System::Device>& device) const noexcept {
+		const StormByte::Safe::Shared<StormByte::System::Device>& device) const noexcept {
 		return static_cast<bool>(device);
 	}
 
@@ -315,7 +315,7 @@ namespace StormByte::Network {
 		return StormByte::ByteSize{response->value};
 	}
 
-	BufferedRemoteFileWriter::BufferedRemoteFileWriter(StormByte::String::String locator,
+	BufferedRemoteFileWriter::BufferedRemoteFileWriter(StormByte::Safe::String locator,
 		std::weak_ptr<DataPlane> plane, RemoteFileMount::ChannelToken token):
 		BufferedLocationWriter(std::move(locator), Buffer::IO::Location::Remote,
 			StormByte::ByteSize{0}, 0, std::chrono::milliseconds{0}, StormByte::ByteSize{0}, true),
@@ -328,13 +328,13 @@ namespace StormByte::Network {
 		ReleaseToken();
 	}
 
-	StormByte::Shared<StormByte::System::Device> BufferedRemoteFileWriter::OriginDevice() const {
+	StormByte::Safe::Shared<StormByte::System::Device> BufferedRemoteFileWriter::OriginDevice() const {
 		if (auto plane = m_plane.lock()) return plane->Device();
 		return {};
 	}
 
 	bool BufferedRemoteFileWriter::OriginDeviceUsable(
-		const StormByte::Shared<StormByte::System::Device>& device) const noexcept {
+		const StormByte::Safe::Shared<StormByte::System::Device>& device) const noexcept {
 		return static_cast<bool>(device);
 	}
 

@@ -70,7 +70,7 @@ namespace StormByte::Network::Socket {
 			 * @param protocol Address family.
 			 * @param logger Logger.
 			 */
-			Client(const Connection::Protocol& protocol, StormByte::Shared<Logger::Log> logger) noexcept;
+			Client(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/**
 			 * @brief Copy constructor (deleted).

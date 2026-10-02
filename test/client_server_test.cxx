@@ -83,7 +83,7 @@ using SBLog::ThreadedLog;
 using SBLog::humanreadable_bytes;
 using SBLog::nohumanreadable;
 using Buf::Pipeline;
-StormByte::Shared<Log> logger = StormByte::Heap::MakeShared<ThreadedLog>(std::cout, Level::Info, "[%L] [T%i] %T:");
+StormByte::Safe::Shared<Log> logger = StormByte::Safe::Heap::MakeShared<ThreadedLog>(std::cout, Level::Info, "[%L] [T%i] %T:");
 constexpr const unsigned short timeout = 5; // 5 seconds
 constexpr const std::size_t large_data_size = 20 * 1024 * 1024; // 20 MB
 constexpr const char large_data_repeat_char = 'x';
@@ -415,7 +415,7 @@ namespace Test {
 	}
 
 	DeserializePacketFunction DeserializeFunction() {
-		return [](Transport::Packet::OpcodeType opcode, Consumer consumer, StormByte::Shared<Log> logger) -> PacketPointer {
+		return [](Transport::Packet::OpcodeType opcode, Consumer consumer, StormByte::Safe::Shared<Log> logger) -> PacketPointer {
 			(void)logger;
 			StormByte::BinaryData data;
 			consumer.ExtractUntilEoF(data);
@@ -532,7 +532,7 @@ namespace Test {
 	class XorPipe final: public Buf::Pipe {
 		public:
 			void Run(Buf::ReadOnly& in, Buf::WriteOnly& out,
-				const StormByte::Shared<Log>& log) override {
+				const StormByte::Safe::Shared<Log>& log) override {
 			log << Level::Debug << "XOR Pipe: Starting..." << std::endl;
 			constexpr StormByte::ByteSize max_chunk{10 * 1024 * 1024};
 
@@ -582,7 +582,7 @@ namespace Test {
 
 	class Client: public Net::Client {
 		public:
-			Client(StormByte::Shared<Log> logger) noexcept:
+			Client(StormByte::Safe::Shared<Log> logger) noexcept:
 			Net::Client(DeserializeFunction(), logger) {}
 
 			~Client() noexcept = default;
@@ -704,7 +704,7 @@ namespace Test {
 
 	class Server: public Net::Server {
 		public:
-			Server(StormByte::Shared<Log> logger) noexcept:
+			Server(StormByte::Safe::Shared<Log> logger) noexcept:
 			Net::Server(DeserializeFunction(), logger) {}
 
 			~Server() noexcept = default;
@@ -819,7 +819,7 @@ int TestDeserializerFunctionCopy() {
 		}
 
 		PacketPointer operator()(Transport::Packet::OpcodeType, Consumer,
-			StormByte::Shared<Log>) const {
+			StormByte::Safe::Shared<Log>) const {
 			++*invocations;
 			return nullptr;
 		}

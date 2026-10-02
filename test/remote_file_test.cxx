@@ -208,8 +208,8 @@ namespace RemoteFileTest {
 			RawSocket m_socket{invalid_raw_socket};
 	};
 
-	StormByte::Shared<Log> Logger() {
-		static auto logger = StormByte::Heap::MakeShared<StormByte::Logger::ThreadedLog>(
+	StormByte::Safe::Shared<Log> Logger() {
+		static auto logger = StormByte::Safe::Heap::MakeShared<StormByte::Logger::ThreadedLog>(
 			std::cerr, StormByte::Logger::Level::Error, "[RemoteFileTest] %T:");
 		return logger;
 	}
@@ -255,7 +255,7 @@ namespace RemoteFileTest {
 	};
 
 	Net::DeserializePacketFunction Factory() {
-		return [](Packet::OpcodeType opcode, Buf::Consumer payload, StormByte::Shared<Log>) -> Net::PacketPointer {
+		return [](Packet::OpcodeType opcode, Buf::Consumer payload, StormByte::Safe::Shared<Log>) -> Net::PacketPointer {
 			StormByte::BinaryData bytes;
 			payload.ExtractUntilEoF(bytes);
 			switch (static_cast<AppOpcode>(opcode)) {
@@ -283,7 +283,7 @@ namespace RemoteFileTest {
 
 	class XorPipe final: public Buf::Pipe {
 		public:
-			void Run(Buf::ReadOnly& input, Buf::WriteOnly& output, const StormByte::Shared<Log>&) override {
+			void Run(Buf::ReadOnly& input, Buf::WriteOnly& output, const StormByte::Safe::Shared<Log>&) override {
 				StormByte::BinaryData bytes;
 				input.ExtractUntilEoF(bytes);
 				for (auto& byte: bytes) byte ^= std::byte{0x67};
@@ -297,7 +297,7 @@ namespace RemoteFileTest {
 	class ReversibleEnvelopePipe final: public Buf::Pipe {
 		public:
 			explicit ReversibleEnvelopePipe(bool encode): m_encode(encode) {}
-			void Run(Buf::ReadOnly& input, Buf::WriteOnly& output, const StormByte::Shared<Log>&) override {
+			void Run(Buf::ReadOnly& input, Buf::WriteOnly& output, const StormByte::Safe::Shared<Log>&) override {
 				StormByte::BinaryData bytes;
 				input.ExtractUntilEoF(bytes);
 				if (m_encode) {
@@ -455,7 +455,7 @@ namespace RemoteFileTest {
 		return actual.size() == expected.size() && std::equal(actual.begin(), actual.end(), expected.begin());
 	}
 
-	void CheckNetworkDevice(const StormByte::Shared<StormByte::System::Device>& device) {
+	void CheckNetworkDevice(const StormByte::Safe::Shared<StormByte::System::Device>& device) {
 		Check(device && device->Throughput().read_bps > StormByte::ByteSize{0}
 			&& device->Throughput().write_bps > StormByte::ByteSize{0}
 			&& device->Window().read > StormByte::ByteSize{0}
@@ -647,7 +647,7 @@ namespace RemoteFileTest {
 	void ExerciseEightReaders(Client& client, const std::filesystem::path& path) {
 		const StormByte::BinaryData expected = ReadBytes(path);
 		std::array<Net::RemoteFileReaderHandle, 8> readers;
-		std::array<StormByte::Shared<StormByte::System::Device>, 8> devices;
+		std::array<StormByte::Safe::Shared<StormByte::System::Device>, 8> devices;
 		for (std::size_t index = 0; index < readers.size(); ++index) {
 			auto [mount, rejected] = client.RequestMount(false, false, 1);
 			Check(!rejected && mount.Result() == Mount::Status::Authorized, "interleaved reader mount failed");

@@ -51,7 +51,6 @@ jobs:
         uses: stormbytepp/githubactions/.github/actions/update-apt-cached@master
         with:
           cache-key: apt-lists
-          rotate-weekly: true
 
   ###########################################################################
   # Linux

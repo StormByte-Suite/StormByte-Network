@@ -46,7 +46,7 @@
 #include <StormByte/network/transport/packet.hxx>
 using namespace StormByte::Network;
 Client::Client(DeserializePacketFunction deserialize_packet_function,
-	StormByte::Shared<Logger::Log> logger) noexcept:
+	StormByte::Safe::Shared<Logger::Log> logger) noexcept:
 	Endpoint(std::move(deserialize_packet_function), std::move(logger)),
 	m_connection(nullptr) {}
 
@@ -152,7 +152,7 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 		}
 
 		const std::string locator = "remote://" + m_remote_address + ":" + std::to_string(mount.Port());
-		RemoteFileReaderHandle reader{new BufferedRemoteFileReader(StormByte::String::String{locator}, plane, mount.Token())};
+		RemoteFileReaderHandle reader{new BufferedRemoteFileReader(StormByte::Safe::String{locator}, plane, mount.Token())};
 		if (!plane->RegisterToken(mount.Token(), [instance = reader.get()]() noexcept { instance->MarkFailed(); })) {
 			reader->m_token_released = true;
 			reader.reset();
@@ -202,7 +202,7 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 		}
 
 		const std::string locator = "remote://" + m_remote_address + ":" + std::to_string(mount.Port());
-		RemoteFileWriterHandle writer{new BufferedRemoteFileWriter(StormByte::String::String{locator}, plane, mount.Token())};
+		RemoteFileWriterHandle writer{new BufferedRemoteFileWriter(StormByte::Safe::String{locator}, plane, mount.Token())};
 		if (!plane->RegisterToken(mount.Token(), [instance = writer.get()]() noexcept { instance->MarkFailed(); })) {
 			writer->m_token_released = true;
 			writer.reset();

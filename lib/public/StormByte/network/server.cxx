@@ -69,7 +69,7 @@ namespace {
 		std::array<char, 64> hexadecimal{};
 		std::size_t offset = 0;
 		for (int index = 0; index < 2; ++index) {
-			const StormByte::CString uuid = StormByte::GenerateUUIDv4();
+			const StormByte::Safe::String uuid = StormByte::GenerateUUIDv4();
 			const std::string_view text = static_cast<std::string_view>(uuid);
 			for (const char value: text) {
 				if (value != '-') {
@@ -94,7 +94,7 @@ namespace {
 }
 
 using namespace StormByte::Network;
-Server::Server(DeserializePacketFunction deserialize_packet_function, StormByte::Shared<Logger::Log> logger) noexcept:
+Server::Server(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger) noexcept:
 	Endpoint(std::move(deserialize_packet_function), std::move(logger)),
 	m_socket_server(nullptr),
 	m_status(Connection::Status::Disconnected),

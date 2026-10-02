@@ -49,6 +49,7 @@
 #include <StormByte/network/connection/status.hxx>
 #include <StormByte/network/exception.hxx>
 #include <StormByte/network/transport/packet.hxx>
+#include <StormByte/safe/pointers.hxx>
 #include <StormByte/type_traits.hxx>
 
 #ifdef WINDOWS
@@ -93,7 +94,7 @@ namespace StormByte::Network {
 	class DeserializePacketFunction {
 		public:
 			using OpcodeType = Transport::Packet::OpcodeType; ///< Wire opcode type.
-			using InvokeFunction = PacketPointer (*)(void*, OpcodeType, Buffer::Consumer, StormByte::Shared<Logger::Log>); ///< Invocation trampoline.
+			using InvokeFunction = PacketPointer (*)(void*, OpcodeType, Buffer::Consumer, StormByte::Safe::Shared<Logger::Log>); ///< Invocation trampoline.
 			using CloneFunction = void* (*)(const void*); ///< Caller-allocator clone trampoline.
 			using DestroyFunction = void (*)(void*) noexcept; ///< Caller-allocator destroy trampoline.
 
@@ -151,7 +152,7 @@ namespace StormByte::Network {
 			 * @return Decoded packet, or empty pointer.
 			 */
 			STORMBYTE_NETWORK_PUBLIC PacketPointer operator()(OpcodeType opcode, Buffer::Consumer payload,
-				StormByte::Shared<Logger::Log> logger) const;
+				StormByte::Safe::Shared<Logger::Log> logger) const;
 
 			/** @brief Whether a callable target is present. */
 			explicit operator bool() const noexcept {
@@ -170,7 +171,7 @@ namespace StormByte::Network {
 			 */
 			template<typename Callable>
 			static PacketPointer Invoke(void* context, OpcodeType opcode, Buffer::Consumer payload,
-				StormByte::Shared<Logger::Log> logger) {
+				StormByte::Safe::Shared<Logger::Log> logger) {
 				return (*static_cast<Callable*>(context))(opcode, std::move(payload), std::move(logger));
 			}
 
