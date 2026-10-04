@@ -18,7 +18,7 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.0...HEAD
 
-## [2.0.0] - 2026-10-03
+## [2.0.0] - 2026-10-04
 
 ### Added
 
@@ -41,6 +41,8 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
     - Moved heap-owning public/private lifecycle operations, frame payload operations, and exported exception RTTI anchors out of headers to keep DLL allocation and destruction inside their owning modules.
     - Replaced the deserializer's `std::function` storage with caller-allocated callback trampolines so the Network DLL never allocates, clones, or frees the callback target across CRTs.
     - Propagated the selected shared/static mode to the bundled Buffer component instead of forcing it shared in Network's wrapper.
+    - Hid Client backend and Server event-loop state behind Base-heap `Safe::Unique` implementations, removing their private STL-heavy state from the exported class layouts.
+    - Store retained client and server endpoint addresses in Base-owned `Safe::String` values instead of module-CRT `std::string` buffers.
 - **Suite integration and documentation**
     - Updated repository and documentation links for the StormByte-Suite move, refreshed the suite catalog, and removed retired StormByte-String references.
     - Doxygen (`ENABLE_DOC`) resolves Buffer, Logger and Base headers via `INCLUDE_PATH` and skips `thirdparty`. No dependency pin change.

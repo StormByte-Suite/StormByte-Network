@@ -43,35 +43,51 @@
 #include <StormByte/network/endpoint.hxx>
 #include <StormByte/network/remote_file_mount.hxx>
 #include <StormByte/network/server_telemetry.hxx>
+#include <StormByte/safe/pointers.hxx>
 
-#include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
-#include <mutex>
-#include <thread>
-#include <unordered_map>
-#include <unordered_set>
-#include <deque>
+#include <memory>
+#include <string>
 #include <string_view>
-#include <vector>
 
 /**
  * @brief Network module of the StormByte suite.
  */
 namespace StormByte::Network {
 	namespace Connection {
-		class Client;	///< Forward declaration
+		/**
+		 * @brief Forward declaration of the connected client implementation.
+		 */
+		class Client;
 	}
 
 	namespace Socket {
-		class Server;	///< Forward declaration
+		/**
+		 * @brief Forward declaration of the listening socket implementation.
+		 */
+		class Server;
 	}
 
 	namespace Detail {
-		class Session;	///< Forward declaration
-		class WorkerPool;	///< Forward declaration
+		/**
+		 * @brief Forward declaration of a client parser session.
+		 */
+		class Session;
+		/**
+		 * @brief Forward declaration of the packet worker pool.
+		 */
+		class WorkerPool;
 		namespace RemoteFile {
-			class Host;	///< Forward declaration
-			class MountRegistry; ///< New class for managing mount registrations
+			/**
+			 * @brief Forward declaration of a private peer data plane.
+			 */
+			class Host;
+			/**
+			 * @brief Forward declaration of the remote-file mount registry.
+			 */
+			class MountRegistry;
 		}
 	}
 
@@ -171,39 +187,83 @@ namespace StormByte::Network {
 			void DisconnectClient(std::string_view uuid) noexcept;
 
 		private:
-			std::unique_ptr<Socket::Server> m_socket_server;											///< Listen socket
-			std::atomic<Connection::Status> m_status;												///< Server status
-			std::thread m_accept_thread;															///< Accept loop thread
-			Connection::HandlerType m_wakeup_read;												///< Wakeup read handle
-			Connection::HandlerType m_wakeup_write;												///< Wakeup write handle
-			std::unordered_map<std::string, std::shared_ptr<Detail::Session>> m_sessions;	///< Active parser sessions
-			std::unique_ptr<Detail::WorkerPool> m_pool;														///< Packet worker pool
-			enum class CompletionReason: unsigned short { Success, NullHandler, Error }; ///< Completion outcome
+			/**
+			 * @brief Result category returned by a packet worker.
+			 */
+			enum class CompletionReason: unsigned short { Success, NullHandler, Error };
+			/**
+			 * @struct Completion
+			 * @brief Worker response queued for application on the event loop.
+			 */
 			struct Completion {
-				std::string uuid; ///< Client UUID
-				PacketPointer packet; ///< Response packet
-				CompletionReason reason; ///< Completion outcome
+				/**
+				 * @brief UUID of the client session that submitted the packet.
+				 */
+				std::string uuid;
+				/**
+				 * @brief Application response packet, if one was produced.
+				 */
+				PacketPointer packet;
+				/**
+				 * @brief Worker handler outcome.
+				 */
+				CompletionReason reason;
 			};
-			std::deque<Completion> m_completions; ///< Worker completions
-			Connection::Protocol m_protocol{Connection::Protocol::IPv4}; ///< Bound protocol.
-			std::string m_bind_address; ///< Bound address for private listeners.
+			/**
+			 * @struct MountedRemoteFile
+			 * @brief Active file capability and its path reservation.
+			 */
 			struct MountedRemoteFile {
-				std::shared_ptr<Detail::RemoteFile::Host> host; ///< Authorized private channel.
-				std::string path_key; ///< Canonical path used for shared/exclusive mount reservation.
-				RemoteFileMount::Access access; ///< Shared reader or exclusive writer reservation.
-				RemoteFileMount::ChannelToken token; ///< Capability reservation released by CloseToken.
+				/**
+				 * @brief Peer data plane serving this mount.
+				 */
+				std::shared_ptr<Detail::RemoteFile::Host> host;
+				/**
+				 * @brief Canonical path key held by this reservation.
+				 */
+				std::string path_key;
+				/**
+				 * @brief Shared-reader or exclusive-writer access mode.
+				 */
+				RemoteFileMount::Access access;
+				/**
+				 * @brief Capability token released when the mount closes.
+				 */
+				RemoteFileMount::ChannelToken token;
 			};
-			std::vector<MountedRemoteFile> m_remote_files; ///< Authorized private channels.
-			std::unordered_map<std::string, std::shared_ptr<Detail::RemoteFile::Host>> m_remote_planes; ///< One plane per peer UUID.
-			std::shared_ptr<Detail::RemoteFile::MountRegistry> m_remote_file_registry; ///< Shared path handles and token table.
-			std::mutex m_remote_file_mutex; ///< Protects private channel registration.
-			static constexpr std::size_t MAX_REMOTE_FILE_CHANNELS = 128; ///< Bound channel resource use.
-			std::mutex m_completion_mutex; ///< Protects completions
-			enum class CommandType: unsigned short { DisconnectClient, DisconnectAll, Stop }; ///< Loop command
-			struct Command { CommandType type; std::string uuid; }; ///< Loop command
-			std::deque<Command> m_commands; ///< Commands from workers/user callbacks
-			std::mutex m_command_mutex; ///< Protects commands
-			StormByte::Safe::Shared<ServerTelemetry> m_telemetry; ///< Aggregate counters for this Server instance.
+			/**
+			 * @brief Upper bound on active remote-file mounts.
+			 */
+			static constexpr std::size_t MAX_REMOTE_FILE_CHANNELS = 128;
+			/**
+			 * @brief Event-loop action requested by a worker or callback.
+			 */
+			enum class CommandType: unsigned short { DisconnectClient, DisconnectAll, Stop };
+			/**
+			 * @struct Command
+			 * @brief Event-loop command and optional target client UUID.
+			 */
+			struct Command {
+				/**
+				 * @brief Command to apply on the event loop.
+				 */
+				CommandType type;
+				/**
+				 * @brief Target UUID for per-client commands.
+				 */
+				std::string uuid;
+			};
+
+			/**
+			 * @class Implementation
+			 * @brief Private listener, session, and event-loop state.
+			 */
+			class Implementation;
+
+			/**
+			 * @brief Base-owned private server engine.
+			 */
+			StormByte::Safe::Unique<Implementation> m_engine;
 
 			/**
 			 * @brief Accept-loop thread body.
@@ -237,25 +297,45 @@ namespace StormByte::Network {
 			 */
 			void ProcessSession(const std::shared_ptr<Detail::Session>& session, bool readable, bool writable) noexcept;
 
-			/** @brief Enqueue a worker completion and wake EventLoop. */
+			/**
+			 * @brief Enqueue a worker completion and wake the event loop.
+			 * @param completion Worker result to apply.
+			 */
 			void PostCompletion(Completion completion) noexcept;
 
-			/** @brief Apply all worker completions on EventLoop. */
+			/**
+			 * @brief Apply all queued worker completions on the event loop.
+			 */
 			void DrainCompletions() noexcept;
 
-			/** @brief Enqueue a command for EventLoop. */
+			/**
+			 * @brief Enqueue a command for the event loop.
+			 * @param command Action to apply.
+			 */
 			void PostCommand(Command command) noexcept;
 
-			/** @brief Apply all commands on EventLoop. */
+			/**
+			 * @brief Apply all queued commands on the event loop.
+			 */
 			void DrainCommands() noexcept;
 
-			/** @brief Direct session removal, called only by EventLoop. */
+			/**
+			 * @brief Remove a session directly from the event loop.
+			 * @param uuid Client session to remove.
+			 */
 			void DisconnectClientOnLoop(std::string_view uuid) noexcept;
 
-			/** @brief Revoke and stop every private file channel. */
+			/**
+			 * @brief Revoke and stop every private file channel.
+			 */
 			void RevokeAllRemoteFiles() noexcept;
 
-			/** @brief Read one peer data plane and enqueue its file operation on WorkerPool. */
+			/**
+			 * @brief Read one peer data plane and enqueue its file operation.
+			 * @param host Peer data plane to process.
+			 * @param readable Whether the socket is ready for reading.
+			 * @param writable Whether the socket is ready for writing.
+			 */
 			void ProcessRemotePlane(const std::shared_ptr<Detail::RemoteFile::Host>& host,
 				bool readable, bool writable) noexcept;
 

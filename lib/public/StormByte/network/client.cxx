@@ -44,119 +44,153 @@
 #include <StormByte/network/socket/client.hxx>
 #include <StormByte/network/transport/frame.hxx>
 #include <StormByte/network/transport/packet.hxx>
+
+#include <memory>
+#include <mutex>
+
 using namespace StormByte::Network;
+
+class Client::Implementation final {
+	public:
+		/**
+		 * @brief Construct empty client state with client-owned telemetry.
+		 */
+		Implementation() = default;
+
+	private:
+		friend class Client;
+
+		/**
+		 * @brief Active framed connection.
+		 */
+		std::shared_ptr<Connection::Client> connection;
+		/**
+		 * @brief Last connected address used to open private file channels.
+		 */
+		StormByte::Safe::String remote_address;
+		/**
+		 * @brief Address family used for private file channels.
+		 */
+		Connection::Protocol protocol{Connection::Protocol::IPv4};
+		/**
+		 * @brief Protects peer-plane creation and mount registration.
+		 */
+		std::mutex remote_file_mutex;
+		/**
+		 * @brief Peer-scoped data plane shared by remote-file leaves.
+		 */
+		std::shared_ptr<Detail::RemoteFile::DataPlane> remote_file_plane;
+		/**
+		 * @brief Counters scoped to this client instance.
+		 */
+		StormByte::Safe::Shared<ClientTelemetry> telemetry{StormByte::Safe::Heap::MakeShared<ClientTelemetry>()};
+};
+
 Client::Client(DeserializePacketFunction deserialize_packet_function,
 	StormByte::Safe::Shared<Logger::Log> logger):
 	Endpoint(std::move(deserialize_packet_function), std::move(logger)),
-	m_connection(nullptr), m_telemetry(StormByte::Safe::Heap::MakeShared<ClientTelemetry>()) {}
+	m_backend(StormByte::Safe::Unique<Implementation>::MakePointer<Implementation>()) {}
 
 Client::~Client() noexcept {
 	Disconnect();
 }
 
 Client::Client(Client&& other) noexcept:
-	Endpoint(std::move(other)), m_connection(std::move(other.m_connection)),
-	m_remote_address(std::move(other.m_remote_address)), m_protocol(other.m_protocol),
-	m_telemetry(std::move(other.m_telemetry)) {
-	std::scoped_lock lock(other.m_remote_file_mutex);
-	m_remote_file_plane = std::move(other.m_remote_file_plane);
-}
+	Endpoint(std::move(other)), m_backend(std::move(other.m_backend)) {}
 
 Client& Client::operator=(Client&& other) noexcept {
 	if (this == &other) return *this;
 	Disconnect();
-	{
-		std::scoped_lock lock(m_remote_file_mutex);
-		if (m_remote_file_plane) m_remote_file_plane->Stop();
-		m_remote_file_plane.reset();
+	if (m_backend) {
+		std::scoped_lock lock(m_backend->remote_file_mutex);
+		if (m_backend->remote_file_plane) m_backend->remote_file_plane->Stop();
 	}
-	std::scoped_lock lock(m_remote_file_mutex, other.m_remote_file_mutex);
 	Endpoint::operator=(std::move(other));
-	m_connection = std::move(other.m_connection);
-	m_remote_address = std::move(other.m_remote_address);
-	m_protocol = other.m_protocol;
-	m_remote_file_plane = std::move(other.m_remote_file_plane);
-	m_telemetry = std::move(other.m_telemetry);
+	m_backend = std::move(other.m_backend);
 	return *this;
 }
 
 bool Client::Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) {
-	if (m_telemetry) m_telemetry->RecordConnectionAttempt();
-	if (m_connection) {
-		if (m_telemetry) m_telemetry->RecordConnectionFailed();
-		m_logger << Logger::Level::Error << "Client is already connected." << std::endl;
-		return false;
-	}
-
 	try {
+		if (!m_backend) {
+			m_backend = StormByte::Safe::Unique<Implementation>::MakePointer<Implementation>();
+		}
+		if (m_backend->telemetry) m_backend->telemetry->RecordConnectionAttempt();
+		if (m_backend->connection) {
+			if (m_backend->telemetry) m_backend->telemetry->RecordConnectionFailed();
+			m_logger << Logger::Level::Error << "Client is already connected." << std::endl;
+			return false;
+		}
+
 		std::shared_ptr<Socket::Client> socket = std::make_shared<Socket::Client>(protocol, m_logger);
 		if (!socket->Connect(address, port)) {
-			if (m_telemetry) m_telemetry->RecordConnectionFailed();
+			if (m_backend->telemetry) m_backend->telemetry->RecordConnectionFailed();
 			m_logger << Logger::Level::Error << "Failed to connect to " << std::string_view{address} << ":" << port
 					<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
 			return false;
 		}
 
 		auto connection = CreateConnection(socket);
-		m_remote_address = address;
-		m_protocol = protocol;
+		m_backend->remote_address = address;
+		m_backend->protocol = protocol;
 		{
-			std::scoped_lock lock(m_remote_file_mutex);
-			if (m_remote_file_plane) m_remote_file_plane->Stop();
-			m_remote_file_plane.reset();
+			std::scoped_lock lock(m_backend->remote_file_mutex);
+			if (m_backend->remote_file_plane) m_backend->remote_file_plane->Stop();
+			m_backend->remote_file_plane.reset();
 		}
-		m_connection = std::move(connection);
-		if (m_telemetry) m_telemetry->RecordConnectionEstablished();
+		m_backend->connection = std::move(connection);
+		if (m_backend->telemetry) m_backend->telemetry->RecordConnectionEstablished();
 		m_logger << Logger::Level::LowLevel << "Successfully connected to " << address << ":" << port
 				<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
 		return true;
 	} catch (const std::bad_alloc& bd) {
-		if (m_telemetry) m_telemetry->RecordConnectionFailed();
+		if (m_backend && m_backend->telemetry) m_backend->telemetry->RecordConnectionFailed();
 		m_logger << Logger::Level::Error << "Failed to allocate memory for socket: " << bd.what() << std::endl;
 		return false;
 	}
 }
 
 void Client::Disconnect() noexcept {
-	if (m_connection) {
+	if (m_backend && m_backend->connection) {
 		m_logger << Logger::Level::LowLevel << "Disconnecting client." << std::endl;
-		m_connection.reset();
-		if (m_telemetry) m_telemetry->RecordDisconnected();
+		m_backend->connection.reset();
+		if (m_backend->telemetry) m_backend->telemetry->RecordDisconnected();
 	}
 }
 
 Connection::Status Client::Status() const noexcept {
-	return m_connection ? m_connection->Status() : Connection::Status::Disconnected;
+	return m_backend && m_backend->connection ? m_backend->connection->Status() : Connection::Status::Disconnected;
 }
 
 PacketPointer Client::Send(const Transport::Packet& packet) noexcept {
-	if (!m_telemetry) return Endpoint::Send(m_connection, packet);
-	m_telemetry->RecordRequest();
-	auto sample = m_telemetry->MeasureRequest();
-	PacketPointer response = Endpoint::Send(m_connection, packet);
-	m_telemetry->RecordRequestResult(sample.Stop(), static_cast<bool>(response));
+	if (!m_backend) return {};
+	if (!m_backend->telemetry) return Endpoint::Send(m_backend->connection, packet);
+	m_backend->telemetry->RecordRequest();
+	auto sample = m_backend->telemetry->MeasureRequest();
+	PacketPointer response = Endpoint::Send(m_backend->connection, packet);
+	m_backend->telemetry->RecordRequestResult(sample.Stop(), static_cast<bool>(response));
 	return response;
 }
 
 StormByte::Safe::Shared<ClientTelemetry> Client::Telemetry() const noexcept {
-	return m_telemetry;
+	return m_backend ? m_backend->telemetry : StormByte::Safe::Shared<ClientTelemetry>{};
 }
 
 RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mount) noexcept {
-	if (mount.Result() != RemoteFileMount::Status::Authorized
+	if (!m_backend || mount.Result() != RemoteFileMount::Status::Authorized
 		|| mount.Mode() != RemoteFileMount::Access::Read || mount.Port() == 0
-		|| mount.MaximumTimeoutSeconds() < 3 || m_remote_address.empty()) {
+		|| mount.MaximumTimeoutSeconds() < 3 || m_backend->remote_address.empty()) {
 		return {};
 	}
 
 	try {
-		std::scoped_lock lock(m_remote_file_mutex);
-		std::shared_ptr<Detail::RemoteFile::DataPlane> plane = m_remote_file_plane;
+		std::scoped_lock lock(m_backend->remote_file_mutex);
+		std::shared_ptr<Detail::RemoteFile::DataPlane> plane = m_backend->remote_file_plane;
 		const bool created = !plane;
 		if (plane && (plane->Failed() || plane->Port() != mount.Port())) return {};
 		if (!plane) {
-			auto socket = std::make_shared<Socket::Client>(m_protocol, m_logger);
-			if (!socket->Connect(m_remote_address, mount.Port())) return {};
+			auto socket = std::make_shared<Socket::Client>(m_backend->protocol, m_logger);
+			if (!socket->Connect(m_backend->remote_address, mount.Port())) return {};
 			std::string local_address = socket->LocalAddress();
 			if (local_address.empty()) {
 				socket->Disconnect();
@@ -168,7 +202,8 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 				std::move(local_address), std::move(device), mount.Port());
 		}
 
-		const std::string locator = "remote://" + m_remote_address + ":" + std::to_string(mount.Port());
+		const std::string locator = "remote://" + std::string{static_cast<std::string_view>(m_backend->remote_address)}
+			+ ":" + std::to_string(mount.Port());
 		auto reader = StormByte::Safe::Heap::MakeUnique<BufferedRemoteFileReader>(StormByte::Safe::String{locator}, plane, mount.Token());
 		if (!plane->RegisterToken(mount.Token(), [instance = reader.get()]() noexcept { instance->MarkFailed(); })) {
 			reader->m_token_released = true;
@@ -184,7 +219,7 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 				plane->Stop();
 				return {};
 			}
-			m_remote_file_plane = plane;
+			m_backend->remote_file_plane = plane;
 		}
 		return reader;
 	} catch (...) {
@@ -193,20 +228,20 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 }
 
 RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mount) noexcept {
-	if (mount.Result() != RemoteFileMount::Status::Authorized
+	if (!m_backend || mount.Result() != RemoteFileMount::Status::Authorized
 		|| mount.Mode() != RemoteFileMount::Access::Write || mount.Port() == 0
-		|| mount.MaximumTimeoutSeconds() < 3 || m_remote_address.empty()) {
+		|| mount.MaximumTimeoutSeconds() < 3 || m_backend->remote_address.empty()) {
 		return {};
 	}
 
 	try {
-		std::scoped_lock lock(m_remote_file_mutex);
-		std::shared_ptr<Detail::RemoteFile::DataPlane> plane = m_remote_file_plane;
+		std::scoped_lock lock(m_backend->remote_file_mutex);
+		std::shared_ptr<Detail::RemoteFile::DataPlane> plane = m_backend->remote_file_plane;
 		const bool created = !plane;
 		if (plane && (plane->Failed() || plane->Port() != mount.Port())) return {};
 		if (!plane) {
-			auto socket = std::make_shared<Socket::Client>(m_protocol, m_logger);
-			if (!socket->Connect(m_remote_address, mount.Port())) return {};
+			auto socket = std::make_shared<Socket::Client>(m_backend->protocol, m_logger);
+			if (!socket->Connect(m_backend->remote_address, mount.Port())) return {};
 			std::string local_address = socket->LocalAddress();
 			if (local_address.empty()) {
 				socket->Disconnect();
@@ -218,7 +253,8 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 				std::move(local_address), std::move(device), mount.Port());
 		}
 
-		const std::string locator = "remote://" + m_remote_address + ":" + std::to_string(mount.Port());
+		const std::string locator = "remote://" + std::string{static_cast<std::string_view>(m_backend->remote_address)}
+			+ ":" + std::to_string(mount.Port());
 		auto writer = StormByte::Safe::Heap::MakeUnique<BufferedRemoteFileWriter>(StormByte::Safe::String{locator}, plane, mount.Token());
 		if (!plane->RegisterToken(mount.Token(), [instance = writer.get()]() noexcept { instance->MarkFailed(); })) {
 			writer->m_token_released = true;
@@ -234,7 +270,7 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 				plane->Stop();
 				return {};
 			}
-			m_remote_file_plane = plane;
+			m_backend->remote_file_plane = plane;
 		}
 		return writer;
 	} catch (...) {

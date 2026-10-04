@@ -43,9 +43,8 @@
 #include <StormByte/network/endpoint.hxx>
 #include <StormByte/network/client_telemetry.hxx>
 #include <StormByte/network/remote_file.hxx>
+#include <StormByte/safe/pointers.hxx>
 
-#include <memory>
-#include <mutex>
 #include <string_view>
 
 /**
@@ -53,7 +52,10 @@
  */
 namespace StormByte::Network {
 	namespace Connection {
-		class Client;	///< Forward declaration
+		/**
+		 * @brief Forward declaration of the connected client implementation.
+		 */
+		class Client;
 	}
 
 	/**
@@ -147,11 +149,15 @@ namespace StormByte::Network {
 			RemoteFileWriterHandle CreateRemoteFileWriter(const RemoteFileMount& mount) noexcept;
 
 		private:
-			std::shared_ptr<Connection::Client> m_connection;	///< Active connection
-			std::string m_remote_address; ///< Last connected server address for private channels.
-			Connection::Protocol m_protocol{Connection::Protocol::IPv4}; ///< Last connected address family.
-			std::mutex m_remote_file_mutex; ///< Serializes peer-plane creation and mount registration.
-			std::shared_ptr<Detail::RemoteFile::DataPlane> m_remote_file_plane; ///< One plane shared by this Client's leaves.
-			StormByte::Safe::Shared<ClientTelemetry> m_telemetry; ///< Counters owned by this Client instance.
+			/**
+			 * @class Implementation
+			 * @brief Private connection and remote-file state.
+			 */
+			class Implementation;
+
+			/**
+			 * @brief Base-owned private connection backend.
+			 */
+			StormByte::Safe::Unique<Implementation> m_backend;
 	};
 }
