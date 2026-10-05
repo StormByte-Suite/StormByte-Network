@@ -632,10 +632,27 @@ namespace RemoteFileTest {
 			}
 
 			/**
+			 * @brief Install fixture transforms explicitly on the newly connected session.
+			 * @param protocol Address family.
+			 * @param address Remote address.
+			 * @param port Remote port.
+			 * @return Whether transport and one-time configuration succeeded.
+			 */
+			bool Connect(const Net::Connection::Protocol& protocol, std::string_view address,
+				const unsigned short& port) override {
+				if (!Net::Client::Connect(protocol, address, port))
+					return false;
+				if (ConfigurePipelines(InputPipeline(), OutputPipeline()))
+					return true;
+				Disconnect();
+				return false;
+			}
+
+			/**
 			 * @brief Build the selected input pipeline.
 			 * @return Input transformation pipeline.
 			 */
-			Buf::Pipeline InputPipeline() const noexcept override {
+			Buf::Pipeline InputPipeline() const noexcept {
 				return MakeInput(m_framed.load());
 			}
 
@@ -643,7 +660,7 @@ namespace RemoteFileTest {
 			 * @brief Build the selected output pipeline.
 			 * @return Output transformation pipeline.
 			 */
-			Buf::Pipeline OutputPipeline() const noexcept override {
+			Buf::Pipeline OutputPipeline() const noexcept {
 				return MakeOutput(m_framed.load());
 			}
 
@@ -701,6 +718,15 @@ namespace RemoteFileTest {
 	class Server final: public Net::Server {
 		public:
 			/**
+			 * @brief Configure fixture transformations separately for each admitted UUID.
+			 * @param uuid Application session identity.
+			 * @return Whether configuration succeeded.
+			 */
+			bool OnClientConnected(std::string_view uuid) noexcept override {
+				return ConfigureClientPipelines(uuid, InputPipeline(), OutputPipeline());
+			}
+
+			/**
 			 * @brief Construct a server for the primary fixture paths.
 			 * @param read_path Primary reader fixture path.
 			 * @param write_path Primary writer fixture path.
@@ -741,7 +767,7 @@ namespace RemoteFileTest {
 			 * @brief Build the selected input pipeline.
 			 * @return Input transformation pipeline.
 			 */
-			Buf::Pipeline InputPipeline() const noexcept override {
+			Buf::Pipeline InputPipeline() const noexcept {
 				return MakeInput(m_framed.load());
 			}
 
@@ -749,7 +775,7 @@ namespace RemoteFileTest {
 			 * @brief Build the selected output pipeline.
 			 * @return Output transformation pipeline.
 			 */
-			Buf::Pipeline OutputPipeline() const noexcept override {
+			Buf::Pipeline OutputPipeline() const noexcept {
 				return MakeOutput(m_framed.load());
 			}
 
@@ -1391,9 +1417,172 @@ namespace RemoteFileTest {
 		ExerciseTokenFaultIsolation(client, expected);
 	}
 
+	void test_foreign_and_forged_tokens_preserve_owner() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "owner-read.bin";
+		const auto write_path = temporary.Path() / "unused-write.bin";
+		const auto expected = MakePattern(32);
+		WriteBytes(read_path, expected);
+		Server server(read_path, write_path);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "owner server connect failed");
+		Client owner;
+		Client attacker;
+		Check(owner.Connect(Net::Connection::Protocol::IPv4, address, port)
+			&& attacker.Connect(Net::Connection::Protocol::IPv4, address, port), "owner/attacker control connect failed");
+		auto [owned, owner_rejected] = owner.RequestMount(false);
+		auto [allowed, attacker_rejected] = attacker.RequestMount(false);
+		Check(!owner_rejected && !attacker_rejected && owned.Result() == Mount::Status::Authorized
+			&& allowed.Result() == Mount::Status::Authorized && owned.Port() != allowed.Port(), "peer planes were not isolated");
+		RawPeer peer(allowed.Port());
+		Check(peer.Connected(), "attacker raw peer connect failed");
+		auto forged = owned.Token();
+		forged.front() ^= std::byte{0x80};
+		std::uint64_t sequence = 1;
+		for (const auto& token: std::array<Mount::ChannelToken, 3>{Mount::ChannelToken{}, forged, owned.Token()}) {
+			Check(peer.SendMessage(1, sequence, token), "forged Attach send failed");
+			const auto response = peer.ReceiveMessage();
+			CheckRawResponse(response, 1, sequence++, 2);
+			Check(response.size() == remote_header_size, "forged Attach leaked file data");
+		}
+		Check(peer.SendMessage(12, sequence, owned.Token()), "foreign CloseToken send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 12, sequence++, 2);
+		auto reader = owner.AttachReader(owned);
+		Check(reader && reader->Open(), "foreign-token attempts revoked the owner's capability");
+		std::array<std::byte, 32> bytes{};
+		const auto read = reader->Read(std::span<std::byte>{bytes});
+		Check(read.count == bytes.size() && std::equal(bytes.begin(), bytes.end(), expected.begin()),
+			"foreign-token attempts changed the owner's file bytes");
+		Check(reader->Close().status == Buf::IO::Status::Ok, "owner Close failed after forged requests");
+		Check(peer.SendMessage(1, sequence, allowed.Token()), "legitimate attacker-plane Attach send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 1, sequence++, 0);
+		Check(peer.SendMessage(2, sequence, allowed.Token()), "legitimate attacker-plane Open send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 2, sequence++, 0);
+		Check(peer.SendMessage(12, sequence, allowed.Token()), "attacker-plane CloseToken send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 12, sequence, 0);
+	}
+
+	void test_malformed_close_preserves_capability() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "malformed-close-read.bin";
+		const auto write_path = temporary.Path() / "unused-write.bin";
+		WriteBytes(read_path, MakePattern(32));
+		Server server(read_path, write_path);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "malformed-close server connect failed");
+		Client client;
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "malformed-close control connect failed");
+		auto [mount, rejected] = client.RequestMount(false);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "malformed-close mount failed");
+		RawPeer peer(mount.Port());
+		Check(peer.Connected(), "malformed-close peer connect failed");
+		SendRawAttach(peer, mount.Token());
+		Check(peer.SendMessage(2, 2, mount.Token()), "malformed-close Open send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 2, 2, 0);
+		const std::array<std::byte, 1> body{std::byte{0x5A}};
+		std::uint64_t sequence = 3;
+		for (std::size_t variant = 0; variant < 3; ++variant) {
+			const auto data = variant == 2 ? std::span<const std::byte>{body} : std::span<const std::byte>{};
+			Check(peer.SendMessage(12, sequence, mount.Token(), variant == 0 ? 1 : 0,
+				variant == 1 ? 1 : 0, data), "malformed CloseToken send failed");
+			CheckRawResponse(peer.ReceiveMessage(), 12, sequence++, 2);
+			Check(peer.SendMessage(7, sequence, mount.Token()), "Size after malformed CloseToken send failed");
+			const auto response = peer.ReceiveMessage();
+			CheckRawResponse(response, 7, sequence++, 0);
+			const auto size = StormByte::Serializable<std::uint64_t>::Deserialize(
+				std::span<const std::byte>{response.data() + 18, sizeof(std::uint64_t)});
+			Check(size && *size == 32, "malformed close changed file size");
+		}
+		Check(peer.SendMessage(12, sequence, mount.Token()), "valid CloseToken send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 12, sequence++, 0);
+		auto [replacement, replacement_rejected] = client.RequestMount(true, false, 1);
+		Check(!replacement_rejected && replacement.Result() == Mount::Status::Authorized,
+			"malformed CloseToken leaked the reader reservation");
+		Check(peer.SendMessage(1, sequence, replacement.Token()), "replacement Attach send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 1, sequence++, 0);
+		Check(peer.SendMessage(12, sequence, replacement.Token()), "replacement CloseToken send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 12, sequence, 0);
+		Check(std::filesystem::remove(read_path), "malformed CloseToken leaked an open file handle");
+	}
+
+	void test_read_capability_rejects_mutating_operations() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "read-only.bin";
+		const auto write_path = temporary.Path() / "unused-write.bin";
+		const auto expected = MakePattern(32);
+		WriteBytes(read_path, expected);
+		Server server(read_path, write_path);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "read-only server connect failed");
+		Client client;
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "read-only control connect failed");
+		auto [mount, rejected] = client.RequestMount(false);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "read-only mount failed");
+		RawPeer peer(mount.Port());
+		Check(peer.Connected(), "read-only raw peer connect failed");
+		SendRawAttach(peer, mount.Token());
+		Check(peer.SendMessage(2, 2, mount.Token()), "read-only Open send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 2, 2, 0);
+		const std::array<std::byte, 3> patch{std::byte{0xFF}, std::byte{0xFF}, std::byte{0xFF}};
+		Check(peer.SendMessage(5, 3, mount.Token(), 0, patch.size(), patch), "unauthorized Write send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 5, 3, 2);
+		Check(peer.SendMessage(8, 4, mount.Token()), "unauthorized Flush send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 8, 4, 2);
+		Check(peer.SendMessage(9, 5, mount.Token()), "unauthorized Truncate send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 9, 5, 2);
+		Check(peer.SendMessage(4, 6, mount.Token(), 0, expected.size()), "Read after rejected mutation send failed");
+		const auto response = peer.ReceiveMessage();
+		CheckRawResponse(response, 4, 6, 0);
+		Check(response.size() == remote_header_size + expected.size()
+			&& std::equal(response.begin() + remote_header_size, response.end(), expected.begin())
+			&& EqualBytes(ReadBytes(read_path), expected), "read capability allowed mutation or became unusable");
+		Check(peer.SendMessage(12, 7, mount.Token()), "read-only CloseToken send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 12, 7, 0);
+	}
+
 	// -------------------
 	// Lifecycle
 	// -------------------
+	void test_closed_token_cannot_be_reused() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "revoked-read.bin";
+		const auto write_path = temporary.Path() / "unused-write.bin";
+		const auto expected = MakePattern(32);
+		WriteBytes(read_path, expected);
+		Server server(read_path, write_path);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "revocation server connect failed");
+		Client client;
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "revocation control connect failed");
+		auto [mount, rejected] = client.RequestMount(false);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "revocation mount failed");
+		RawPeer peer(mount.Port());
+		Check(peer.Connected(), "revocation raw peer connect failed");
+		SendRawAttach(peer, mount.Token());
+		Check(peer.SendMessage(2, 2, mount.Token()), "revocation Open send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 2, 2, 0);
+		Check(peer.SendMessage(12, 3, mount.Token()), "revocation CloseToken send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 12, 3, 0);
+		for (const auto& [opcode, sequence]: std::array<std::pair<std::uint8_t, std::uint64_t>, 4>{
+			{{1, 4}, {2, 5}, {7, 6}, {12, 7}}}) {
+			Check(peer.SendMessage(opcode, sequence, mount.Token()), "revoked token request send failed");
+			const auto response = peer.ReceiveMessage();
+			CheckRawResponse(response, opcode, sequence, 2);
+			Check(response.size() == remote_header_size, "revoked token leaked payload bytes");
+		}
+		auto [fresh, fresh_rejected] = client.RequestMount(false);
+		Check(!fresh_rejected && fresh.Result() == Mount::Status::Authorized
+			&& fresh.Token() != mount.Token() && fresh.Port() == mount.Port(), "revocation broke remount or reused a token");
+		Check(peer.SendMessage(1, 8, fresh.Token()), "fresh Attach send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 1, 8, 0);
+		Check(peer.SendMessage(2, 9, fresh.Token()), "fresh Open send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 2, 9, 0);
+		Check(peer.SendMessage(4, 10, fresh.Token(), 0, expected.size()), "fresh Read send failed");
+		const auto response = peer.ReceiveMessage();
+		CheckRawResponse(response, 4, 10, 0);
+		Check(response.size() == remote_header_size + expected.size()
+			&& std::equal(response.begin() + remote_header_size, response.end(), expected.begin()),
+			"fresh token failed after revoked-token requests");
+		Check(peer.SendMessage(12, 11, fresh.Token()), "fresh CloseToken send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 12, 11, 0);
+	}
+
 	void test_peer_kill_during_large_read_releases_host_handle() {
 		TempDirectory temporary;
 		const auto read_path = temporary.Path() / "killed-peer-read.bin";
@@ -1536,6 +1725,75 @@ namespace RemoteFileTest {
 
 	void test_invalid_private_opcode() {
 		ExerciseMalformedRawPlane(MalformedFrame::Opcode);
+	}
+
+	void test_mismatched_control_pipeline_denies_mount() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "mismatch-control-read.bin";
+		const auto write_path = temporary.Path() / "mismatch-control-write.bin";
+		const auto expected = MakePattern(32);
+		WriteBytes(read_path, expected);
+		WriteBytes(write_path, expected);
+		Server server(read_path, write_path);
+		server.UseFramedPipeline(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "mismatch control server connect failed");
+		Client attacker;
+		Check(attacker.Connect(Net::Connection::Protocol::IPv4, address, port), "mismatch control connect failed");
+		auto [mount, rejected] = attacker.RequestMount(true);
+		(void)rejected;
+		Check(mount.Result() != Mount::Status::Authorized && mount.Port() == 0,
+			"incompatible control pipeline obtained a mount capability");
+		attacker.Disconnect();
+		Check(EqualBytes(ReadBytes(write_path), expected), "incompatible control pipeline modified a file");
+		Client legitimate;
+		legitimate.UseFramedPipeline(true);
+		Check(legitimate.Connect(Net::Connection::Protocol::IPv4, address, port), "legitimate control connect failed");
+		auto [valid, valid_rejected] = legitimate.RequestMount(false);
+		Check(!valid_rejected && valid.Result() == Mount::Status::Authorized, "mismatch broke legitimate mount handling");
+		auto reader = legitimate.AttachReader(valid);
+		Check(reader && reader->Open(), "legitimate reader Open failed after control mismatch");
+		std::array<std::byte, 32> bytes{};
+		const auto read = reader->Read(std::span<std::byte>{bytes});
+		Check(read.count == bytes.size() && std::equal(bytes.begin(), bytes.end(), expected.begin()),
+			"legitimate data changed after control mismatch");
+		Check(reader->Close().status == Buf::IO::Status::Ok, "legitimate Close failed after control mismatch");
+	}
+
+	void test_mismatched_file_pipeline_rejects_attach() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "mismatch-plane-read.bin";
+		const auto write_path = temporary.Path() / "mismatch-plane-write.bin";
+		const auto expected = MakePattern(32);
+		WriteBytes(read_path, expected);
+		WriteBytes(write_path, expected);
+		Server server(read_path, write_path);
+		server.UseFramedPipeline(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "mismatch plane server connect failed");
+		for (const bool write: {false, true}) {
+			Client attacker;
+			attacker.UseFramedPipeline(true);
+			Check(attacker.Connect(Net::Connection::Protocol::IPv4, address, port), "mismatch plane control connect failed");
+			auto [mount, rejected] = attacker.RequestMount(write);
+			Check(!rejected && mount.Result() == Mount::Status::Authorized, "compatible control failed to authorize fixture");
+			RawPeer untrusted(mount.Port());
+			Check(untrusted.Connected(), "incompatible private peer connect failed");
+			Check(untrusted.SendMessage(1, 1, mount.Token()), "incompatible private Attach send failed");
+			Check(untrusted.WaitForClose(), "incompatible private pipeline Attach was not rejected");
+			Check(attacker.Status() == Net::Connection::Status::Connected,
+				"private pipeline failure disconnected the authorized control session");
+			attacker.Disconnect();
+		}
+		Check(EqualBytes(ReadBytes(read_path), expected) && EqualBytes(ReadBytes(write_path), expected),
+			"incompatible private pipelines modified fixture bytes");
+		Client legitimate;
+		legitimate.UseFramedPipeline(true);
+		Check(legitimate.Connect(Net::Connection::Protocol::IPv4, address, port), "legitimate plane control connect failed");
+		auto [valid, valid_rejected] = legitimate.RequestMount(true);
+		Check(!valid_rejected && valid.Result() == Mount::Status::Authorized,
+			"rejected private pipeline retained an exclusive file reservation");
+		auto writer = legitimate.AttachWriter(valid);
+		Check(writer && writer->Open(), "legitimate private pipeline writer Open failed");
+		Check(writer->Close(), "legitimate private pipeline Close failed");
 	}
 
 	void test_oversized_private_frame() {
@@ -1698,10 +1956,14 @@ int main() {
 	// -------------------
 	result += RunOne("test_acl_and_independent_reader_cursors", test_acl_and_independent_reader_cursors);
 	result += RunOne("test_capability_isolation", test_capability_isolation);
+	result += RunOne("test_foreign_and_forged_tokens_preserve_owner", test_foreign_and_forged_tokens_preserve_owner);
+	result += RunOne("test_malformed_close_preserves_capability", test_malformed_close_preserves_capability);
+	result += RunOne("test_read_capability_rejects_mutating_operations", test_read_capability_rejects_mutating_operations);
 
 	// -------------------
 	// Lifecycle
 	// -------------------
+	result += RunOne("test_closed_token_cannot_be_reused", test_closed_token_cannot_be_reused);
 	result += RunOne("test_peer_kill_during_large_read_releases_host_handle", test_peer_kill_during_large_read_releases_host_handle);
 	result += RunOne("test_pipeline_and_control_disconnect", test_pipeline_and_control_disconnect);
 	result += RunOne("test_plane_failure_faults_every_leaf", test_plane_failure_faults_every_leaf);
@@ -1712,6 +1974,8 @@ int main() {
 	// -------------------
 	result += RunOne("test_coalesced_operations_backpressure_keeps_plane_alive", test_coalesced_operations_backpressure_keeps_plane_alive);
 	result += RunOne("test_invalid_private_opcode", test_invalid_private_opcode);
+	result += RunOne("test_mismatched_control_pipeline_denies_mount", test_mismatched_control_pipeline_denies_mount);
+	result += RunOne("test_mismatched_file_pipeline_rejects_attach", test_mismatched_file_pipeline_rejects_attach);
 	result += RunOne("test_oversized_private_frame", test_oversized_private_frame);
 	result += RunOne("test_repeated_private_sequence", test_repeated_private_sequence);
 	result += RunOne("test_truncated_private_frame", test_truncated_private_frame);

@@ -114,6 +114,17 @@ namespace StormByte::Network::Detail {
 			/** @brief Close the session. */
 			void Close() noexcept;
 
+			/**
+			 * @brief Discard unprocessed input and prevent further packet dispatch.
+			 */
+			void CloseAfterReply() noexcept;
+
+			/**
+			 * @brief Whether the session is waiting only for reply draining.
+			 * @return True after CloseAfterReply.
+			 */
+			bool ClosingAfterReply() const noexcept;
+
 			/** @brief Whether serialized output has bytes ready to write. */
 			bool HasOutput() noexcept;
 
@@ -144,6 +155,11 @@ namespace StormByte::Network::Detail {
 			StormByte::ByteSize m_bytes_needed = FRAME_HEADER_SIZE; ///< Remaining bytes.
 			ParsePhase m_phase = ParsePhase::Header; ///< Current parser phase.
 			bool m_closed = false; ///< Terminal state.
+
+			/**
+			 * @brief Reply-draining state owned by the event loop.
+			 */
+			bool m_close_after_reply{false};
 			bool m_in_flight = false; ///< Request executing in pool.
 			bool m_task_blocked = false; ///< Pool queue was full.
 			FrameList m_ready_frames; ///< Parsed frames waiting for submission.

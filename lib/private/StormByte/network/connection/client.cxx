@@ -48,6 +48,25 @@ Client::Client(std::shared_ptr<Socket::Client> socket, Buffer::Pipeline in_pipel
 
 Client::~Client() noexcept = default;
 
+bool Client::ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output) {
+	if (m_configured)
+		return false;
+	Buffer::Pipeline file_input(input);
+	Buffer::Pipeline file_output(output);
+	m_in_pipeline = std::move(input);
+	m_out_pipeline = std::move(output);
+	m_file_input = std::move(file_input);
+	m_file_output = std::move(file_output);
+	m_configured = true;
+	return true;
+}
+
+std::pair<StormByte::Buffer::Pipeline, StormByte::Buffer::Pipeline> Client::FilePipelines() {
+	std::pair<StormByte::Buffer::Pipeline, StormByte::Buffer::Pipeline> result{m_file_input, m_file_output};
+	m_configured = true;
+	return result;
+}
+
 bool Client::Send(Transport::Frame&& frame, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 	ExpectedVoid result = m_socket->Send(frame.ProcessOutput(m_out_pipeline, logger));
 	if (!result) {

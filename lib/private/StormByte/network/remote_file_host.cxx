@@ -97,6 +97,8 @@ namespace StormByte::Network::Detail::RemoteFile {
 
 	Message MountRegistry::Execute(const Message& request) noexcept {
 		if (request.opcode == Opcode::CloseToken) {
+			if (request.offset != 0 || request.value != 0 || !request.data.empty())
+				return Reply(request, Status::Failed);
 			return Reply(request, ReleaseToken(request.token) ? Status::Ok : Status::Failed);
 		}
 
@@ -392,6 +394,8 @@ namespace StormByte::Network::Detail::RemoteFile {
 				return QueueResponse(response) ? ExpectedVoid{} : ExpectedVoid{Unexpected<ConnectionError>("Failed to queue token response")};
 		}
 		if (request->opcode == Opcode::CloseToken) {
+			if (request->offset != 0 || request->value != 0 || !request->data.empty())
+				return QueueResponse(response) ? ExpectedVoid{} : ExpectedVoid{Unexpected<ConnectionError>("Failed to queue token-close response")};
 			bool attached = false;
 			{
 				std::scoped_lock lock(m_mutex);
@@ -400,8 +404,7 @@ namespace StormByte::Network::Detail::RemoteFile {
 				attached = m_attached_tokens.erase(request->token) != 0;
 				m_registered_tokens.erase(request->token);
 			}
-			response.status = attached && request->offset == 0 && request->value == 0
-				&& request->data.empty() && m_registry->ReleaseToken(request->token) ? Status::Ok : Status::Failed;
+			response.status = attached && m_registry->ReleaseToken(request->token) ? Status::Ok : Status::Failed;
 			return QueueResponse(response) ? ExpectedVoid{} : ExpectedVoid{Unexpected<ConnectionError>("Failed to queue token-close response")};
 		}
 		{
@@ -466,8 +469,6 @@ namespace StormByte::Network::Detail::RemoteFile {
 				m_output_buffer = std::move(framed);
 				m_output_offset = 0;
 			}
-			else if (response.opcode == Opcode::Pong)
-				m_output_queue.push_front(std::move(framed));
 			else
 				m_output_queue.push_back(std::move(framed));
 			if (response.opcode != Opcode::Pong) {

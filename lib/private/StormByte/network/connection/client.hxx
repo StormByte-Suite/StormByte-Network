@@ -78,6 +78,20 @@ namespace StormByte::Network::Connection {
 			~Client() noexcept;
 
 			/**
+			 * @brief Install one complete pair before any file plane is created.
+			 * @param input Incoming transformation pipeline.
+			 * @param output Outgoing transformation pipeline.
+			 * @return False after configuration or sealing, without replacing state.
+			 */
+			bool ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output);
+
+			/**
+			 * @brief Copy independent pipeline templates and seal configuration.
+			 * @return Input and output templates for one file plane.
+			 */
+			std::pair<Buffer::Pipeline, Buffer::Pipeline> FilePipelines();
+
+			/**
 			 * @brief Copy assignment (deleted).
 			 */
 			Client& operator=(const Client& other) = delete;
@@ -138,5 +152,20 @@ namespace StormByte::Network::Connection {
 			std::shared_ptr<Socket::Client> m_socket;	///< Socket
 			Buffer::Pipeline m_in_pipeline;				///< Input pipeline
 			Buffer::Pipeline m_out_pipeline;			///< Output pipeline
+
+			/**
+			 * @brief Immutable configured template for independent file input stages.
+			 */
+			Buffer::Pipeline m_file_input;
+
+			/**
+			 * @brief Immutable configured template for independent file output stages.
+			 */
+			Buffer::Pipeline m_file_output;
+
+			/**
+			 * @brief Whether configuration has already succeeded or been sealed.
+			 */
+			bool m_configured{false};
 	};
 }

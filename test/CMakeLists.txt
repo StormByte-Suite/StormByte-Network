@@ -1,6 +1,13 @@
 option(ENABLE_TEST "Enable Unit Tests" OFF)
 if(ENABLE_TEST)
 	enable_testing()
+	add_executable(HandshakeTest handshake_test.cxx)
+	target_link_libraries(HandshakeTest StormByte::Network)
+	if(WIN32)
+		target_link_libraries(HandshakeTest ws2_32)
+	endif()
+	add_test(NAME HandshakeTest COMMAND HandshakeTest)
+	set_tests_properties(HandshakeTest PROPERTIES TIMEOUT 30)
 	# Combined server/client socket test (multi-client)
 	# It is a private class, keep for internal testing only
 	# add_executable(SocketMultiTest socket_multi_test.cxx)

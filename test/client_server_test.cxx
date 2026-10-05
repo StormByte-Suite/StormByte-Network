@@ -48,15 +48,21 @@
 #include <StormByte/system/this_thread.hxx>
 #include <StormByte/test_handlers.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <latch>
+#include <mutex>
 #include <numeric>
 #include <random>
+#include <set>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 #ifdef UNIX
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -661,6 +667,14 @@ namespace Test {
 	struct XorPipe final {
 		public:
 			/**
+			 * @brief Select the reversible test transform.
+			 * @param mask XOR mask; this fixture is not encryption.
+			 */
+			explicit XorPipe(std::byte mask = std::byte{0xAB}):
+				m_mask(mask) {
+			}
+
+			/**
 			 * @brief Transform input bursts, failing or closing the output before returning.
 			 * @param in Borrowed input stream.
 			 * @param out Borrowed output stream.
@@ -695,7 +709,7 @@ namespace Test {
 					}
 
 					for (auto& byte: data) {
-						byte ^= std::byte{0xAB};
+						byte ^= m_mask;
 					}
 
 					if (!out.Write(std::move(data))) {
@@ -708,6 +722,12 @@ namespace Test {
 				out.Close();
 				log << Level::Debug << "XOR Pipe: Finished." << std::endl;
 			}
+
+		private:
+			/**
+			 * @brief Reversible test mask shared by input and output transformations.
+			 */
+			std::byte m_mask;
 	};
 
 	class Client: public Net::Client {
@@ -718,13 +738,29 @@ namespace Test {
 
 			~Client() noexcept = default;
 
-			Pipeline InputPipeline() const noexcept override {
+			/**
+			 * @brief Install the fixture's XOR pair explicitly after transport connection.
+			 * @param protocol Address family.
+			 * @param address Remote address.
+			 * @param port Listener port.
+			 * @return Whether connection and one-time configuration succeeded.
+			 */
+			bool Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) override {
+				if (!Net::Client::Connect(protocol, address, port))
+					return false;
+				if (ConfigurePipelines(InputPipeline(), OutputPipeline()))
+					return true;
+				Disconnect();
+				return false;
+			}
+
+			Pipeline InputPipeline() const noexcept {
 				Pipeline pipeline;
 				pipeline.Add(Buf::Pipe{XorPipe{}});
 				return pipeline;
 			}
 
-			Pipeline OutputPipeline() const noexcept override {
+			Pipeline OutputPipeline() const noexcept {
 				Pipeline pipeline;
 				pipeline.Add(Buf::Pipe{XorPipe{}});
 				return pipeline;
@@ -833,6 +869,29 @@ namespace Test {
 			}
 	};
 
+	/**
+	 * @brief Provider-owned response that deliberately cannot be decoded by the client factory.
+	 */
+	class InvalidReply final: public Transport::Packet {
+		public:
+			/**
+			 * @brief Select unknown opcode or malformed payload for factory regressions.
+			 * @param unknown Whether the opcode is absent from the client factory.
+			 */
+			explicit InvalidReply(bool unknown): Transport::Packet(unknown ? 0x7FFE
+				: static_cast<OpcodeType>(::Test::Packet::Opcode::S_MSG_REPLYTEXT)) {
+			}
+
+		private:
+			/**
+			 * @brief Return an incomplete serialized string.
+			 * @return One byte that cannot contain a complete string header.
+			 */
+			StormByte::BinaryData DoSerialize() const noexcept override {
+				return {std::byte{0xFF}};
+			}
+	};
+
 	class Server: public Net::Server {
 		public:
 			Server(StormByte::Safe::Shared<Log> logger) noexcept:
@@ -841,21 +900,46 @@ namespace Test {
 
 			~Server() noexcept = default;
 
-			Pipeline InputPipeline() const noexcept override {
+			/**
+			 * @brief Select deliberate reply failure before starting the server.
+			 * @param mode Zero for normal, one for unknown opcode, two for corrupt bytes,
+			 * three for a valid payload transformed with an incompatible test mask.
+			 */
+			void InvalidReplyMode(unsigned int mode) noexcept {
+				m_invalid_reply = mode;
+			}
+
+			/**
+			 * @brief Install the fixture pair independently for every accepted UUID.
+			 * @param uuid New connection identity.
+			 * @return Whether the fixture configuration was installed.
+			 */
+			bool OnClientConnected(std::string_view uuid) noexcept override {
+				return ConfigureClientPipelines(uuid, InputPipeline(), OutputPipeline());
+			}
+
+			Pipeline InputPipeline() const noexcept {
 				Pipeline pipeline;
 				pipeline.Add(Buf::Pipe{XorPipe{}});
 				return pipeline;
 			}
 
-			Pipeline OutputPipeline() const noexcept override {
+			Pipeline OutputPipeline() const noexcept {
 				Pipeline pipeline;
-				pipeline.Add(Buf::Pipe{XorPipe{}});
+				pipeline.Add(Buf::Pipe{XorPipe{m_invalid_reply == 3 ? std::byte{0xCD} : std::byte{0xAB}}});
 				return pipeline;
 			}
 
 		private:
+			/**
+			 * @brief Fault mode fixed before the event loop starts.
+			 */
+			unsigned int m_invalid_reply{0};
+
 			PacketPointer ProcessClientPacket(std::string_view client_uuid, PacketPointer packet) noexcept override {
 				(void)client_uuid;
+				if (m_invalid_reply == 1 || m_invalid_reply == 2)
+					return PacketPointer::MakePointer<InvalidReply>(m_invalid_reply == 1);
 				switch (static_cast<Packet::Opcode>(packet->Opcode())) {
 					case Packet::Opcode::C_MSG_ASKNAMELIST: {
 						auto ask_packet = StormByte::Safe::DynamicPointerCast<Packet::AskNameList>(packet);
@@ -1016,6 +1100,310 @@ namespace Test {
 			 */
 			std::string m_payload;
 	};
+}
+
+/**
+ * @namespace LoginTest
+ * @brief Application authorization fixtures, not a production authentication system.
+ */
+namespace LoginTest {
+	/**
+	 * @brief Test-only login and protected-operation opcodes.
+	 */
+	enum class Opcode: Transport::Packet::OpcodeType {
+		Login = 100,
+		Accepted,
+		ProtectedRequest,
+		ProtectedReply
+	};
+
+	/**
+	 * @brief Packet carrying optional fictitious username/password fields.
+	 */
+	class Packet final: public Transport::Packet {
+		public:
+			/**
+			 * @brief Construct one test authorization packet.
+			 * @param opcode Test operation.
+			 * @param fields Username/password for Login, empty for other operations.
+			 */
+			explicit Packet(LoginTest::Opcode opcode, std::vector<std::string> fields = {}):
+				Transport::Packet(static_cast<OpcodeType>(opcode)), m_fields(std::move(fields)) {
+			}
+
+			/**
+			 * @brief Inspect the fictitious credentials without logging them.
+			 * @return Borrowed fields for the handler.
+			 */
+			const std::vector<std::string>& Fields() const noexcept {
+				return m_fields;
+			}
+
+		private:
+			/**
+			 * @brief Encode fields for the test protocol.
+			 * @return Serialized vector.
+			 */
+			StormByte::BinaryData DoSerialize() const noexcept override {
+				return Serializable<std::vector<std::string>>(m_fields).Serialize();
+			}
+
+			/**
+			 * @brief Fictitious fields owned by the test provider.
+			 */
+			std::vector<std::string> m_fields;
+	};
+
+	/**
+	 * @brief Decode only well-formed packets of the authorization test protocol.
+	 * @return Provider-owned packet factory.
+	 */
+	DeserializePacketFunction Factory() {
+		return [](Transport::Packet::OpcodeType opcode, Consumer payload,
+			StormByte::Safe::Shared<Log>) -> PacketPointer {
+			if (opcode < static_cast<Transport::Packet::OpcodeType>(Opcode::Login)
+				|| opcode > static_cast<Transport::Packet::OpcodeType>(Opcode::ProtectedReply))
+				return {};
+			StormByte::BinaryData bytes;
+			payload.ReadUntilEoF(bytes);
+			auto fields = Serializable<std::vector<std::string>>::Deserialize(bytes);
+			if (!fields || fields->size() != (opcode == static_cast<Transport::Packet::OpcodeType>(Opcode::Login) ? 2u : 0u))
+				return {};
+			return PacketPointer::MakePointer<Packet>(static_cast<Opcode>(opcode), std::move(*fields));
+		};
+	}
+
+	/**
+	 * @brief Client that completes an application login before reporting Connect success.
+	 */
+	class Client final: public Net::Client {
+		public:
+			/**
+			 * @brief Store fictitious credentials for the automatic test login.
+			 * @param username Test username.
+			 * @param password Test password; never logged.
+			 */
+			Client(std::string username, std::string password):
+				Net::Client(Factory(), logger), m_username(std::move(username)), m_password(std::move(password)) {
+			}
+
+			/**
+			 * @brief Connect TCP and require an accepted login response.
+			 * @param protocol Address family.
+			 * @param address Remote address.
+			 * @param port Remote port.
+			 * @return False with a disconnected client when login fails.
+			 */
+			bool Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) override {
+				if (!Net::Client::Connect(protocol, address, port))
+					return false;
+				Packet request(Opcode::Login, {m_username, m_password});
+				auto response = Send(request);
+				if (response && response->Opcode() == static_cast<Transport::Packet::OpcodeType>(Opcode::Accepted))
+					return true;
+				Disconnect();
+				return false;
+			}
+
+			/**
+			 * @brief Bypass only the automatic login to simulate an unauthorized test peer.
+			 * @return Whether the transport connected correctly.
+			 */
+			bool ConnectWithoutLogin() {
+				return Net::Client::Connect(Connection::Protocol::IPv4, HOST, PORT);
+			}
+
+			/**
+			 * @brief Request data that requires a logged-in session.
+			 * @return Whether a protected reply was received.
+			 */
+			bool RequestProtected() {
+				Packet request(Opcode::ProtectedRequest);
+				auto response = Send(request);
+				return response && response->Opcode() == static_cast<Transport::Packet::OpcodeType>(Opcode::ProtectedReply);
+			}
+
+			/**
+			 * @brief Use no transformation; this fixture does not claim transport security.
+			 * @return Empty input pipeline.
+			 */
+			Pipeline InputPipeline() const noexcept {
+				return {};
+			}
+
+			/**
+			 * @brief Use no transformation for the fictitious test protocol.
+			 * @return Empty output pipeline.
+			 */
+			Pipeline OutputPipeline() const noexcept {
+				return {};
+			}
+
+		private:
+			/**
+			 * @brief Fictitious username retained by the fixture.
+			 */
+			std::string m_username;
+
+			/**
+			 * @brief Fictitious password retained only for the test.
+			 */
+			std::string m_password;
+	};
+
+	/**
+	 * @brief Authorize session UUIDs using a hardcoded fictitious credential table.
+	 */
+	class Server final: public Net::Server {
+		public:
+			/**
+			 * @brief Construct the test packet handler.
+			 */
+			Server(): Net::Server(Factory(), logger) {
+			}
+
+			/**
+			 * @brief Stop handlers before destroying their authorization state.
+			 */
+			~Server() noexcept override {
+				Disconnect();
+			}
+
+			/**
+			 * @brief Decode plaintext only in this non-security fixture.
+			 * @return Empty input pipeline.
+			 */
+			Pipeline InputPipeline() const noexcept {
+				return {};
+			}
+
+			/**
+			 * @brief Encode plaintext only in this non-security fixture.
+			 * @return Empty output pipeline.
+			 */
+			Pipeline OutputPipeline() const noexcept {
+				return {};
+			}
+
+		private:
+			/**
+			 * @brief Apply authorization independently of successful transport connection.
+			 * @param uuid Server-assigned session identity.
+			 * @param incoming Well-formed test packet.
+			 * @return Reply for authorized requests; no reply for rejected peers.
+			 */
+			PacketPointer ProcessClientPacket(std::string_view uuid, PacketPointer incoming) noexcept override {
+				try {
+					auto packet = StormByte::Safe::DynamicPointerCast<Packet>(incoming);
+					if (!packet)
+						return {};
+					if (packet->Opcode() == static_cast<Transport::Packet::OpcodeType>(Opcode::Login)) {
+						constexpr std::array<std::array<std::string_view, 2>, 2> credentials{{
+							{"alice", "alice-test-only"}, {"bob", "bob-test-only"}}};
+						const bool accepted = std::any_of(credentials.begin(), credentials.end(), [&](const auto& entry) {
+							return packet->Fields()[0] == entry[0] && packet->Fields()[1] == entry[1];
+						});
+						{
+							std::scoped_lock lock(m_mutex);
+							if (accepted)
+								m_authenticated.emplace(uuid);
+							else
+								m_authenticated.erase(std::string{uuid});
+						}
+						if (accepted)
+							return PacketPointer::MakePointer<Packet>(Opcode::Accepted);
+					}
+					else if (packet->Opcode() == static_cast<Transport::Packet::OpcodeType>(Opcode::ProtectedRequest)) {
+						std::scoped_lock lock(m_mutex);
+						if (m_authenticated.contains(std::string{uuid}))
+							return PacketPointer::MakePointer<Packet>(Opcode::ProtectedReply);
+					}
+				} catch (...) {
+				}
+				DisconnectClient(uuid);
+				return {};
+			}
+
+			/**
+			 * @brief Protect authorization state shared by packet workers.
+			 */
+			std::mutex m_mutex;
+
+			/**
+			 * @brief UUIDs accepted by this bounded test fixture, not a production session store.
+			 */
+			std::set<std::string> m_authenticated;
+	};
+}
+
+// -------------------
+// Authentication
+// -------------------
+int test_login_accepts_valid_credentials() {
+	constexpr std::string_view fn_name = "test_login_accepts_valid_credentials";
+	LoginTest::Server server;
+	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	LoginTest::Client alice("alice", "alice-test-only");
+	LoginTest::Client bob("bob", "bob-test-only");
+	ASSERT_TRUE(fn_name, alice.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, bob.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, alice.RequestProtected() && bob.RequestProtected());
+	alice.Disconnect();
+	bob.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(fn_name, 0);
+}
+
+int test_login_rejects_invalid_credentials() {
+	constexpr std::string_view fn_name = "test_login_rejects_invalid_credentials";
+	LoginTest::Server server;
+	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	LoginTest::Client wrong_password("alice", "wrong-test-password");
+	LoginTest::Client unknown_user("unknown-test-user", "alice-test-only");
+	ASSERT_FALSE(fn_name, wrong_password.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_FALSE(fn_name, unknown_user.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, wrong_password.Status() == Connection::Status::Disconnected);
+	ASSERT_TRUE(fn_name, unknown_user.Status() == Connection::Status::Disconnected);
+	LoginTest::Client legitimate("alice", "alice-test-only");
+	ASSERT_TRUE(fn_name, legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, legitimate.RequestProtected());
+	legitimate.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(fn_name, 0);
+}
+
+int test_login_required_after_reconnect() {
+	constexpr std::string_view fn_name = "test_login_required_after_reconnect";
+	LoginTest::Server server;
+	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	LoginTest::Client client("alice", "alice-test-only");
+	ASSERT_TRUE(fn_name, client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, client.RequestProtected());
+	client.Disconnect();
+	ASSERT_TRUE(fn_name, client.ConnectWithoutLogin());
+	ASSERT_FALSE(fn_name, client.RequestProtected());
+	client.Disconnect();
+	ASSERT_TRUE(fn_name, client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, client.RequestProtected());
+	client.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(fn_name, 0);
+}
+
+int test_login_required_before_protected_request() {
+	constexpr std::string_view fn_name = "test_login_required_before_protected_request";
+	LoginTest::Server server;
+	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	LoginTest::Client anonymous("alice", "alice-test-only");
+	ASSERT_TRUE(fn_name, anonymous.ConnectWithoutLogin());
+	ASSERT_FALSE(fn_name, anonymous.RequestProtected());
+	anonymous.Disconnect();
+	LoginTest::Client legitimate("bob", "bob-test-only");
+	ASSERT_TRUE(fn_name, legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fn_name, legitimate.RequestProtected());
+	legitimate.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(fn_name, 0);
 }
 
 // -------------------
@@ -1373,6 +1761,56 @@ int test_safe_shared_endpoint_lifetime() {
 // -------------------
 // Protocol
 // -------------------
+int test_factory_failure_disconnects_client() {
+	constexpr std::string_view fn_name = "test_factory_failure_disconnects_client";
+	for (unsigned int mode = 1; mode <= 3; ++mode) {
+		::Test::Server server(logger);
+		server.InvalidReplyMode(mode);
+		ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+		::Test::Client client(logger);
+		ASSERT_TRUE(fn_name, client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+		ASSERT_FALSE(fn_name, client.RequestEchoText("factory_rejection_payload").has_value());
+		ASSERT_TRUE(fn_name, client.Status() == Connection::Status::Disconnected);
+		ASSERT_EQUAL(fn_name, 1u, client.Telemetry()->RequestsWithoutResponse());
+		server.Disconnect();
+	}
+	::Test::Server healthy(logger);
+	ASSERT_TRUE(fn_name, healthy.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	::Test::Client legitimate(logger);
+	ASSERT_TRUE(fn_name, legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	const auto echoed = legitimate.RequestEchoText("healthy_factory_payload");
+	ASSERT_TRUE(fn_name, echoed && *echoed == "healthy_factory_payload");
+	legitimate.Disconnect();
+	healthy.Disconnect();
+	RETURN_TEST(fn_name, 0);
+}
+
+int test_factory_failure_disconnects_only_server_peer() {
+	constexpr std::string_view fn_name = "test_factory_failure_disconnects_only_server_peer";
+	::Test::Server server(logger);
+	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	for (const auto opcode: std::array<Transport::Packet::OpcodeType, 2>{0x7FFE,
+		static_cast<Transport::Packet::OpcodeType>(::Test::Packet::Opcode::C_MSG_ECHOTEXT)}) {
+		const RawSocket peer = ConnectRawSocket();
+		ASSERT_TRUE(fn_name, peer != invalid_raw_socket);
+		StormByte::BinaryData frame = Serializable<Transport::Packet::OpcodeType>(opcode).Serialize();
+		frame.append(Serializable<std::size_t>(1).Serialize());
+		frame.push_back(std::byte{0xFF});
+		ASSERT_TRUE(fn_name, SendRawBytes(peer, std::span<const std::byte>{frame}));
+		const bool closed = WaitForRawDisconnect(peer, std::chrono::seconds{2});
+		CloseRawSocket(peer);
+		ASSERT_TRUE(fn_name, closed);
+	}
+	ASSERT_EQUAL(fn_name, 0u, server.Telemetry()->PacketsDispatched());
+	::Test::Client legitimate(logger);
+	ASSERT_TRUE(fn_name, legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	const auto echoed = legitimate.RequestEchoText("server_still_usable");
+	ASSERT_TRUE(fn_name, echoed && *echoed == "server_still_usable");
+	legitimate.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(fn_name, 0);
+}
+
 int test_fragmented_and_batched_frames() {
 	constexpr std::string_view fn_name = "test_fragmented_and_batched_frames";
 	constexpr std::size_t frame_header_size = sizeof(Transport::Packet::OpcodeType) + sizeof(std::size_t);
@@ -1525,6 +1963,38 @@ int test_malformed_frames_disconnect_only_peer() {
 	ASSERT_TRUE(fn_name, healthy_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	ASSERT_TRUE(fn_name, healthy_client.RequestPing());
 	healthy_client.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(fn_name, 0);
+}
+
+int test_mismatched_pipeline_disconnects_only_peer() {
+	constexpr std::string_view fn_name = "test_mismatched_pipeline_disconnects_only_peer";
+	::Test::Server server(logger);
+	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	const RawSocket socket_handle = ConnectRawSocket();
+	ASSERT_TRUE(fn_name, socket_handle != invalid_raw_socket);
+	Producer producer;
+	ASSERT_TRUE(fn_name, producer.Write(Serializable<std::string>("untrusted client").Serialize()));
+	producer.Close();
+	Pipeline attacker_pipeline;
+	attacker_pipeline.Add(Buf::Pipe{::Test::XorPipe{std::byte{0xCD}}});
+	auto output = attacker_pipeline.Process(producer.Consumer(), logger, ExecutionMode::Sync);
+	StormByte::BinaryData payload;
+	ASSERT_TRUE(fn_name, output.Extract(0, payload) && !payload.empty());
+	StormByte::BinaryData frame = Serializable<Transport::Packet::OpcodeType>(
+		static_cast<Transport::Packet::OpcodeType>(::Test::Packet::Opcode::C_MSG_ECHOTEXT)).Serialize();
+	frame.append(Serializable<std::size_t>(payload.size()).Serialize());
+	frame.append(std::move(payload));
+	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>{frame}));
+	const bool disconnected = WaitForRawDisconnect(socket_handle, std::chrono::seconds{2});
+	CloseRawSocket(socket_handle);
+	ASSERT_TRUE(fn_name, disconnected);
+	ASSERT_EQUAL(fn_name, 0u, server.Telemetry()->PacketsDispatched());
+	::Test::Client legitimate(logger);
+	ASSERT_TRUE(fn_name, legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	const auto echoed = legitimate.RequestEchoText("legitimate client");
+	ASSERT_TRUE(fn_name, echoed && *echoed == "legitimate client");
+	legitimate.Disconnect();
 	server.Disconnect();
 	RETURN_TEST(fn_name, 0);
 }
@@ -1938,6 +2408,14 @@ int test_telemetry_snapshots_and_lifetime() {
 
 int main() {
 	int result = 0;
+
+	// -------------------
+	// Authentication
+	// -------------------
+	result += test_login_accepts_valid_credentials();
+	result += test_login_rejects_invalid_credentials();
+	result += test_login_required_after_reconnect();
+	result += test_login_required_before_protected_request();
 	// -------------------
 	// Connection
 	// -------------------
@@ -1960,8 +2438,11 @@ int main() {
 	// -------------------
 	// Protocol
 	// -------------------
+	result += test_factory_failure_disconnects_client();
+	result += test_factory_failure_disconnects_only_server_peer();
 	result += test_fragmented_and_batched_frames();
 	result += test_malformed_frames_disconnect_only_peer();
+	result += test_mismatched_pipeline_disconnects_only_peer();
 	result += test_network_exception_string_view();
 	result += test_request_additional_commands();
 	result += test_request_large_data_echoed();

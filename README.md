@@ -103,7 +103,7 @@ Under `StormByte::Network`:
 
 | Type | Role |
 |------|------|
-| `Client` | Inherit; implement pipelines; call `Send` |
+| `Client` | Inherit; call `Send`; install negotiated pipelines once per connection |
 | `Server` | Inherit; implement `ProcessClientPacket` |
 | `Transport::Packet` | Inherit; implement `DoSerialize` |
 | `Connection::Protocol` | IPv4 / IPv6 |
@@ -123,6 +123,22 @@ Public polymorphic and callback types are `MAYBE_SAFE`: safe ownership does not 
 
 Keep either shared handle to retain its last snapshot after the owning `Client` or `Server` is destroyed. Timed operations use independent, stable `StormByte::Clock::Sample` values sharing named clocks from `StormByte::Telemetry`; nested or concurrent measurements do not depend on thread-local nesting depth, and a sample can move between threads. Repeated `Stop()` calls do not record it again. Remote-file byte/read/write statistics remain on Buffer's existing per-handle telemetry and are not folded into the application-protocol counters.
 
+### Negotiated pipelines and admission
+
+Network provides the transport pieces without imposing a handshake, login opcode or cryptographic algorithm. Connections start with empty, no-op pipelines. A derived client installs a negotiated pair through protected `ConfigurePipelines(input, output)`; a derived server calls `ConfigureClientPipelines(uuid, input, output)` for the relevant session. This replaces automatic `InputPipeline()` / `OutputPipeline()` factory overrides. The pair is installed only once and atomically: a failed template clone leaves configuration unchanged and retryable, while a second successful installation is rejected. Creating the first file plane seals configuration, even when no-op pipelines are used. Reconnection creates a new configurable session.
+
+Configure a client between `Send` calls with externally serialized access. Configure the server from that session's packet handler or `OnClientConnected(uuid)`, not an unrelated thread. File planes receive independent copies of immutable configuration templates, not the advanced state of a running control pipeline. Provider lifetimes and independent cryptographic key/nonce domains remain the application's responsibility.
+
+Protected `AllowIncomingOpcode(uuid, opcode)` and `AllowOutgoingOpcode(uuid, opcode)` accept all opcodes by default. A derived policy can allow only Hello before negotiation, only login messages before authentication, and authorized application messages afterward. Incoming checks run before transformation and the packet factory; outgoing checks run before encoding. A rejection closes the affected connection. Server hooks run on the event loop and must synchronize state shared with worker handlers without blocking on network exchanges. `OnClientConnected(uuid)` admits and initializes transport state; `OnClientDisconnected(uuid)` removes it, including at shutdown. Late workers must not recreate authorization for a disconnected UUID.
+
+Frames following a handshake remain raw and unprocessed while its handler is active, even when multiple messages arrived in the same TCP read. Only after the previous handler completes are the next opcode's policy, pipeline and factory evaluated using the updated state. Unknown opcodes, invalid payloads and factory exceptions fail closed; clients disconnect on an undecodable response rather than retaining uncertain protocol state.
+
+Application opcodes below `Transport::Packet::PROCESS_THRESHOLD` (10) bypass payload pipelines in both directions. Higher opcodes use the configured stages; opcode and length headers remain visible. A plaintext Hello with a public key can use the lower range, but those opcodes still require an application allowlist and field validation. Authenticate key establishment and peer identity: sending a public key alone does not prevent MITM. Real key agreement uses a private local key and the remote public key, not two public keys alone.
+
+To return a rejection message before closing, a handler calls protected `DisconnectClientAfterReply(uuid)` and returns its application-defined rejection packet. Network discards pending input without executing its pipelines, factory or handlers, drains the response, then closes the socket. `DisconnectClient(uuid)` closes immediately without guaranteeing a reply. Draining completes local sends; it does not prove the remote application read them. Use an application ACK when that confirmation is required.
+
+[test/handshake_test.cxx](test/handshake_test.cxx) is an executable example of `Hello("pubkey_contents")`, a trusted-key policy, `Welcome`/`Rejected`, a random test secret and the algorithm label `"xor"`. It verifies per-UUID isolation, configuration once, clone-failure retry, reconnection, coalesced messages and negotiated file transfers. **It is not cryptographic security:** public keys are labels, the secret travels in plaintext and XOR provides no authentication or meaningful confidentiality. Use vetted authenticated cryptography before adapting it to real secrets or credentials. The hardcoded login fixture in [test/client_server_test.cxx](test/client_server_test.cxx) likewise demonstrates authorization only, not production credential handling.
+
 ### Remote file channels
 
 The derived server performs its normal application-opcode dispatch and ACL check first. After authorization it calls the protected `MountRemoteFileReader` or `MountRemoteFileWriter` helper and includes the returned `RemoteFileMount` in its application response. A denied ACL can instead return an application-defined `Unauthorized` packet. The client's packet factory decodes the public DTO, then its derived client calls `CreateRemoteFileReader` or `CreateRemoteFileWriter`.
@@ -133,9 +149,15 @@ The derived server performs its normal application-opcode dispatch and ACL check
 
 The first authorized mount for an application client session creates one private server listener and assigns its ephemeral port. Later mounts for that session reuse the same peer plane and port. The client connects lazily when it creates its first reader or writer. Each `Authorized` descriptor carries its own capability token and access mode, along with the plane's heartbeat timeout. The first authorized mount selects that timeout (3 to 3600 seconds; default 30), and later mounts on the same plane use it. A server allows at most 128 active mount capabilities across all client sessions.
 
-The heartbeat timeout measures peer liveness, not disk-operation duration. Ping/Pong continues while a disk worker is occupied; a synchronous file call may remain pending beyond that interval while the peer keeps responding. Initial attachment remains time-bounded. File operations are serialized, with a heartbeat exchange allowed alongside them and one socket receiver correlating responses by request ID. Frames, pending work and response queues remain bounded; Pong is prioritized behind any frame already being sent, without interleaving bytes. The receiver sleeps when no response is outstanding.
+The heartbeat timeout measures peer liveness, not disk-operation duration. Ping/Pong continues while a disk worker is occupied; a synchronous file call may remain pending beyond that interval while the peer keeps responding. Initial attachment remains time-bounded. File operations are serialized, with a heartbeat exchange allowed alongside them and one socket receiver correlating responses by request ID. Frames, pending work and response queues remain bounded; responses retain their pipeline transformation order without interleaving bytes. The receiver sleeps when no response is outstanding.
 
-Each peer plane has one copied `InputPipeline()` / `OutputPipeline()` pair and one shared network-device snapshot. Construct each `Buffer::Pipe` from a copyable callable taking `const PipeInput&`, `const PipeOutput&` and `const Safe::Shared<Logger::Log>&`; close or fail the output before returning and do not retain these borrowed arguments. Copies independently clone the callable and its value captures; references and shared handles still share their targets. Providers must supply valid independent clone/release operations, own or safely share captured state, and avoid raw endpoint references. Stateful cryptographic pipes need independent plane state/nonces while using the application's negotiated secret/configuration. File operations carry the mount token and an absolute byte offset, so reader handles keep independent cursors without wire-level seek requests.
+File transfers use independent copies of the input/output templates installed by `ConfigurePipelines` or `ConfigureClientPipelines` for that application session. Each endpoint creates a separate pipeline pair for its peer's file plane, rather than reusing the running application connection's pipeline instances. Every private request and response passes through these pipelines, including file bytes, capability tokens, operation metadata and Ping/Pong; this is independent of the application packet opcode threshold. The framing length prefix remains outside the pipelines, so message sizes and timing are still observable.
+
+**Transport encryption is transparent to file contents.** A client write is transformed by its output pipeline, decoded by the server's input pipeline and only then written as the original bytes to the host file. A server read obtains the original disk bytes, transforms the response and lets the client's input pipeline restore those bytes before returning them through Buffer. Network does not store transport ciphertext or protocol framing in the file and does not provide encryption at rest. With correctly paired authenticated-encryption stages, applications therefore use normal buffered reads, writes, seeks and flushes while the file messages travel encrypted. The negotiated file-plane test verifies binary data including NUL and all byte values, actual transformation activity, exact on-disk length and byte-for-byte plaintext contents.
+
+The file plane inherits the protection implemented by those pipelines; Network does not add encryption automatically. Correctly implemented authenticated encryption, with authenticated peer/key establishment and replay protection, can protect file contents and capabilities against sniffing and tampering. Encryption alone does not authenticate the peer or prevent replay. Protect the application response carrying the mount descriptor too: a capability exposed on the control connection is not made secret retroactively by encrypting the file plane. Empty pipelines provide no cryptographic protection, and the reversible transforms used in tests are not security mechanisms.
+
+Each peer plane has one pipeline pair and one shared network-device snapshot. Construct each `Buffer::Pipe` from a copyable callable taking `const PipeInput&`, `const PipeOutput&` and `const Safe::Shared<Logger::Log>&`; close or fail the output before returning and do not retain these borrowed arguments. Copies independently clone the callable and its value captures; references and shared handles still share their targets. Providers must supply valid independent clone/release operations, own or safely share captured state, and avoid raw endpoint references. Cryptographic pipes must use independent per-plane and per-direction state, or derived keys and distinct nonce domains: copying a cipher counter or nonce state must never reuse a key/nonce pair across the application connection and file planes. Reject unauthenticated input before it reaches file-operation dispatch. File operations carry the mount token and an absolute byte offset, so reader handles keep independent cursors without wire-level seek requests.
 
 Remote readers and writers retain Buffer's I/O telemetry, including its existing operation counters and rates. Buffer telemetry derives from `StormByte::Telemetry` and measures operations with Base's named clocks, so remote I/O uses the same instrumentation as other Buffer locations.
 
@@ -162,16 +184,9 @@ Heartbeat failure during disk I/O revokes the plane's capabilities, stops new wo
 class AppClient : public StormByte::Network::Client {
 public:
 	AppClient(StormByte::Network::DeserializePacketFunction fn,
-	          StormByte::Shared<StormByte::Logger::Log> log)
+	          StormByte::Safe::Shared<StormByte::Logger::Log> log)
 		: Client(std::move(fn), std::move(log)) {}
 
-protected:
-	StormByte::Buffer::Pipeline InputPipeline() const noexcept override {
-		return {};
-	}
-	StormByte::Buffer::Pipeline OutputPipeline() const noexcept override {
-		return {};
-	}
 };
 ```
 
@@ -186,9 +201,6 @@ public:
 	~AppServer() noexcept override { Disconnect(); }
 
 protected:
-	StormByte::Buffer::Pipeline InputPipeline() const noexcept override { return {}; }
-	StormByte::Buffer::Pipeline OutputPipeline() const noexcept override { return {}; }
-
 	StormByte::Network::PacketPointer ProcessClientPacket(
 		std::string_view uuid,
 		StormByte::Network::PacketPointer packet) noexcept override {

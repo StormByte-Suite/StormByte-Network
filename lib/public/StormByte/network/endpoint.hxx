@@ -72,7 +72,9 @@ namespace StormByte {
 		 * @class Endpoint
 		 * @brief Shared base for Client and Server.
 		 *
-		 * Not instantiated directly. Override InputPipeline() / OutputPipeline(). Use Send() / Reply() for framed request/response.
+		 * Not instantiated directly. Connections start with no-op pipelines.
+		 * Derived Client and Server types configure individual connections explicitly.
+		 * Use Send() / Reply() for framed request/response.
 		 *
 		 * @note Inheritance-oriented. Derive from Client / Server, not from Endpoint alone.
 		 */
@@ -148,35 +150,11 @@ namespace StormByte {
 				StormByte::Safe::Shared<Logger::Log> m_logger;
 
 				/**
-				 * @brief Wrap a socket client with input/output pipelines.
+				 * @brief Wrap a socket client with initially empty input/output pipelines.
 				 * @param socket Underlying socket client.
 				 * @return Connection::Client.
 				 */
 				std::shared_ptr<Connection::Client> CreateConnection(std::shared_ptr<Socket::Client> socket) noexcept;
-
-				/**
-				 * @brief Build the endpoint's inbound byte transformation pipeline.
-				 * @return Pipeline.
-				 *
-				 * The returned pipeline is owned by its connection. Remote-file
-				 * channels build another instance from this hook and may outlive the
-				 * application connection. Pipes must own or share every object they
-				 * use; they must not retain raw references to the Endpoint or derived
-				 * object. Clone/Move must preserve that ownership contract.
-				 */
-				virtual Buffer::Pipeline InputPipeline() const noexcept = 0;
-
-				/**
-				 * @brief Build the endpoint's outbound byte transformation pipeline.
-				 * @return Pipeline.
-				 *
-				 * The returned pipeline is owned by its connection. Remote-file
-				 * channels build another instance from this hook and may outlive the
-				 * application connection. Pipes must own or share every object they
-				 * use; they must not retain raw references to the Endpoint or derived
-				 * object. Clone/Move must preserve that ownership contract.
-				 */
-				virtual Buffer::Pipeline OutputPipeline() const noexcept = 0;
 
 				/**
 				 * @brief Send @p packet and wait for a response frame.

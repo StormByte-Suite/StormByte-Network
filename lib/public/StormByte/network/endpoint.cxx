@@ -99,6 +99,8 @@ PacketPointer Endpoint::Send(std::shared_ptr<Connection::Client> client_connecti
 	}
 
 	Transport::Frame response_frame = client_connection->Receive(m_logger);
+	if (!response_frame.DecodeInput(client_connection->InputPipeline(), m_logger))
+		return {};
 	return response_frame.ProcessPacket(m_deserialize_packet_function, m_logger);
 }
 
@@ -107,9 +109,7 @@ bool Endpoint::Reply(std::shared_ptr<Connection::Client> client_connection, cons
 }
 
 std::shared_ptr<Connection::Client> Endpoint::CreateConnection(std::shared_ptr<Socket::Client> socket) noexcept {
-	Buffer::Pipeline in_pipeline = InputPipeline();
-	Buffer::Pipeline out_pipeline = OutputPipeline();
-	return std::make_shared<Connection::Client>(socket, std::move(in_pipeline), std::move(out_pipeline));
+	return std::make_shared<Connection::Client>(std::move(socket), Buffer::Pipeline{}, Buffer::Pipeline{});
 }
 
 bool Endpoint::SendPacket(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept {

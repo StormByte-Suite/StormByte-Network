@@ -198,6 +198,41 @@ namespace StormByte {
 
 			protected:
 				/**
+				 * @brief Install one pipeline pair for a single application session.
+				 * @param uuid Server-assigned session identity.
+				 * @param input Incoming transformation pipeline.
+				 * @param output Outgoing transformation pipeline.
+				 * @return False for missing sessions, repeated configuration, existing file
+				 * planes or failed pipeline copies. No partial configuration is installed.
+				 * @details Call from that session's packet handler or OnClientConnected,
+				 * not from an unrelated thread. The session initially uses no-op pipelines.
+				 * New file planes receive independent copies of the configured templates.
+				 */
+				bool ConfigureClientPipelines(std::string_view uuid, Buffer::Pipeline input,
+					Buffer::Pipeline output) noexcept;
+
+				/**
+				 * @brief Admit an application opcode before its pipeline and factory run.
+				 * @param uuid Server-assigned session identity.
+				 * @param opcode Incoming application opcode.
+				 * @return True by default; false closes only this application session.
+				 * @details Runs on the event loop; synchronize state shared with workers.
+				 * Frames coalesced with a handshake remain raw until the preceding handler
+				 * completes. This hook then sees its updated session policy before any
+				 * input transformation or packet factory executes for the next message.
+				 */
+				virtual bool AllowIncomingOpcode(std::string_view uuid, Transport::Packet::OpcodeType opcode) const noexcept;
+
+				/**
+				 * @brief Admit a response opcode before output transformation.
+				 * @param uuid Server-assigned session identity.
+				 * @param opcode Outgoing application opcode.
+				 * @return True by default; false closes only this application session.
+				 * @details Runs on the event loop; synchronize state shared with workers.
+				 */
+				virtual bool AllowOutgoingOpcode(std::string_view uuid, Transport::Packet::OpcodeType opcode) const noexcept;
+
+				/**
 				 * @brief Mount a server-owned file for an already authorized client session.
 				 * @param client_uuid Client session which owns this capability.
 				 * @param path Server-local path selected by application policy.
@@ -222,6 +257,38 @@ namespace StormByte {
 				 * @param uuid Client UUID.
 				 */
 				void DisconnectClient(std::string_view uuid) noexcept;
+
+				/**
+				 * @brief Send the current handler's reply, then close and discard pending input.
+				 * @param uuid Session handled by the calling packet worker.
+				 * @details Call before returning the rejection packet from ProcessClientPacket.
+				 * Network does not interpret its opcode. No subsequent queued frame is
+				 * transformed, deserialized or dispatched; closure follows output draining.
+				 */
+				void DisconnectClientAfterReply(std::string_view uuid) noexcept;
+
+				/**
+				 * @brief Admit and initialize a newly registered application session.
+				 * @param uuid Server-assigned session identity, borrowed for this call.
+				 * @return True to continue packet processing; false to close the session.
+				 * @details Called on the event-loop thread before any packet is dispatched.
+				 * The default accepts the session. Do not block waiting for network I/O
+				 * or workers; perform an application login in ProcessClientPacket instead.
+				 * Synchronize derived state shared with packet workers. Rejected sessions
+				 * also receive OnClientDisconnected.
+				 */
+				virtual bool OnClientConnected(std::string_view uuid) noexcept;
+
+				/**
+				 * @brief Release derived state when an application session is removed.
+				 * @param uuid Removed session identity, borrowed for this call.
+				 * @details Called once on the event-loop thread, including server shutdown.
+				 * The default does nothing. An already dispatched worker may still finish;
+				 * derived handlers must not recreate authorization for a removed session.
+				 * Do not wait for workers in this callback. Derived destructors must call
+				 * Disconnect before destroying state used by these hooks or handlers.
+				 */
+				virtual void OnClientDisconnected(std::string_view uuid) noexcept;
 
 			private:
 				/**
@@ -304,6 +371,11 @@ namespace StormByte {
 					 * @brief Disconnect the specified client session.
 					 */
 					DisconnectClient,
+
+					/**
+					 * @brief Discard pending input and close after the current reply drains.
+					 */
+					DisconnectAfterReply,
 
 					/**
 					 * @brief Disconnect every client session.

@@ -163,13 +163,50 @@ Connection::Status Client::Status() const noexcept {
 }
 
 PacketPointer Client::Send(const Transport::Packet& packet) noexcept {
-	if (!m_backend) return {};
-	if (!m_backend->telemetry) return Endpoint::Send(m_backend->connection, packet);
-	m_backend->telemetry->RecordRequest();
-	auto sample = m_backend->telemetry->MeasureRequest();
-	PacketPointer response = Endpoint::Send(m_backend->connection, packet);
-	m_backend->telemetry->RecordRequestResult(sample.Stop(), static_cast<bool>(response));
+	if (!m_backend || !m_backend->connection)
+		return {};
+	auto connection = m_backend->connection;
+	const auto uuid = connection->Socket()->UUID();
+	if (!AllowOutgoingOpcode(uuid, packet.Opcode())) {
+		Disconnect();
+		return {};
+	}
+	if (m_backend->telemetry)
+		m_backend->telemetry->RecordRequest();
+	auto sample = m_backend->telemetry ? m_backend->telemetry->MeasureRequest() : StormByte::Clock::Sample{};
+	PacketPointer response;
+	if (Endpoint::Reply(connection, packet)) {
+		auto frame = connection->Receive(m_logger);
+		if (!AllowIncomingOpcode(uuid, frame.Opcode()) || !frame.DecodeInput(connection->InputPipeline(), m_logger))
+			Disconnect();
+		else
+			response = frame.ProcessPacket(m_deserialize_packet_function, m_logger);
+	}
+	if (!response)
+		Disconnect();
+	if (m_backend->telemetry)
+		m_backend->telemetry->RecordRequestResult(sample.Stop(), static_cast<bool>(response));
 	return response;
+}
+
+bool Client::ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output) noexcept {
+	try {
+		if (!m_backend)
+			return false;
+		std::scoped_lock lock(m_backend->remote_file_mutex);
+		return m_backend->connection && !m_backend->remote_file_plane
+			&& m_backend->connection->ConfigurePipelines(std::move(input), std::move(output));
+	} catch (...) {
+		return false;
+	}
+}
+
+bool Client::AllowIncomingOpcode(std::string_view, Transport::Packet::OpcodeType) const noexcept {
+	return true;
+}
+
+bool Client::AllowOutgoingOpcode(std::string_view, Transport::Packet::OpcodeType) const noexcept {
+	return true;
 }
 
 StormByte::Safe::Shared<ClientTelemetry> Client::Telemetry() const noexcept {
@@ -189,6 +226,9 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 		const bool created = !plane;
 		if (plane && (plane->Failed() || plane->Port() != mount.Port())) return {};
 		if (!plane) {
+			if (!m_backend->connection)
+				return {};
+			auto pipelines = m_backend->connection->FilePipelines();
 			auto socket = std::make_shared<Socket::Client>(m_backend->protocol, m_logger);
 			if (!socket->Connect(m_backend->remote_address, mount.Port())) return {};
 			std::string local_address = socket->LocalAddress();
@@ -198,7 +238,7 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 			}
 			auto device = Detail::RemoteFile::CreateNetworkDevice(local_address);
 			plane = std::make_shared<Detail::RemoteFile::DataPlane>(std::move(socket),
-				InputPipeline(), OutputPipeline(), mount.MaximumTimeoutSeconds(), m_logger,
+				std::move(pipelines.first), std::move(pipelines.second), mount.MaximumTimeoutSeconds(), m_logger,
 				std::move(local_address), std::move(device), mount.Port());
 		}
 
@@ -240,6 +280,9 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 		const bool created = !plane;
 		if (plane && (plane->Failed() || plane->Port() != mount.Port())) return {};
 		if (!plane) {
+			if (!m_backend->connection)
+				return {};
+			auto pipelines = m_backend->connection->FilePipelines();
 			auto socket = std::make_shared<Socket::Client>(m_backend->protocol, m_logger);
 			if (!socket->Connect(m_backend->remote_address, mount.Port())) return {};
 			std::string local_address = socket->LocalAddress();
@@ -249,7 +292,7 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 			}
 			auto device = Detail::RemoteFile::CreateNetworkDevice(local_address);
 			plane = std::make_shared<Detail::RemoteFile::DataPlane>(std::move(socket),
-				InputPipeline(), OutputPipeline(), mount.MaximumTimeoutSeconds(), m_logger,
+				std::move(pipelines.first), std::move(pipelines.second), mount.MaximumTimeoutSeconds(), m_logger,
 				std::move(local_address), std::move(device), mount.Port());
 		}
 

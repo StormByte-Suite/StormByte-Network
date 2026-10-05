@@ -90,6 +90,8 @@ namespace StormByte::Network::Detail::RemoteFile {
 				}
 				transformed.append(std::move(chunk));
 			}
+			if (!output.IsReadable())
+				return Unexpected<ConnectionError>("Remote file pipeline failed");
 			if (transformed.empty()) {
 				return Unexpected<ConnectionError>("Remote file pipeline produced an empty message");
 			}

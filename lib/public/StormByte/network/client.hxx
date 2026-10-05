@@ -73,7 +73,8 @@ namespace StormByte {
 		 * @class Client
 		 * @brief Abstract application client.
 		 *
-		 * Derive and implement InputPipeline() / OutputPipeline(). Use protected Send() for request/response.
+		 * Derive and use protected Send() for request/response. ConfigurePipelines
+		 * installs one connection's transformation pair after application negotiation.
 		 *
 		 * @note Inheritance-oriented. Not for direct generic use without a subclass.
 		 */
@@ -144,6 +145,32 @@ namespace StormByte {
 				StormByte::Safe::Shared<ClientTelemetry> Telemetry() const noexcept;
 
 			protected:
+				/**
+				 * @brief Configure this connection exactly once, before its first file plane.
+				 * @param input Pipeline decoding incoming application and file messages.
+				 * @param output Pipeline encoding outgoing application and file messages.
+				 * @return False if disconnected, already configured, sealed or copying fails.
+				 * @details Starts with no-op pipelines. Call only between Send operations;
+				 * externally serialize client use. File planes receive independent copies.
+				 */
+				bool ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output) noexcept;
+
+				/**
+				 * @brief Admit a received opcode before transformation and deserialization.
+				 * @param uuid Local connection identity, borrowed during the call.
+				 * @param opcode Incoming application opcode.
+				 * @return True by default; false closes the application connection.
+				 */
+				virtual bool AllowIncomingOpcode(std::string_view uuid, Transport::Packet::OpcodeType opcode) const noexcept;
+
+				/**
+				 * @brief Admit an outgoing opcode before applying the output pipeline.
+				 * @param uuid Local connection identity, borrowed during the call.
+				 * @param opcode Outgoing application opcode.
+				 * @return True by default; false prevents sending and closes the connection.
+				 */
+				virtual bool AllowOutgoingOpcode(std::string_view uuid, Transport::Packet::OpcodeType opcode) const noexcept;
+
 				/**
 				 * @brief Send @p packet and return the response (or nullptr).
 				 * @param packet Request packet.

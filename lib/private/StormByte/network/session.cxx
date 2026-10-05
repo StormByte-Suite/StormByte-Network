@@ -79,7 +79,7 @@ namespace StormByte::Network::Detail {
 	}
 
 	bool Session::CanRead() const noexcept {
-		return !m_closed && !m_in_flight && !m_task_blocked && m_ready_frames.empty();
+		return !m_closed && !m_close_after_reply && !m_in_flight && !m_task_blocked && m_ready_frames.empty();
 	}
 
 	void Session::SetTaskBlocked(bool value) noexcept {
@@ -98,7 +98,9 @@ namespace StormByte::Network::Detail {
 	}
 
 	bool Session::ReadyForProcessing() const noexcept {
-		return !m_closed && !m_in_flight && !m_task_blocked && !m_ready_frames.empty();
+		if (m_close_after_reply && !m_closed && !m_in_flight)
+			return m_output_frames.empty();
+		return !m_closed && !m_close_after_reply && !m_in_flight && !m_task_blocked && !m_ready_frames.empty();
 	}
 
 	Transport::Frame Session::TakeFrame() noexcept {
@@ -109,6 +111,17 @@ namespace StormByte::Network::Detail {
 
 	void Session::Close() noexcept {
 		m_closed = true;
+	}
+
+	void Session::CloseAfterReply() noexcept {
+		m_close_after_reply = true;
+		m_ready_frames.clear();
+		m_input.clear();
+		m_payload.clear();
+	}
+
+	bool Session::ClosingAfterReply() const noexcept {
+		return m_close_after_reply;
 	}
 
 	bool Session::HasOutput() noexcept {
@@ -209,8 +222,8 @@ namespace StormByte::Network::Detail {
 	}
 
 	StormByte::Expected<Session::FrameList, ConnectionError> Session::AppendReceived(
-		StormByte::BinaryData&& received, Buffer::Pipeline& in_pipeline,
-		StormByte::Safe::Shared<Logger::Log> logger) noexcept {
+		StormByte::BinaryData&& received, Buffer::Pipeline&,
+		StormByte::Safe::Shared<Logger::Log>) noexcept {
 		if (m_closed) {
 			return Unexpected<ConnectionError>("Session is closed");
 		}
@@ -260,7 +273,7 @@ namespace StormByte::Network::Detail {
 					break;
 				}
 
-				frames.emplace_back(Transport::Frame::FromWire(m_opcode, std::move(m_payload), in_pipeline, logger));
+				frames.emplace_back(Transport::Frame::FromWire(m_opcode, std::move(m_payload)));
 				m_payload.clear();
 				m_phase = ParsePhase::Header;
 				m_bytes_needed = FRAME_HEADER_SIZE;

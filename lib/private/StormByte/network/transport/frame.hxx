@@ -115,6 +115,22 @@ namespace StormByte::Network::Transport {
 			PacketPointer ProcessPacket(const DeserializePacketFunction& packet_fn, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 			/**
+			 * @brief Transform one raw frame after opcode policy and previous handlers.
+			 * @param pipeline Connection input pipeline in its current negotiated state.
+			 * @param logger Diagnostic logger.
+			 * @return False if a pipeline fails; the factory must not be invoked.
+			 */
+			bool DecodeInput(Buffer::Pipeline& pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+
+			/**
+			 * @brief Read the wire opcode before input transformation.
+			 * @return Application opcode.
+			 */
+			Packet::OpcodeType Opcode() const noexcept {
+				return m_opcode;
+			}
+
+			/**
 			 * @brief Serialize this frame to a Consumer.
 			 * @param out_pipeline Output pipeline.
 			 * @param logger Logger.
@@ -123,19 +139,16 @@ namespace StormByte::Network::Transport {
 			Buffer::Consumer ProcessOutput(Buffer::Pipeline& out_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
 		private:
-			Packet::OpcodeType m_opcode;	///< Opcode
+			Packet::OpcodeType m_opcode{0};	///< Opcode; zero for an invalid frame.
 			StormByte::BinaryData m_payload;		///< Payload bytes
 
 			/**
-			 * @brief Build a frame from already parsed wire fields.
+			 * @brief Retain raw wire fields without executing pipelines or factories.
 			 * @param opcode Frame opcode.
 			 * @param payload Raw payload bytes.
-			 * @param in_pipeline Input pipeline.
-			 * @param logger Diagnostic logger.
-			 * @return Parsed frame.
+			 * @return Raw frame; DecodeInput is deferred until opcode admission.
 			 */
-			static Frame FromWire(Packet::OpcodeType opcode, StormByte::BinaryData&& payload,
-				Buffer::Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+			static Frame FromWire(Packet::OpcodeType opcode, StormByte::BinaryData&& payload) noexcept;
 
 			/**
 			 * @brief Empty frame (error path).
