@@ -190,67 +190,104 @@ namespace StormByte::Network::Detail::RemoteFile {
 	}
 
 	StormByte::Expected<Message, ConnectionError> DataPlane::Exchange(Message request) noexcept {
-		std::scoped_lock lock(m_mutex);
-		if (m_failed.load(std::memory_order_acquire) || !m_socket) {
-			return Unexpected<ConnectionError>("Remote file channel has failed");
-		}
-
-		request.request_id = m_next_request_id.fetch_add(1, std::memory_order_relaxed);
-		if (request.request_id == 0) {
+		const bool heartbeat = request.opcode == Opcode::Ping;
+		const std::size_t slot = heartbeat ? 1 : 0;
+		std::unique_lock operation(m_operation_mutex, std::defer_lock);
+		if (!heartbeat)
+			operation.lock();
+		try {
+			{
+				std::scoped_lock sending(m_send_mutex);
+				if (Failed() || !m_socket)
+					return Unexpected<ConnectionError>("Remote file channel has failed");
+				request.request_id = m_next_request_id.fetch_add(1, std::memory_order_relaxed);
+				if (request.request_id == 0)
+					throw ConnectionError("Remote file request sequence exhausted");
+				BinaryData encoded = Serialize(request);
+				auto transformed = Process(m_output, std::move(encoded), m_logger);
+				if (!transformed)
+					throw ConnectionError(transformed.error()->what());
+				{
+					std::scoped_lock state(m_mutex);
+					if (Failed() || m_pending[slot])
+						return Unexpected<ConnectionError>("Remote file response slot is unavailable");
+					Message metadata;
+					metadata.opcode = request.opcode;
+					metadata.request_id = request.request_id;
+					metadata.token = request.token;
+					m_pending[slot].emplace(Pending{std::move(metadata), {}});
+					if (!m_receiver_thread.joinable())
+						m_receiver_thread = std::thread(&DataPlane::RunReceiver, this);
+				}
+				if (auto sent = SendPayload(*m_socket, *transformed); !sent)
+					throw ConnectionError(sent.error()->what());
+			}
+			m_response_condition.notify_all();
+			std::unique_lock state(m_mutex);
+			auto completed = [&] { return Failed() || m_pending[slot]->response.has_value(); };
+			if (heartbeat || request.opcode == Opcode::Attach) {
+				if (!m_response_condition.wait_for(state, std::chrono::seconds{m_timeout_seconds}, completed)) {
+					state.unlock();
+					MarkFailed();
+					return Unexpected<ConnectionError>("Remote file control response timed out");
+				}
+			}
+			else
+				m_response_condition.wait(state, completed);
+			if (Failed()) {
+				m_pending[slot].reset();
+				return Unexpected<ConnectionError>("Remote file channel has failed");
+			}
+			Message response = std::move(*m_pending[slot]->response);
+			m_pending[slot].reset();
+			return response;
+		} catch (...) {
 			MarkFailed();
-			return Unexpected<ConnectionError>("Remote file request sequence exhausted");
+			return Unexpected<ConnectionError>("Remote file channel processing failed");
 		}
-
-		auto response = ExchangeLocked(request);
-		if (!response) {
-			m_logger << StormByte::Logger::Level::Error << "Remote file exchange failed: opcode="
-				<< static_cast<unsigned int>(request.opcode) << " sequence=" << request.request_id
-				<< " reason=" << response.error()->what() << std::endl;
-			MarkFailed();
-		}
-		else if (response->status == Status::Failed) {
-			m_logger << StormByte::Logger::Level::Error << "Remote file operation rejected: opcode="
-				<< static_cast<unsigned int>(request.opcode) << " sequence=" << request.request_id << std::endl;
-		}
-		return response;
 	}
 
-	StormByte::Expected<Message, ConnectionError> DataPlane::ExchangeLocked(const Message& request) noexcept {
+	void DataPlane::RunReceiver() noexcept {
 		try {
-			const std::uint64_t request_id = request.request_id;
-			const Opcode expected_opcode = request.opcode == Opcode::Ping ? Opcode::Pong : request.opcode;
-			BinaryData encoded = Serialize(request);
-			auto transformed = Process(m_output, std::move(encoded), m_logger);
-			if (!transformed) {
-				return Unexpected<ConnectionError>(transformed.error()->what());
+			while (true) {
+				{
+					std::unique_lock state(m_mutex);
+					m_response_condition.wait(state, [this] {
+						return Failed() || (m_pending[0] && !m_pending[0]->response)
+							|| (m_pending[1] && !m_pending[1]->response);
+					});
+					if (Failed())
+						return;
+				}
+				auto available = m_socket->WaitForData(100000);
+				if (!available || *available == Connection::Read::Result::Closed
+					|| *available == Connection::Read::Result::ShutdownRequest)
+					throw ConnectionError("Remote file peer disconnected");
+				if (*available == Connection::Read::Result::Timeout)
+					continue;
+				auto received = ReceivePayload(*m_socket, m_timeout_seconds);
+				if (!received)
+					throw ConnectionError(received.error()->what());
+				auto decoded = Process(m_input, std::move(*received), m_logger);
+				if (!decoded)
+					throw ConnectionError(decoded.error()->what());
+				auto response = Deserialize(std::span<const std::byte>{*decoded});
+				if (!response)
+					throw ConnectionError("Invalid remote file response");
+				{
+					std::scoped_lock state(m_mutex);
+					auto& pending = m_pending[response->opcode == Opcode::Pong ? 1 : 0];
+					if (!pending || pending->response || response->request_id != pending->request.request_id
+						|| response->token != pending->request.token
+						|| response->opcode != (pending->request.opcode == Opcode::Ping ? Opcode::Pong : pending->request.opcode)
+						|| (response->opcode != Opcode::Read && !response->data.empty()))
+						throw ConnectionError("Unmatched remote file response");
+					pending->response.emplace(std::move(*response));
+				}
+				m_response_condition.notify_all();
 			}
-			if (auto sent = SendPayload(*m_socket, *transformed); !sent) {
-				return Unexpected<ConnectionError>(sent.error()->what());
-			}
-
-			auto received = ReceivePayload(*m_socket, m_timeout_seconds);
-			if (!received) {
-				return Unexpected<ConnectionError>(received.error()->what());
-			}
-
-			auto decoded = Process(m_input, std::move(received.value()), m_logger);
-			if (!decoded) {
-				return Unexpected<ConnectionError>(decoded.error()->what());
-			}
-			auto response = Deserialize(std::span<const std::byte>{*decoded});
-			if (!response || response->request_id != request_id || response->opcode != expected_opcode
-				|| response->token != request.token
-				|| (!response->data.empty() && (response->opcode == Opcode::Open
-					|| response->opcode == Opcode::Close || response->opcode == Opcode::Write
-					|| response->opcode == Opcode::Seek || response->opcode == Opcode::Size
-					|| response->opcode == Opcode::Flush || response->opcode == Opcode::Truncate
-					|| response->opcode == Opcode::CloseToken || response->opcode == Opcode::Attach
-					|| response->opcode == Opcode::Pong))) {
-				return Unexpected<ConnectionError>("Invalid remote file channel response");
-			}
-			return response.value();
 		} catch (...) {
-			return Unexpected<ConnectionError>("Remote file channel processing failed");
+			MarkFailed();
 		}
 	}
 
@@ -264,12 +301,19 @@ namespace StormByte::Network::Detail::RemoteFile {
 			m_stopping = true;
 		}
 		m_heartbeat_condition.notify_all();
+		{
+			std::scoped_lock state(m_mutex);
+			m_failed.store(true, std::memory_order_release);
+		}
+		m_response_condition.notify_all();
 		if (m_socket) {
 			m_socket->Disconnect();
 		}
 		if (m_heartbeat_thread.joinable() && m_heartbeat_thread.get_id() != std::this_thread::get_id()) {
 			m_heartbeat_thread.join();
 		}
+		if (m_receiver_thread.joinable() && m_receiver_thread.get_id() != std::this_thread::get_id())
+			m_receiver_thread.join();
 	}
 
 	void DataPlane::RunHeartbeat() noexcept {
@@ -293,9 +337,17 @@ namespace StormByte::Network::Detail::RemoteFile {
 	}
 
 	void DataPlane::MarkFailed() noexcept {
-		if (m_failed.exchange(true, std::memory_order_acq_rel)) {
-			return;
+		{
+			std::scoped_lock state(m_mutex);
+			if (m_failed.exchange(true, std::memory_order_acq_rel))
+				return;
 		}
+		m_response_condition.notify_all();
+		{
+			std::scoped_lock heartbeat(m_heartbeat_mutex);
+			m_stopping = true;
+		}
+		m_heartbeat_condition.notify_all();
 
 		if (m_socket) {
 			m_socket->Disconnect();

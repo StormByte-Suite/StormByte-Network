@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 /**
@@ -136,7 +137,10 @@ namespace StormByte {
 				std::uint16_t Port() const noexcept;
 
 			private:
-				StormByte::Expected<Message, ConnectionError> ExchangeLocked(const Message& request) noexcept;
+				/**
+				 * @brief Receive and correlate pending operation and heartbeat responses.
+				 */
+				void RunReceiver() noexcept;
 				void RunHeartbeat() noexcept;
 				void MarkFailed() noexcept;
 				void NotifyTokenFailures() noexcept;
@@ -150,6 +154,46 @@ namespace StormByte {
 				StormByte::Safe::Shared<StormByte::System::Device> m_device;
 				const std::uint16_t m_port;
 				mutable std::mutex m_mutex;
+
+				/**
+				 * @brief Serializes file operations independently of heartbeat.
+				 */
+				std::mutex m_operation_mutex;
+
+				/**
+				 * @brief Serializes complete outgoing frames and sequence assignment.
+				 */
+				std::mutex m_send_mutex;
+
+				/**
+				 * @brief Wakes the receiver and callers on requests, responses or shutdown.
+				 */
+				std::condition_variable m_response_condition;
+
+				/**
+				 * @brief Metadata and response for one outstanding exchange.
+				 */
+				struct Pending {
+					/**
+					 * @brief Request metadata; no file payload is retained.
+					 */
+					Message request;
+
+					/**
+					 * @brief Response validated by the sole socket receiver.
+					 */
+					std::optional<Message> response;
+				};
+
+				/**
+				 * @brief One operation slot and one heartbeat slot, guarded by m_mutex.
+				 */
+				std::array<std::optional<Pending>, 2> m_pending;
+
+				/**
+				 * @brief Sole input-pipeline and socket receiver, idle without pending work.
+				 */
+				std::thread m_receiver_thread;
 				std::mutex m_heartbeat_mutex;
 				std::condition_variable m_heartbeat_condition;
 				std::mutex m_token_mutex;

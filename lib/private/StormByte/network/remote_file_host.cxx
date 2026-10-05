@@ -287,13 +287,13 @@ namespace StormByte::Network::Detail::RemoteFile {
 		std::scoped_lock lock(m_mutex);
 		constexpr std::size_t input_limit = static_cast<std::size_t>(max_message_size * 2
 			+ sizeof(std::uint64_t) * 2 + 64 * 1024);
-		return !m_pending_request && !m_in_flight && !m_task_blocked && m_output_buffer.empty()
+		return !m_pending_request && m_output_queue.size() < 4
 			&& m_input_buffer.size() < input_limit;
 	}
 
 	bool Host::ReadyForProcessing() const noexcept {
 		std::scoped_lock lock(m_mutex);
-		return m_pending_request.has_value() && !m_task_blocked && !Finished();
+		return m_pending_request.has_value() && !m_in_flight && !m_task_blocked && !Finished();
 	}
 
 	bool Host::HasBufferedFrame() const noexcept {
@@ -306,7 +306,7 @@ namespace StormByte::Network::Detail::RemoteFile {
 
 	bool Host::HasOutput() const noexcept {
 		std::scoped_lock lock(m_mutex);
-		return !m_output_buffer.empty();
+		return !m_output_buffer.empty() || !m_output_queue.empty();
 	}
 
 	void Host::SetTaskBlocked(const bool blocked) noexcept {
@@ -315,10 +315,6 @@ namespace StormByte::Network::Detail::RemoteFile {
 	}
 
 	bool Host::Expired() const noexcept {
-		{
-			std::scoped_lock lock(m_mutex);
-			if (m_in_flight) return false;
-		}
 		return m_port != 0 && std::chrono::steady_clock::now() - m_last_activity
 			>= std::chrono::seconds{m_timeout_seconds};
 	}
@@ -381,6 +377,11 @@ namespace StormByte::Network::Detail::RemoteFile {
 			return QueueResponse(response) ? ExpectedVoid{} : ExpectedVoid{Unexpected<ConnectionError>("Failed to queue heartbeat response")};
 		}
 		if (request->opcode == Opcode::Attach) {
+			{
+				std::scoped_lock lock(m_mutex);
+				if (m_in_flight)
+					return Unexpected<ConnectionError>("Peer attached a capability during disk I/O");
+			}
 			const bool valid = request->offset == 0 && request->value == 0 && request->data.empty()
 				&& IsRegisteredToken(request->token) && m_registry->HasToken(request->token);
 				if (valid) {
@@ -394,6 +395,8 @@ namespace StormByte::Network::Detail::RemoteFile {
 			bool attached = false;
 			{
 				std::scoped_lock lock(m_mutex);
+				if (m_in_flight)
+					return Unexpected<ConnectionError>("Peer closed a capability during disk I/O");
 				attached = m_attached_tokens.erase(request->token) != 0;
 				m_registered_tokens.erase(request->token);
 			}
@@ -406,7 +409,7 @@ namespace StormByte::Network::Detail::RemoteFile {
 			{
 				std::scoped_lock lock(m_mutex);
 				attached = m_attached_tokens.contains(request->token);
-				if (attached && (m_pending_request || m_in_flight)) {
+				if (attached && m_pending_request) {
 					return Unexpected<ConnectionError>("Peer exceeded its bounded operation queue");
 				}
 			}
@@ -445,6 +448,9 @@ namespace StormByte::Network::Detail::RemoteFile {
 
 	bool Host::QueueEncodedResponse(const Message& response) noexcept {
 		try {
+			std::scoped_lock encoding(m_encoding_mutex);
+			if (m_stopping.load(std::memory_order_acquire) || Finished())
+				return false;
 			BinaryData encoded = Serialize(response);
 			if (encoded.size() > max_message_size) return false;
 			auto transformed = Process(m_output, std::move(encoded), m_logger);
@@ -454,11 +460,20 @@ namespace StormByte::Network::Detail::RemoteFile {
 			framed.append(size_bytes);
 			framed.append(std::move(transformed.value()));
 			std::scoped_lock lock(m_mutex);
-			if (!m_output_buffer.empty()) return false;
-			m_output_buffer = std::move(framed);
-			m_output_offset = 0;
-			m_in_flight = false;
-			m_task_blocked = false;
+			if (m_stopping.load(std::memory_order_acquire) || Finished() || m_output_queue.size() >= 4)
+				return false;
+			if (m_output_buffer.empty()) {
+				m_output_buffer = std::move(framed);
+				m_output_offset = 0;
+			}
+			else if (response.opcode == Opcode::Pong)
+				m_output_queue.push_front(std::move(framed));
+			else
+				m_output_queue.push_back(std::move(framed));
+			if (response.opcode != Opcode::Pong) {
+				m_in_flight = false;
+				m_task_blocked = false;
+			}
 			return true;
 		} catch (...) {
 			return false;
@@ -471,7 +486,13 @@ namespace StormByte::Network::Detail::RemoteFile {
 
 	StormByte::Expected<bool, ConnectionError> Host::FlushOutput() noexcept {
 		std::scoped_lock lock(m_mutex);
-		if (m_output_buffer.empty()) return true;
+		if (m_output_buffer.empty()) {
+			if (m_output_queue.empty())
+				return true;
+			m_output_buffer = std::move(m_output_queue.front());
+			m_output_queue.pop_front();
+			m_output_offset = 0;
+		}
 		if (!m_active_client) return Unexpected<ConnectionError>("Peer plane output has no connected socket");
 		bool would_block = false;
 		const std::span<const std::byte> remaining{m_output_buffer.data() + m_output_offset,
@@ -484,7 +505,7 @@ namespace StormByte::Network::Detail::RemoteFile {
 			m_output_buffer.clear();
 			m_output_offset = 0;
 		}
-		return m_output_buffer.empty();
+		return m_output_buffer.empty() && m_output_queue.empty();
 	}
 
 	bool Host::IsRegisteredToken(const Token& token) const noexcept {

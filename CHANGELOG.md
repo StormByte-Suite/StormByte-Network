@@ -57,6 +57,9 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ### Fixed
 
+- **Remote-file heartbeat during disk I/O**
+    - Service Ping/Pong independently of a pending file operation, so disk I/O taking longer than the heartbeat interval no longer fails the peer plane merely because its response is delayed. A single client receiver correlates operation and heartbeat responses; frames remain serialized, pending work and response queues stay bounded, and the receiver sleeps when no response is outstanding.
+    - Missing heartbeat revokes the plane, wakes waiting callers and faults attached buffers. Late worker responses are discarded; a stream retained by already executing I/O is released when that operation returns. Interrupted writes may leave partial contents, which must be treated as unreliable; cancellation does not promise rollback or immediate interruption of a system call.
 - **Remote writer size and flush**
     - Query host file size without switching the bidirectional stream's get cursor, avoiding size-probe interference with subsequent writes and flushes. Added repeated write/size/flush byte-integrity coverage and operation/transport failure diagnostics that do not expose capability tokens or file contents.
 - **Worker task initialization**

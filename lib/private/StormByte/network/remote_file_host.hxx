@@ -184,6 +184,16 @@ namespace StormByte {
 				std::unique_ptr<Socket::Server> m_listener;
 				std::shared_ptr<Socket::Client> m_active_client;
 				mutable std::mutex m_mutex; ///< Protects queued operation/output from worker completions.
+
+				/**
+				 * @brief Serializes transformations of worker and heartbeat responses.
+				 */
+				std::mutex m_encoding_mutex;
+
+				/**
+				 * @brief Up to four complete frames waiting behind the active output frame.
+				 */
+				std::deque<StormByte::BinaryData> m_output_queue;
 				std::set<RemoteFileMount::ChannelToken> m_registered_tokens; ///< Mounts belonging to this peer.
 				std::set<RemoteFileMount::ChannelToken> m_attached_tokens; ///< Tokens attached on the data socket.
 				StormByte::BinaryData m_input_buffer; ///< Partial framed input bytes.
