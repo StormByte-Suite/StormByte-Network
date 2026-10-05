@@ -47,133 +47,169 @@
 #include <string_view>
 
 /**
- * @brief Network module of the StormByte suite.
+ * @namespace StormByte
+ * @brief Root namespace of the StormByte suite.
  */
-namespace StormByte::Network {
-	namespace Connection {
-		class Client;	///< Forward declaration
-	}
-
+namespace StormByte {
 	/**
-	 * @class Endpoint
-	 * @brief Shared base for Client and Server.
-	 *
-	 * Not instantiated directly. Override InputPipeline() / OutputPipeline(). Use Send() / Reply() for framed request/response.
-	 *
-	 * @note Inheritance-oriented. Derive from Client / Server, not from Endpoint alone.
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
 	 */
-	class STORMBYTE_NETWORK_PUBLIC Endpoint {
-		public:
+	namespace Network {
+		/**
+		 * @namespace StormByte::Network::Connection
+		 * @brief Connection namespace.
+		 */
+		namespace Connection {
 			/**
-			 * @brief Construct with a packet factory and a logger.
-			 * @param deserialize_packet_function Builds domain packets from wire data.
-			 * @param logger Diagnostic logger.
+			 * @class Client
+			 * @brief Forward declaration of the connected client implementation.
 			 */
-			Endpoint(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+			class Client;
+		}
 
-			/**
-			 * @brief Copy constructor (deleted).
-			 */
-			Endpoint(const Endpoint& other) = delete;
+		/**
+		 * @class Endpoint
+		 * @brief Shared base for Client and Server.
+		 *
+		 * Not instantiated directly. Override InputPipeline() / OutputPipeline(). Use Send() / Reply() for framed request/response.
+		 *
+		 * @note Inheritance-oriented. Derive from Client / Server, not from Endpoint alone.
+		 */
+		class STORMBYTE_NETWORK_PUBLIC Endpoint {
+			public:
+				/**
+				 * @brief Construct with a packet factory and a logger.
+				 * @param deserialize_packet_function Builds domain packets from wire data.
+				 * @param logger Diagnostic logger.
+				 */
+				Endpoint(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
-			/**
-			 * @brief Move constructor.
-			 */
-			Endpoint(Endpoint&& other) noexcept;
+				/**
+				 * @brief Copy constructor (deleted).
+				 * @param other Endpoint that cannot be copied.
+				 */
+				Endpoint(const Endpoint& other) = delete;
 
-			/**
-			 * @brief Destructor.
-			 */
-			virtual ~Endpoint() noexcept;
+				/**
+				 * @brief Move constructor.
+				 * @param other Endpoint whose state is transferred.
+				 */
+				Endpoint(Endpoint&& other) noexcept;
 
-			/**
-			 * @brief Copy assignment (deleted).
-			 */
-			Endpoint& operator=(const Endpoint& other) = delete;
+				/**
+				 * @brief Destructor.
+				 */
+				virtual ~Endpoint() noexcept;
 
-			/**
-			 * @brief Move assignment.
-			 */
-			Endpoint& operator=(Endpoint&& other) noexcept;
+				/**
+				 * @brief Copy assignment (deleted).
+				 * @param other Endpoint that cannot be copied.
+				 * @return Reference to this endpoint (operation is deleted).
+				 */
+				Endpoint& operator=(const Endpoint& other) = delete;
 
-			/**
-			 * @brief Connect or listen (meaning depends on the derived class).
-			 * @param protocol Address family.
-			 * @param address Host or bind address.
-			 * @param port Port number.
-			 * @return true on success.
-			 */
-			virtual bool Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) = 0;
+				/**
+				 * @brief Move assignment.
+				 * @param other Endpoint whose state is transferred.
+				 * @return Reference to this endpoint.
+				 */
+				Endpoint& operator=(Endpoint&& other) noexcept;
 
-			/**
-			 * @brief Tear down the endpoint.
-			 */
-			virtual void Disconnect() noexcept = 0;
+				/**
+				 * @brief Connect or listen (meaning depends on the derived class).
+				 * @param protocol Address family.
+				 * @param address Host or bind address.
+				 * @param port Port number.
+				 * @return true on success.
+				 */
+				virtual bool Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) = 0;
 
-			/**
-			 * @brief Current connection/listen status.
-			 * @return Status.
-			 */
-			virtual Connection::Status Status() const noexcept = 0;
+				/**
+				 * @brief Tear down the endpoint.
+				 */
+				virtual void Disconnect() noexcept = 0;
 
-		protected:
-			DeserializePacketFunction m_deserialize_packet_function;	///< Packet factory
-			StormByte::Safe::Shared<Logger::Log> m_logger;						///< Logger
+				/**
+				 * @brief Current connection/listen status.
+				 * @return Status.
+				 */
+				virtual Connection::Status Status() const noexcept = 0;
 
-			/**
-			 * @brief Wrap a socket client with input/output pipelines.
-			 * @param socket Underlying socket client.
-			 * @return Connection::Client.
-			 */
-			std::shared_ptr<Connection::Client> CreateConnection(std::shared_ptr<Socket::Client> socket) noexcept;
+			protected:
+				/**
+				 * @brief Packet factory used to deserialize received wire data.
+				 */
+				DeserializePacketFunction m_deserialize_packet_function;
 
-			/**
-			 * @brief Build the endpoint's inbound byte transformation pipeline.
-			 * @return Pipeline.
-			 *
-			 * The returned pipeline is owned by its connection. Remote-file
-			 * channels build another instance from this hook and may outlive the
-			 * application connection. Pipes must own or share every object they
-			 * use; they must not retain raw references to the Endpoint or derived
-			 * object. Clone/Move must preserve that ownership contract.
-			 */
-			virtual Buffer::Pipeline InputPipeline() const noexcept = 0;
+				/**
+				 * @brief Shared diagnostic logger for this endpoint.
+				 */
+				StormByte::Safe::Shared<Logger::Log> m_logger;
 
-			/**
-			 * @brief Build the endpoint's outbound byte transformation pipeline.
-			 * @return Pipeline.
-			 *
-			 * The returned pipeline is owned by its connection. Remote-file
-			 * channels build another instance from this hook and may outlive the
-			 * application connection. Pipes must own or share every object they
-			 * use; they must not retain raw references to the Endpoint or derived
-			 * object. Clone/Move must preserve that ownership contract.
-			 */
-			virtual Buffer::Pipeline OutputPipeline() const noexcept = 0;
+				/**
+				 * @brief Wrap a socket client with input/output pipelines.
+				 * @param socket Underlying socket client.
+				 * @return Connection::Client.
+				 */
+				std::shared_ptr<Connection::Client> CreateConnection(std::shared_ptr<Socket::Client> socket) noexcept;
 
-			/**
-			 * @brief Send @p packet and wait for a response frame.
-			 * @param client_connection Active connection.
-			 * @param packet Packet to send.
-			 * @return Response packet, or nullptr on failure.
-			 */
-			PacketPointer Send(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
+				/**
+				 * @brief Build the endpoint's inbound byte transformation pipeline.
+				 * @return Pipeline.
+				 *
+				 * The returned pipeline is owned by its connection. Remote-file
+				 * channels build another instance from this hook and may outlive the
+				 * application connection. Pipes must own or share every object they
+				 * use; they must not retain raw references to the Endpoint or derived
+				 * object. Clone/Move must preserve that ownership contract.
+				 */
+				virtual Buffer::Pipeline InputPipeline() const noexcept = 0;
 
-			/**
-			 * @brief Send @p packet without waiting for a reply.
-			 * @param client_connection Active connection.
-			 * @param packet Packet to send.
-			 * @return true on success.
-			 */
-			bool Reply(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
+				/**
+				 * @brief Build the endpoint's outbound byte transformation pipeline.
+				 * @return Pipeline.
+				 *
+				 * The returned pipeline is owned by its connection. Remote-file
+				 * channels build another instance from this hook and may outlive the
+				 * application connection. Pipes must own or share every object they
+				 * use; they must not retain raw references to the Endpoint or derived
+				 * object. Clone/Move must preserve that ownership contract.
+				 */
+				virtual Buffer::Pipeline OutputPipeline() const noexcept = 0;
 
-		private:
-			/**
-			 * @brief Internal send (no receive).
-			 * @param client_connection Active connection.
-			 * @param packet Packet to send.
-			 * @return true on success.
-			 */
-			bool SendPacket(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
-	};
+				/**
+				 * @brief Send @p packet and wait for a response frame.
+				 * @param client_connection Active connection.
+				 * @param packet Packet to send.
+				 * @return Response packet, or nullptr on failure.
+				 */
+				PacketPointer Send(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
+
+				/**
+				 * @brief Send @p packet without waiting for a reply.
+				 * @param client_connection Active connection.
+				 * @param packet Packet to send.
+				 * @return true on success.
+				 */
+				bool Reply(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
+
+			private:
+				/**
+				 * @brief Internal send (no receive).
+				 * @param client_connection Active connection.
+				 * @param packet Packet to send.
+				 * @return true on success.
+				 */
+				bool SendPacket(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
+		};
+	}
 }
+
+/**
+ * @brief Endpoint resources have Network-owned lifecycles.
+ *
+ * Derived providers must keep their own resources and virtual hooks valid
+ * until destruction, with a compatible ABI.
+ */
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Endpoint);

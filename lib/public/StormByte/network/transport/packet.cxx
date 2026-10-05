@@ -44,6 +44,14 @@ using StormByte::BinaryData;
 using StormByte::Buffer::FIFO;
 using namespace StormByte::Network::Transport;
 
+Packet::Packet(const Packet& other) = default;
+
+Packet::Packet(Packet&& other) noexcept = default;
+
+Packet& Packet::operator=(const Packet& other) = default;
+
+Packet& Packet::operator=(Packet&& other) noexcept = default;
+
 Packet::~Packet() noexcept = default;
 
 FIFO Packet::Serialize() const noexcept {

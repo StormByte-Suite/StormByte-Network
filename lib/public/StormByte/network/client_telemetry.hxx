@@ -55,6 +55,10 @@ namespace StormByte {
 	 * @brief Network module of the StormByte suite.
 	 */
 	namespace Network {
+		/**
+		 * @class Client
+		 * @brief Forward declaration of the client owning its telemetry.
+		 */
 		class Client;
 
 		/**
@@ -63,75 +67,174 @@ namespace StormByte {
 		 */
 		class STORMBYTE_NETWORK_PUBLIC ClientTelemetry final: public Telemetry {
 			public:
-				/** @brief Construct all client counters at zero. */
+				/**
+				 * @brief Construct all client counters at zero.
+				 */
 				ClientTelemetry() noexcept;
 
-				/** @brief Virtual destructor anchors client telemetry RTTI in Network. */
+				/**
+				 * @brief Virtual destructor anchors client telemetry RTTI in Network.
+				 */
 				~ClientTelemetry() noexcept override;
 
-				/** @brief Number of calls to Client::Connect. */
+				/**
+				 * @brief Number of calls to Client::Connect.
+				 * @return Cumulative connection-attempt count.
+				 */
 				std::uint64_t ConnectionAttempts() const noexcept;
 
-				/** @brief Successful connections made by this Client. */
+				/**
+				 * @brief Successful connections made by this Client.
+				 * @return Cumulative successful-connection count.
+				 */
 				std::uint64_t ConnectionsEstablished() const noexcept;
 
-				/** @brief Failed connection attempts made by this Client. */
+				/**
+				 * @brief Failed connection attempts made by this Client.
+				 * @return Cumulative failed-connection count.
+				 */
 				std::uint64_t ConnectionFailures() const noexcept;
 
-				/** @brief Whether this Client currently has an application connection. */
+				/**
+				 * @brief Whether this Client currently has an application connection.
+				 * @return True when the recorded application connection is active.
+				 */
 				bool Connected() const noexcept;
 
-				/** @brief Requests initiated through Client::Send. */
+				/**
+				 * @brief Requests initiated through Client::Send.
+				 * @return Cumulative request-attempt count.
+				 */
 				std::uint64_t Requests() const noexcept;
 
-				/** @brief Requests that returned a decoded response packet. */
+				/**
+				 * @brief Requests that returned a decoded response packet.
+				 * @return Cumulative decoded-response count.
+				 */
 				std::uint64_t Responses() const noexcept;
 
-				/** @brief Requests for which Send returned no decoded response. */
+				/**
+				 * @brief Requests for which Send returned no decoded response.
+				 * @return Cumulative count of requests without decoded responses.
+				 */
 				std::uint64_t RequestsWithoutResponse() const noexcept;
 
-				/** @brief Number of completed request-latency samples. */
+				/**
+				 * @brief Number of completed request-latency samples.
+				 * @return Cumulative completed round-trip sample count.
+				 */
 				std::uint64_t RequestLatencySamples() const noexcept;
 
-				/** @brief Mean complete Send round-trip, or zero without samples. */
+				/**
+				 * @brief Mean complete Send round-trip, or zero without samples.
+				 * @return Mean elapsed microseconds, truncated to whole microseconds;
+				 * zero when no samples have been recorded.
+				 */
 				std::chrono::microseconds MeanRequestLatency() const noexcept;
 
-				/** @brief Flatten this client's counters to owned UTF-8 text. */
+				/**
+				 * @brief Flatten this client's counters to owned UTF-8 text.
+				 * @return Owned text containing the client's telemetry counters.
+				 */
 				operator StormByte::Safe::String() const override;
 
 			private:
+				/**
+				 * @brief Allow the owning client to record telemetry events.
+				 */
 				friend class Client;
 
-				/** @brief Record the start of a Client::Connect call. */
+				/**
+				 * @brief Record the start of a Client::Connect call.
+				 */
 				void RecordConnectionAttempt() noexcept;
 
-				/** @brief Record a successful Client::Connect call. */
+				/**
+				 * @brief Count a successful connection and mark it connected.
+				 */
 				void RecordConnectionEstablished() noexcept;
 
-				/** @brief Record a failed Client::Connect call. */
+				/**
+				 * @brief Record a failed Client::Connect call.
+				 */
 				void RecordConnectionFailed() noexcept;
 
-				/** @brief Record application disconnection if currently connected. */
+				/**
+				 * @brief Mark the recorded application connection disconnected.
+				 */
 				void RecordDisconnected() noexcept;
 
-				/** @brief Count a Client::Send attempt. */
+				/**
+				 * @brief Count a Client::Send attempt.
+				 */
 				void RecordRequest() noexcept;
 
-				/** @brief Record response result and elapsed complete round-trip. */
+				/**
+				 * @brief Record response result and elapsed complete round-trip.
+				 * @param elapsed Round-trip duration; negative values count as zero.
+				 * @param responded Whether a decoded response packet was returned.
+				 * @details Increment the latency sample count and the corresponding
+				 * response or no-response counter.
+				 */
 				void RecordRequestResult(std::chrono::microseconds elapsed, bool responded) noexcept;
 
-				/** @brief Start a Base named clock around one Send operation. */
+				/**
+				 * @brief Start a Base named clock around one Send operation.
+				 * @return Independent scoped sample for the Client.Send clock.
+				 */
 				Sample MeasureRequest();
 
-				std::atomic<std::uint64_t> m_connection_attempts{0}; ///< Connect calls.
-				std::atomic<std::uint64_t> m_connections_established{0}; ///< Successful Connect calls.
-				std::atomic<std::uint64_t> m_connection_failures{0}; ///< Failed Connect calls.
-				std::atomic<bool> m_connected{false}; ///< Current application-connection state.
-				std::atomic<std::uint64_t> m_requests{0}; ///< Client::Send calls.
-				std::atomic<std::uint64_t> m_responses{0}; ///< Requests with decoded responses.
-				std::atomic<std::uint64_t> m_requests_without_response{0}; ///< Requests without decoded responses.
-				std::atomic<std::uint64_t> m_latency_samples{0}; ///< Completed round-trip samples.
-				std::atomic<std::uint64_t> m_latency_us{0}; ///< Sum of round-trip microseconds.
+				/**
+				 * @brief Cumulative Connect calls.
+				 */
+				std::atomic<std::uint64_t> m_connection_attempts{0};
+
+				/**
+				 * @brief Cumulative successful Connect calls.
+				 */
+				std::atomic<std::uint64_t> m_connections_established{0};
+
+				/**
+				 * @brief Cumulative failed Connect calls.
+				 */
+				std::atomic<std::uint64_t> m_connection_failures{0};
+
+				/**
+				 * @brief Current recorded application-connection state.
+				 */
+				std::atomic<bool> m_connected{false};
+
+				/**
+				 * @brief Cumulative Client::Send calls.
+				 */
+				std::atomic<std::uint64_t> m_requests{0};
+
+				/**
+				 * @brief Cumulative requests with decoded responses.
+				 */
+				std::atomic<std::uint64_t> m_responses{0};
+
+				/**
+				 * @brief Cumulative requests without decoded responses.
+				 */
+				std::atomic<std::uint64_t> m_requests_without_response{0};
+
+				/**
+				 * @brief Completed round-trip samples, with or without a response.
+				 */
+				std::atomic<std::uint64_t> m_latency_samples{0};
+
+				/**
+				 * @brief Sum of nonnegative recorded round-trip microseconds.
+				 */
+				std::atomic<std::uint64_t> m_latency_us{0};
 		};
 	}
 }
+
+/**
+ * @brief Client telemetry has Network-owned lifecycle operations.
+ * @details Base and Network must remain loaded with a compatible ABI until
+ * every shared handle is released.
+ */
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::ClientTelemetry);

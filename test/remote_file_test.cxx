@@ -36,31 +36,53 @@
 
 namespace RemoteFileTest {
 	namespace Net = StormByte::Network;
+
 	namespace Buf = StormByte::Buffer;
+
 	using Log = StormByte::Logger::Log;
+
 	using Mount = Net::RemoteFileMount;
+
 	using Packet = Net::Transport::Packet;
 
 	constexpr std::string_view address = "127.0.0.1";
+
 	constexpr unsigned short port = 7183;
+
 	constexpr std::uint64_t remote_frame_limit = 4ull * 1024ull * 1024ull;
+
 	constexpr std::size_t remote_header_size = 2 + sizeof(std::uint64_t) * 3 + 32;
 
+	/**
+	 * @brief Require a test condition to hold.
+	 * @param condition Condition to check.
+	 * @param message Failure message.
+	 */
 	void Check(bool condition, std::string_view message);
 
 #ifdef WINDOWS
 	using RawSocket = SOCKET;
+
 	constexpr RawSocket invalid_raw_socket = INVALID_SOCKET;
 #else
 	using RawSocket = int;
+
 	constexpr RawSocket invalid_raw_socket = -1;
 #endif
 
+	/**
+	 * @brief Raw socket peer for exercising the private remote-file protocol.
+	 */
 	class RawPeer final {
 		public:
+			/**
+			 * @brief Connect to the private data-plane listener.
+			 * @param peer_port Listener port.
+			 */
 			explicit RawPeer(const unsigned short peer_port) {
 				m_socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-				if (m_socket == invalid_raw_socket) return;
+				if (m_socket == invalid_raw_socket)
+					return;
 				sockaddr_in remote{};
 				remote.sin_family = AF_INET;
 				remote.sin_port = htons(peer_port);
@@ -79,12 +101,27 @@ namespace RemoteFileTest {
 #endif
 			}
 
-			~RawPeer() { Close(); }
+			/**
+			 * @brief Close the owned socket.
+			 */
+			~RawPeer() {
+				Close();
+			}
 
-			bool Connected() const noexcept { return m_socket != invalid_raw_socket; }
+			/**
+			 * @brief Report whether the peer owns a valid socket.
+			 * @return Whether the socket is valid.
+			 */
+			bool Connected() const noexcept {
+				return m_socket != invalid_raw_socket;
+			}
 
+			/**
+			 * @brief Close and invalidate the owned socket.
+			 */
 			void Close() noexcept {
-				if (m_socket == invalid_raw_socket) return;
+				if (m_socket == invalid_raw_socket)
+					return;
 #ifdef WINDOWS
 				closesocket(m_socket);
 #else
@@ -93,6 +130,16 @@ namespace RemoteFileTest {
 				m_socket = invalid_raw_socket;
 			}
 
+			/**
+			 * @brief Encode and send a remote-file message.
+			 * @param opcode Message opcode.
+			 * @param request_id Request sequence identifier.
+			 * @param token Mount capability token.
+			 * @param offset File offset.
+			 * @param value Operation-specific value.
+			 * @param body Message body.
+			 * @return Whether the complete frame was sent.
+			 */
 			bool SendMessage(const std::uint8_t opcode, const std::uint64_t request_id,
 				const Mount::ChannelToken& token, const std::uint64_t offset = 0,
 				const std::uint64_t value = 0, std::span<const std::byte> body = {}) {
@@ -104,18 +151,32 @@ namespace RemoteFileTest {
 				payload.append(StormByte::Serializable<std::uint64_t>(value).Serialize());
 				payload.append(std::span<const std::byte>{token});
 				payload.append(body);
-				for (auto& byte: payload) byte ^= std::byte{0x67};
+				for (auto& byte: payload)
+					byte ^= std::byte{0x67};
 				StormByte::BinaryData frame = StormByte::Serializable<std::uint64_t>(payload.size()).Serialize();
 				frame.append(std::move(payload));
 				return SendAll(frame);
 			}
 
+			/**
+			 * @brief Send a frame length with an optional partial payload.
+			 * @param length Advertised payload length.
+			 * @param partial Payload bytes to send after the prefix.
+			 * @return Whether all supplied bytes were sent.
+			 */
 			bool SendRawFramePrefix(const std::uint64_t length, const std::span<const std::byte> partial = {}) {
 				StormByte::BinaryData frame = StormByte::Serializable<std::uint64_t>(length).Serialize();
 				frame.append(partial);
 				return SendAll(frame);
 			}
 
+			/**
+			 * @brief Send consecutive read requests in a single batch.
+			 * @param token Mount capability token.
+			 * @param reads File offsets and requested lengths.
+			 * @param first_request_id Initial request sequence identifier.
+			 * @return Whether the complete batch was sent.
+			 */
 			bool SendReadBurst(const Mount::ChannelToken& token,
 				const std::vector<std::pair<std::uint64_t, std::uint64_t>>& reads,
 				const std::uint64_t first_request_id) {
@@ -129,13 +190,18 @@ namespace RemoteFileTest {
 					payload.append(StormByte::Serializable<std::uint64_t>(offset).Serialize());
 					payload.append(StormByte::Serializable<std::uint64_t>(length).Serialize());
 					payload.append(std::span<const std::byte>{token});
-					for (auto& byte: payload) byte ^= std::byte{0x67};
+					for (auto& byte: payload)
+						byte ^= std::byte{0x67};
 					batch.append(StormByte::Serializable<std::uint64_t>(payload.size()).Serialize());
 					batch.append(std::move(payload));
 				}
 				return SendAll(batch);
 			}
 
+			/**
+			 * @brief Receive and decode a complete response frame.
+			 * @return Decoded response payload.
+			 */
 			StormByte::BinaryData ReceiveMessage() {
 				std::array<std::byte, sizeof(std::uint64_t)> prefix{};
 				Check(ReceiveExact(prefix), "data-plane response prefix failed");
@@ -143,12 +209,18 @@ namespace RemoteFileTest {
 				Check(length && *length > 0 && *length <= remote_frame_limit, "invalid data-plane response length");
 				StormByte::BinaryData payload{StormByte::ByteSize{*length}};
 				Check(ReceiveExact(std::span<std::byte>{payload.data(), payload.size()}), "data-plane response body failed");
-				for (auto& byte: payload) byte ^= std::byte{0x67};
+				for (auto& byte: payload)
+					byte ^= std::byte{0x67};
 				return payload;
 			}
 
+			/**
+			 * @brief Wait for the peer to close or fail the connection.
+			 * @return Whether the connection closed within the receive deadline.
+			 */
 			bool WaitForClose() const noexcept {
-				if (!Connected()) return true;
+				if (!Connected())
+					return true;
 				fd_set descriptors;
 				FD_ZERO(&descriptors);
 				FD_SET(m_socket, &descriptors);
@@ -158,7 +230,8 @@ namespace RemoteFileTest {
 #else
 				const int ready = select(m_socket + 1, &descriptors, nullptr, nullptr, &timeout_value);
 #endif
-				if (ready <= 0) return false;
+				if (ready <= 0)
+					return false;
 				char byte = 0;
 #ifdef WINDOWS
 				return ::recv(m_socket, &byte, 1, 0) <= 0;
@@ -167,8 +240,12 @@ namespace RemoteFileTest {
 #endif
 			}
 
+			/**
+			 * @brief Shut down the socket's sending direction.
+			 */
 			void ShutdownSend() noexcept {
-				if (m_socket == invalid_raw_socket) return;
+				if (m_socket == invalid_raw_socket)
+					return;
 #ifdef WINDOWS
 				(void)::shutdown(m_socket, SD_SEND);
 #else
@@ -177,6 +254,11 @@ namespace RemoteFileTest {
 			}
 
 		private:
+			/**
+			 * @brief Send all bytes, handling partial socket writes.
+			 * @param bytes Bytes to send.
+			 * @return Whether every byte was sent.
+			 */
 			bool SendAll(std::span<const std::byte> bytes) {
 				while (!bytes.empty()) {
 #ifdef WINDOWS
@@ -185,12 +267,18 @@ namespace RemoteFileTest {
 #else
 					const ssize_t sent = ::send(m_socket, bytes.data(), bytes.size(), 0);
 #endif
-					if (sent <= 0) return false;
+					if (sent <= 0)
+						return false;
 					bytes = bytes.subspan(static_cast<std::size_t>(sent));
 				}
 				return true;
 			}
 
+			/**
+			 * @brief Fill a byte span, handling partial socket reads.
+			 * @param bytes Destination bytes.
+			 * @return Whether the entire span was filled.
+			 */
 			bool ReceiveExact(std::span<std::byte> bytes) {
 				while (!bytes.empty()) {
 #ifdef WINDOWS
@@ -199,61 +287,166 @@ namespace RemoteFileTest {
 #else
 					const ssize_t received = ::recv(m_socket, bytes.data(), bytes.size(), 0);
 #endif
-					if (received <= 0) return false;
+					if (received <= 0)
+						return false;
 					bytes = bytes.subspan(static_cast<std::size_t>(received));
 				}
 				return true;
 			}
 
+			/**
+			 * @brief Owned data-plane socket.
+			 */
 			RawSocket m_socket{invalid_raw_socket};
 	};
 
+	/**
+	 * @brief Retrieve the shared test logger.
+	 * @return Logger used by the test endpoints.
+	 */
 	StormByte::Safe::Shared<Log> Logger() {
 		static auto logger = StormByte::Safe::Heap::MakeShared<StormByte::Logger::ThreadedLog>(
 			std::cerr, StormByte::Logger::Level::Error, "[RemoteFileTest] %T:");
 		return logger;
 	}
 
+	/**
+	 * @brief Require a test condition to hold.
+	 * @param condition Condition to check.
+	 * @param message Failure message.
+	 */
 	void Check(const bool condition, const std::string_view message) {
-		if (!condition) throw std::runtime_error(std::string{message});
+		if (!condition)
+			throw std::runtime_error(std::string{message});
 	}
 
-	enum class AppOpcode: unsigned short { ReadRequest = Packet::PROCESS_THRESHOLD, WriteRequest, Mount, Unauthorized };
+	/**
+	 * @brief Application opcodes used by the test control protocol.
+	 */
+	enum class AppOpcode: unsigned short {
+		ReadRequest = Packet::PROCESS_THRESHOLD,
+		WriteRequest,
+		Mount,
+		Unauthorized
+	};
 
+	/**
+	 * @brief Request a reader or writer mount from the test server.
+	 */
 	class Request final: public Packet {
 		public:
+			/**
+			 * @brief Select a mount operation and fixture path.
+			 * @param write Whether to request write access.
+			 * @param missing Whether to select a missing read path.
+			 * @param path_selection Fixture path selector.
+			 */
 			Request(const bool write, const bool missing = false, const std::uint16_t path_selection = 0):
 				Packet(static_cast<OpcodeType>(write ? AppOpcode::WriteRequest : AppOpcode::ReadRequest)),
-					m_missing(missing), m_path_selection(path_selection) {}
-			bool Missing() const noexcept { return m_missing; }
-			std::uint16_t PathSelection() const noexcept { return m_path_selection; }
+				m_missing(missing),
+				m_path_selection(path_selection) {
+			}
+
+			/**
+			 * @brief Report whether a missing read path was requested.
+			 * @return Whether the missing-path flag is set.
+			 */
+			bool Missing() const noexcept {
+				return m_missing;
+			}
+
+			/**
+			 * @brief Retrieve the fixture path selector.
+			 * @return Requested fixture path selector.
+			 */
+			std::uint16_t PathSelection() const noexcept {
+				return m_path_selection;
+			}
+
+			/**
+			 * @brief Serialize the request flags and path selector.
+			 * @return Serialized request payload.
+			 */
 			StormByte::BinaryData DoSerialize() const noexcept override {
 				StormByte::BinaryData data = StormByte::Serializable<std::uint8_t>(m_missing ? 1 : 0).Serialize();
 				data.append(StormByte::Serializable<std::uint16_t>(m_path_selection).Serialize());
 				return data;
 			}
+
 		private:
+			/**
+			 * @brief Whether to request a missing read path.
+			 */
 			bool m_missing;
+
+			/**
+			 * @brief Fixture path selector.
+			 */
 			std::uint16_t m_path_selection;
 	};
 
+	/**
+	 * @brief Carry a remote-file mount response.
+	 */
 	class MountPacket final: public Packet {
 		public:
-			explicit MountPacket(Mount value): Packet(static_cast<OpcodeType>(AppOpcode::Mount)), m_value(std::move(value)) {}
-			const Mount& Value() const noexcept { return m_value; }
+			/**
+			 * @brief Store a mount response.
+			 * @param value Mount descriptor to carry.
+			 */
+			explicit MountPacket(Mount value):
+				Packet(static_cast<OpcodeType>(AppOpcode::Mount)),
+				m_value(std::move(value)) {
+			}
+
+			/**
+			 * @brief Retrieve the carried mount descriptor.
+			 * @return Stored mount descriptor.
+			 */
+			const Mount& Value() const noexcept {
+				return m_value;
+			}
+
+			/**
+			 * @brief Serialize the mount descriptor.
+			 * @return Serialized mount payload.
+			 */
 			StormByte::BinaryData DoSerialize() const noexcept override {
 				return StormByte::Serializable<Mount>(m_value).Serialize();
 			}
+
 		private:
+			/**
+			 * @brief Mount descriptor carried by this packet.
+			 */
 			Mount m_value;
 	};
 
+	/**
+	 * @brief Report application-level mount authorization failure.
+	 */
 	class UnauthorizedPacket final: public Packet {
 		public:
-			UnauthorizedPacket(): Packet(static_cast<OpcodeType>(AppOpcode::Unauthorized)) {}
-			StormByte::BinaryData DoSerialize() const noexcept override { return {}; }
+			/**
+			 * @brief Construct an authorization failure response.
+			 */
+			UnauthorizedPacket():
+				Packet(static_cast<OpcodeType>(AppOpcode::Unauthorized)) {
+			}
+
+			/**
+			 * @brief Serialize the empty authorization failure payload.
+			 * @return Empty payload.
+			 */
+			StormByte::BinaryData DoSerialize() const noexcept override {
+				return {};
+			}
 	};
 
+	/**
+	 * @brief Create the test control packet deserializer.
+	 * @return Deserializer for application test packets.
+	 */
 	Net::DeserializePacketFunction Factory() {
 		return [](Packet::OpcodeType opcode, Buf::Consumer payload, StormByte::Safe::Shared<Log>) -> Net::PacketPointer {
 			StormByte::BinaryData bytes;
@@ -261,156 +454,387 @@ namespace RemoteFileTest {
 			switch (static_cast<AppOpcode>(opcode)) {
 				case AppOpcode::ReadRequest:
 				case AppOpcode::WriteRequest: {
-					if (bytes.size() != sizeof(std::uint8_t) + sizeof(std::uint16_t)) return nullptr;
+					if (bytes.size() != sizeof(std::uint8_t) + sizeof(std::uint16_t))
+						return nullptr;
 					auto flags = StormByte::Serializable<std::uint8_t>::Deserialize(
 						std::span<const std::byte>{bytes.data(), sizeof(std::uint8_t)});
 					auto path_selection = StormByte::Serializable<std::uint16_t>::Deserialize(
 						std::span<const std::byte>{bytes.data() + sizeof(std::uint8_t), sizeof(std::uint16_t)});
-					if (!flags || (*flags & 0xFE) != 0 || !path_selection) return nullptr;
-					return std::make_shared<Request>(opcode == static_cast<Packet::OpcodeType>(AppOpcode::WriteRequest),
+					if (!flags || (*flags & 0xFE) != 0 || !path_selection)
+						return nullptr;
+					return StormByte::Network::PacketPointer::MakePointer<Request>(opcode == static_cast<Packet::OpcodeType>(AppOpcode::WriteRequest),
 						(*flags & 1) != 0, *path_selection);
 				}
 				case AppOpcode::Mount: {
 					auto mount = StormByte::Serializable<Mount>::Deserialize(bytes);
-					return mount ? std::make_shared<MountPacket>(std::move(*mount)) : nullptr;
+					return mount ? StormByte::Network::PacketPointer::MakePointer<MountPacket>(std::move(*mount)) : nullptr;
 				}
 				case AppOpcode::Unauthorized:
-					return bytes.empty() ? std::make_shared<UnauthorizedPacket>() : nullptr;
+					return bytes.empty() ? StormByte::Network::PacketPointer::MakePointer<UnauthorizedPacket>() : nullptr;
 			}
 			return nullptr;
 		};
 	}
 
-	class XorPipe final: public Buf::Pipe {
+	/**
+	 * @brief Accumulate the borrowed input until EOF or a read failure.
+	 * @param input Borrowed input stream.
+	 * @param bytes Destination for all successfully read bytes.
+	 */
+	void ReadPipeUntilEoF(const Buf::PipeInput& input, StormByte::BinaryData& bytes) {
+		while (!input.EoF() && input.IsReadable()) {
+			StormByte::BinaryData chunk;
+			if (!input.Read(StormByte::ByteSize{1}, chunk))
+				break;
+			bytes.append(chunk);
+			const auto available = input.Available();
+			if (available > StormByte::ByteSize{0}) {
+				StormByte::BinaryData rest;
+				if (!input.Read(available, rest))
+					break;
+				bytes.append(rest);
+			}
+		}
+	}
+
+	/**
+	 * @brief XOR transform callable for complete remote-file messages.
+	 */
+	struct XorPipe final {
 		public:
-			void Run(Buf::ReadOnly& input, Buf::WriteOnly& output, const StormByte::Safe::Shared<Log>&) override {
+			/**
+			 * @brief Transform all input bytes and close the output.
+			 * @param input Borrowed input stream.
+			 * @param output Borrowed output stream.
+			 * @param log Borrowed logger, unused by this transform.
+			 */
+			void operator()(const Buf::PipeInput& input, const Buf::PipeOutput& output,
+				const StormByte::Safe::Shared<Log>& log) const {
+				(void)log;
 				StormByte::BinaryData bytes;
-				input.ExtractUntilEoF(bytes);
-				for (auto& byte: bytes) byte ^= std::byte{0x67};
-				if (!bytes.empty()) (void)output.Write(std::move(bytes));
+				ReadPipeUntilEoF(input, bytes);
+				for (auto& byte: bytes)
+					byte ^= std::byte{0x67};
+				if (!bytes.empty())
+					(void)output.Write(std::move(bytes));
 				output.Close();
 			}
-			PointerType Clone() const noexcept override { return MakePointer<XorPipe>(); }
-			PointerType Move() noexcept override { return MakePointer<XorPipe>(); }
 	};
 
-	class ReversibleEnvelopePipe final: public Buf::Pipe {
+	/**
+	 * @brief Encode or verify the reversible envelope used by remote-file tests.
+	 */
+	struct ReversibleEnvelopePipe final {
 		public:
-			explicit ReversibleEnvelopePipe(bool encode): m_encode(encode) {}
-			void Run(Buf::ReadOnly& input, Buf::WriteOnly& output, const StormByte::Safe::Shared<Log>&) override {
+			/**
+			 * @brief Select envelope encoding or decoding.
+			 * @param encode Whether to encode rather than verify and decode.
+			 */
+			explicit ReversibleEnvelopePipe(bool encode):
+				m_encode(encode) {
+			}
+
+			/**
+			 * @brief Process a complete envelope, mark invalid input as failed, and close output.
+			 * @param input Borrowed input stream.
+			 * @param output Borrowed output stream.
+			 * @param log Borrowed logger, unused by this transform.
+			 */
+			void operator()(const Buf::PipeInput& input, const Buf::PipeOutput& output,
+				const StormByte::Safe::Shared<Log>& log) const {
+				(void)log;
 				StormByte::BinaryData bytes;
-				input.ExtractUntilEoF(bytes);
+				ReadPipeUntilEoF(input, bytes);
 				if (m_encode) {
-					for (auto& byte: bytes) byte ^= std::byte{0x67};
+					for (auto& byte: bytes)
+						byte ^= std::byte{0x67};
 					StormByte::BinaryData framed{std::byte{'A'}, std::byte{'E'}, std::byte{'A'}, std::byte{'D'}};
 					framed.append(bytes);
 					framed.append(StormByte::Serializable<std::uint64_t>(Tag(bytes)).Serialize());
 					(void)output.Write(std::move(framed));
-				} else if (bytes.size() >= 12 && bytes[0] == std::byte{'A'} && bytes[1] == std::byte{'E'}
+				}
+				else if (bytes.size() >= 12 && bytes[0] == std::byte{'A'} && bytes[1] == std::byte{'E'}
 					&& bytes[2] == std::byte{'A'} && bytes[3] == std::byte{'D'}) {
 					const std::size_t body_size = bytes.size() - 12;
 					const auto tag = StormByte::Serializable<std::uint64_t>::Deserialize(
 						std::span<const std::byte>{bytes.data() + 4 + body_size, sizeof(std::uint64_t)});
 					StormByte::BinaryData body(std::span<const std::byte>{bytes.data() + 4, body_size});
 					if (tag && *tag == Tag(body)) {
-						for (auto& byte: body) byte ^= std::byte{0x67};
+						for (auto& byte: body)
+							byte ^= std::byte{0x67};
 						(void)output.Write(std::move(body));
-					} else output.SetError();
-				} else output.SetError();
+					}
+					else
+						output.SetError();
+				}
+				else
+					output.SetError();
 				output.Close();
 			}
-			PointerType Clone() const noexcept override { return MakePointer<ReversibleEnvelopePipe>(m_encode); }
-			PointerType Move() noexcept override { return MakePointer<ReversibleEnvelopePipe>(m_encode); }
+
 		private:
+			/**
+			 * @brief Compute the test envelope integrity tag.
+			 * @param bytes Encoded body bytes.
+			 * @return Integrity tag for the supplied body.
+			 */
 			static std::uint64_t Tag(const StormByte::BinaryData& bytes) noexcept {
 				std::uint64_t hash = 1469598103934665603ull;
-				for (std::byte byte: bytes) hash = (hash ^ std::to_integer<std::uint8_t>(byte)) * 1099511628211ull;
+				for (std::byte byte: bytes)
+					hash = (hash ^ std::to_integer<std::uint8_t>(byte)) * 1099511628211ull;
 				return hash;
 			}
+
+			/**
+			 * @brief Whether this callable encodes rather than decodes envelopes.
+			 */
 			bool m_encode;
 	};
 
+	/**
+	 * @brief Build the test input transformation pipeline.
+	 * @param framed Whether to verify and decode test envelopes.
+	 * @return Input pipeline for the selected encoding.
+	 */
 	Buf::Pipeline MakeInput(bool framed) {
 		Buf::Pipeline pipeline;
-		if (framed) pipeline.Add(ReversibleEnvelopePipe{false});
-		else pipeline.Add(XorPipe{});
+		if (framed)
+			pipeline.Add(Buf::Pipe{ReversibleEnvelopePipe{false}});
+		else
+			pipeline.Add(Buf::Pipe{XorPipe{}});
 		return pipeline;
 	}
 
+	/**
+	 * @brief Build the test output transformation pipeline.
+	 * @param framed Whether to encode test envelopes.
+	 * @return Output pipeline for the selected encoding.
+	 */
 	Buf::Pipeline MakeOutput(bool framed) {
 		Buf::Pipeline pipeline;
-		if (framed) pipeline.Add(ReversibleEnvelopePipe{true});
-		else pipeline.Add(XorPipe{});
+		if (framed)
+			pipeline.Add(Buf::Pipe{ReversibleEnvelopePipe{true}});
+		else
+			pipeline.Add(Buf::Pipe{XorPipe{}});
 		return pipeline;
 	}
 
+	/**
+	 * @brief Test control client with selectable transformation pipelines.
+	 */
 	class Client final: public Net::Client {
 		public:
-			Client(): Net::Client(Factory(), Logger()) {}
-			Buf::Pipeline InputPipeline() const noexcept override { return MakeInput(m_framed.load()); }
-			Buf::Pipeline OutputPipeline() const noexcept override { return MakeOutput(m_framed.load()); }
-			void UseFramedPipeline(bool enabled) noexcept { m_framed.store(enabled); }
+			/**
+			 * @brief Construct a client using the test packet factory and logger.
+			 */
+			Client():
+				Net::Client(Factory(), Logger()) {
+			}
+
+			/**
+			 * @brief Build the selected input pipeline.
+			 * @return Input transformation pipeline.
+			 */
+			Buf::Pipeline InputPipeline() const noexcept override {
+				return MakeInput(m_framed.load());
+			}
+
+			/**
+			 * @brief Build the selected output pipeline.
+			 * @return Output transformation pipeline.
+			 */
+			Buf::Pipeline OutputPipeline() const noexcept override {
+				return MakeOutput(m_framed.load());
+			}
+
+			/**
+			 * @brief Select whether to use test envelopes.
+			 * @param enabled Whether envelope framing is enabled.
+			 */
+			void UseFramedPipeline(bool enabled) noexcept {
+				m_framed.store(enabled);
+			}
+
+			/**
+			 * @brief Request a mount through the application control connection.
+			 * @param write Whether to request write access.
+			 * @param missing Whether to select a missing read path.
+			 * @param path_selection Fixture path selector.
+			 * @return Mount descriptor and application authorization rejection flag.
+			 */
 			std::pair<Mount, bool> RequestMount(bool write, bool missing = false, std::uint16_t path_selection = 0) {
 				Request request{write, missing, path_selection};
 				auto response = Send(request);
-				if (auto result = std::dynamic_pointer_cast<MountPacket>(response)) return {result->Value(), false};
-				return {Mount::Failed(), std::dynamic_pointer_cast<UnauthorizedPacket>(response) != nullptr};
+				if (auto result = StormByte::Safe::DynamicPointerCast<MountPacket>(response))
+					return {result->Value(), false};
+				return {Mount::Failed(), StormByte::Safe::DynamicPointerCast<UnauthorizedPacket>(response) != nullptr};
 			}
+
+			/**
+			 * @brief Create a reader for a mount descriptor.
+			 * @param mount Reader mount descriptor.
+			 * @return Remote reader handle.
+			 */
 			Net::RemoteFileReaderHandle AttachReader(const Mount& mount) {
 				return CreateRemoteFileReader(mount);
 			}
+
+			/**
+			 * @brief Create a writer for a mount descriptor.
+			 * @param mount Writer mount descriptor.
+			 * @return Remote writer handle.
+			 */
 			Net::RemoteFileWriterHandle AttachWriter(const Mount& mount) {
 				return CreateRemoteFileWriter(mount);
 			}
+
 		private:
+			/**
+			 * @brief Whether the client uses test envelopes.
+			 */
 			std::atomic<bool> m_framed{false};
 	};
 
+	/**
+	 * @brief Test server that mounts fixture paths with configurable access.
+	 */
 	class Server final: public Net::Server {
 		public:
+			/**
+			 * @brief Construct a server for the primary fixture paths.
+			 * @param read_path Primary reader fixture path.
+			 * @param write_path Primary writer fixture path.
+			 */
 			Server(std::filesystem::path read_path, std::filesystem::path write_path):
-				Net::Server(Factory(), Logger()), m_read_path(std::move(read_path)), m_write_path(std::move(write_path)) {}
+				Net::Server(Factory(), Logger()),
+				m_read_path(std::move(read_path)),
+				m_write_path(std::move(write_path)) {
+			}
+
+			/**
+			 * @brief Whether reader mounts are authorized.
+			 */
 			std::atomic<bool> allow_read{true};
+
+			/**
+			 * @brief Whether writer mounts are authorized.
+			 */
 			std::atomic<bool> allow_write{true};
-			void UseFramedPipeline(bool enabled) noexcept { m_framed.store(enabled); }
-			void SetExtraPaths(std::vector<std::filesystem::path> paths) { m_extra_paths = std::move(paths); }
-			Buf::Pipeline InputPipeline() const noexcept override { return MakeInput(m_framed.load()); }
-			Buf::Pipeline OutputPipeline() const noexcept override { return MakeOutput(m_framed.load()); }
+
+			/**
+			 * @brief Select whether to use test envelopes.
+			 * @param enabled Whether envelope framing is enabled.
+			 */
+			void UseFramedPipeline(bool enabled) noexcept {
+				m_framed.store(enabled);
+			}
+
+			/**
+			 * @brief Set additional reader fixture paths.
+			 * @param paths Fixture paths selected by indices starting at three.
+			 */
+			void SetExtraPaths(std::vector<std::filesystem::path> paths) {
+				m_extra_paths = std::move(paths);
+			}
+
+			/**
+			 * @brief Build the selected input pipeline.
+			 * @return Input transformation pipeline.
+			 */
+			Buf::Pipeline InputPipeline() const noexcept override {
+				return MakeInput(m_framed.load());
+			}
+
+			/**
+			 * @brief Build the selected output pipeline.
+			 * @return Output transformation pipeline.
+			 */
+			Buf::Pipeline OutputPipeline() const noexcept override {
+				return MakeOutput(m_framed.load());
+			}
+
 		private:
+			/**
+			 * @brief Authorize a request and mount its selected fixture path.
+			 * @param uuid Requesting client identifier.
+			 * @param packet Application request packet.
+			 * @return Mount response, authorization rejection, or null for other packets.
+			 */
 			Net::PacketPointer ProcessClientPacket(std::string_view uuid, Net::PacketPointer packet) noexcept override {
-				auto request = std::dynamic_pointer_cast<Request>(packet);
-				if (!request) return nullptr;
+				auto request = StormByte::Safe::DynamicPointerCast<Request>(packet);
+				if (!request)
+					return nullptr;
 				const bool write = packet->Opcode() == static_cast<Packet::OpcodeType>(AppOpcode::WriteRequest);
-				if ((write && !allow_write.load()) || (!write && !allow_read.load())) return std::make_shared<UnauthorizedPacket>();
+				if ((write && !allow_write.load()) || (!write && !allow_read.load()))
+					return StormByte::Network::PacketPointer::MakePointer<UnauthorizedPacket>();
 				const std::filesystem::path* selected_path = nullptr;
 				if (!write && request->PathSelection() >= 3
-					&& static_cast<std::size_t>(request->PathSelection() - 3) < m_extra_paths.size()) {
+					&& static_cast<std::size_t>(request->PathSelection() - 3) < m_extra_paths.size())
 					selected_path = &m_extra_paths[request->PathSelection() - 3];
-				}
 				const auto& path = selected_path ? *selected_path : request->Missing() && !write
 					? m_read_path.parent_path() / "absent-remote-file.bin"
 					: request->PathSelection() == 1 ? m_read_path
 					: request->PathSelection() == 2 ? m_write_path
 					: (write ? m_write_path : m_read_path);
 				Mount mount = write ? MountRemoteFileWriter(uuid, path, 3) : MountRemoteFileReader(uuid, path, 3);
-				return std::make_shared<MountPacket>(std::move(mount));
+				return StormByte::Network::PacketPointer::MakePointer<MountPacket>(std::move(mount));
 			}
+
+			/**
+			 * @brief Primary reader fixture path.
+			 */
 			std::filesystem::path m_read_path;
+
+			/**
+			 * @brief Primary writer fixture path.
+			 */
 			std::filesystem::path m_write_path;
+
+			/**
+			 * @brief Additional reader fixture paths.
+			 */
 			std::vector<std::filesystem::path> m_extra_paths;
+
+			/**
+			 * @brief Whether the server uses test envelopes.
+			 */
 			std::atomic<bool> m_framed{false};
 	};
 
+	/**
+	 * @brief Own a temporary directory for test fixtures.
+	 */
 	class TempDirectory final {
 		public:
+			/**
+			 * @brief Create a temporary fixture directory.
+			 */
 			TempDirectory() {
 				m_path = std::filesystem::temp_directory_path() / ("stormbyte-rfile-" + std::to_string(
 					std::chrono::steady_clock::now().time_since_epoch().count()));
 				std::filesystem::create_directories(m_path);
 			}
-			~TempDirectory() { std::error_code ignored; std::filesystem::remove_all(m_path, ignored); }
-			const std::filesystem::path& Path() const noexcept { return m_path; }
+
+			/**
+			 * @brief Remove the fixture directory without reporting cleanup errors.
+			 */
+			~TempDirectory() {
+				std::error_code ignored;
+				std::filesystem::remove_all(m_path, ignored);
+			}
+
+			/**
+			 * @brief Retrieve the fixture directory path.
+			 * @return Owned directory path.
+			 */
+			const std::filesystem::path& Path() const noexcept {
+				return m_path;
+			}
+
 		private:
+			/**
+			 * @brief Owned fixture directory path.
+			 */
 			std::filesystem::path m_path;
 	};
 
@@ -427,9 +851,8 @@ namespace RemoteFileTest {
 
 	StormByte::BinaryData MakePattern(const std::size_t size) {
 		StormByte::BinaryData bytes{StormByte::ByteSize{size}};
-		for (std::size_t index = 0; index < size; ++index) {
+		for (std::size_t index = 0; index < size; ++index)
 			bytes[index] = static_cast<std::byte>(index % 251);
-		}
 		return bytes;
 	}
 
@@ -446,7 +869,8 @@ namespace RemoteFileTest {
 		Check(length >= 0, "failed measuring binary fixture");
 		file.seekg(0, std::ios::beg);
 		StormByte::BinaryData bytes{StormByte::ByteSize{static_cast<std::size_t>(length)}};
-		if (length > 0) file.read(reinterpret_cast<char*>(bytes.data()), length);
+		if (length > 0)
+			file.read(reinterpret_cast<char*>(bytes.data()), length);
 		Check(static_cast<bool>(file), "failed reading binary fixture");
 		return bytes;
 	}
@@ -463,18 +887,22 @@ namespace RemoteFileTest {
 			"remote file must preserve its network device transfer characteristics");
 	}
 
-	void TestReadAclAndCursors(Server& server, Client& client, const std::filesystem::path& read_path) {
+	void ExerciseReadAclAndCursors(Server& server, Client& client, const std::filesystem::path& read_path) {
 		server.allow_read = false;
 		auto [denied, unauthorized] = client.RequestMount(false);
 		Check(unauthorized && denied.Result() == Mount::Status::Failed, "read ACL must return application Unauthorized");
 		Check(denied.Port() == 0 && denied.Mode() == Mount::Access::None
-			&& std::all_of(denied.Token().begin(), denied.Token().end(), [](std::byte byte) { return byte == std::byte{0}; }),
+			&& std::all_of(denied.Token().begin(), denied.Token().end(), [](std::byte byte) {
+				return byte == std::byte{0};
+			}),
 			"ACL rejection exposed a port, capability, or access mode");
 		server.allow_read = true;
 		auto [missing, rejected_missing] = client.RequestMount(false, true);
 		Check(!rejected_missing && missing.Result() == Mount::Status::Unavailable, "missing read path status mismatch");
 		Check(missing.Port() == 0 && missing.Mode() == Mount::Access::None
-			&& std::all_of(missing.Token().begin(), missing.Token().end(), [](std::byte byte) { return byte == std::byte{0}; }),
+			&& std::all_of(missing.Token().begin(), missing.Token().end(), [](std::byte byte) {
+				return byte == std::byte{0};
+			}),
 			"Unavailable mount exposed a port, capability, or access mode");
 
 		auto [mount, rejected] = client.RequestMount(false);
@@ -490,7 +918,8 @@ namespace RemoteFileTest {
 			"reader ownership transfer must preserve the remote leaf and its address");
 		Check(first && first->Open(), "first reader open failed");
 		CheckNetworkDevice(first->Device());
-		Check(first->Size() == StormByte::ByteSize{16}, "reader size mismatch");
+		const auto first_size = first->Size();
+		Check(first_size && *first_size == StormByte::ByteSize{16}, "reader size mismatch");
 		std::array<std::byte, 5> start{};
 		Check(first->Read(std::span<std::byte>{start}).count == 5, "first read failed");
 		Check(std::string(reinterpret_cast<const char*>(start.data()), 5) == "01234", "first read mismatch");
@@ -512,8 +941,12 @@ namespace RemoteFileTest {
 
 		std::array<std::byte, 2> a{};
 		std::array<std::byte, 2> b{};
-		std::thread one([&] { (void)first->Read(std::span<std::byte>{a}); });
-		std::thread two([&] { (void)second->Read(std::span<std::byte>{b}); });
+		std::thread one([&] {
+			(void)first->Read(std::span<std::byte>{a});
+		});
+		std::thread two([&] {
+			(void)second->Read(std::span<std::byte>{b});
+		});
 		one.join();
 		two.join();
 		Check(std::string(reinterpret_cast<const char*>(a.data()), 2) == "67"
@@ -529,7 +962,7 @@ namespace RemoteFileTest {
 		Check(ReadFile(read_path) == "0123456789ABCDEF", "reader modified fixture file");
 	}
 
-	void TestWriterAndConflict(Server& server, Client& client, const std::filesystem::path& path) {
+	void ExerciseWriterAndConflict(Server& server, Client& client, const std::filesystem::path& path) {
 		server.allow_write = false;
 		auto [denied, unauthorized] = client.RequestMount(true);
 		Check(unauthorized && denied.Result() == Mount::Status::Failed, "write ACL must return application Unauthorized");
@@ -572,7 +1005,7 @@ namespace RemoteFileTest {
 		Check(released_writer && released_writer->Close(), "released writer path cleanup failed");
 	}
 
-	void TestSharedPipelineAndDisconnect(Server& server, Client& client,
+	void ExerciseSharedPipelineAndDisconnect(Server&, Client& client,
 		const std::filesystem::path& read_path, const std::filesystem::path& write_path) {
 		auto [read_mount, read_rejected] = client.RequestMount(false);
 		Check(!read_rejected && read_mount.Result() == Mount::Status::Authorized, "framed-pipeline read mount failed");
@@ -607,7 +1040,7 @@ namespace RemoteFileTest {
 		Check(ReadFile(read_path) == "0123456789ABCDEF", "read file changed");
 	}
 
-	void TestTransportFailureMarksReaderFault(const std::filesystem::path& read_path,
+	void ExerciseTransportFailureMarksReaderFault(const std::filesystem::path& read_path,
 		const std::filesystem::path& write_path) {
 		Server server(read_path, write_path);
 		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "timeout server start failed");
@@ -623,10 +1056,6 @@ namespace RemoteFileTest {
 		Check(reader->State() == Buf::IO::State::Fault, "dead remote channel did not mark BufferedLocationReader Fault");
 		reader.reset();
 	}
-
-}
-
-namespace RemoteFileTest {
 	void ExercisePatternReader(Client& client, const std::filesystem::path& path) {
 		const StormByte::BinaryData expected = ReadBytes(path);
 		const StormByte::ByteSize length{std::filesystem::file_size(path)};
@@ -634,7 +1063,8 @@ namespace RemoteFileTest {
 		Check(!rejected && mount.Result() == Mount::Status::Authorized, "pattern read mount failed");
 		auto reader = client.AttachReader(mount);
 		Check(reader && reader->Open(), "pattern reader open failed");
-		Check(reader->Size() == length, "remote Size differs from filesystem::file_size");
+		const auto reader_size = reader->Size();
+		Check(reader_size && *reader_size == length, "remote Size differs from filesystem::file_size");
 		StormByte::BinaryData whole{length};
 		const auto full = reader->Read(std::span<std::byte>{whole.data(), whole.size()});
 		Check(full.count == length && EqualBytes(whole, expected), "full read differed from the deterministic fixture");
@@ -680,13 +1110,12 @@ namespace RemoteFileTest {
 			devices[index] = readers[index]->Device();
 			CheckNetworkDevice(devices[index]);
 		}
-		for (std::size_t index = 1; index < readers.size(); ++index) {
+		for (std::size_t index = 1; index < readers.size(); ++index)
 			Check(devices[index]->Throughput().read_bps == devices[0]->Throughput().read_bps
 				&& devices[index]->Throughput().write_bps == devices[0]->Throughput().write_bps
 				&& devices[index]->Window().read == devices[0]->Window().read
 				&& devices[index]->Window().write == devices[0]->Window().write,
 				"one Client's leaves did not share the same device snapshot");
-		}
 		for (std::size_t round = 0; round < 4; ++round) {
 			for (std::size_t index = 0; index < readers.size(); ++index) {
 				const std::size_t offset = index * 4096 + round * 16;
@@ -699,8 +1128,9 @@ namespace RemoteFileTest {
 					"interleaved reader got bytes from a different offset");
 			}
 		}
-		for (auto& reader: readers) Check(reader->Close().status == Buf::IO::Status::Ok,
-			"interleaved reader CloseToken failed");
+		for (auto& reader: readers)
+			Check(reader->Close().status == Buf::IO::Status::Ok,
+				"interleaved reader CloseToken failed");
 	}
 
 	void ExerciseTokenFaultIsolation(Client& client, const StormByte::BinaryData& expected) {
@@ -722,9 +1152,8 @@ namespace RemoteFileTest {
 		Check(writer && writer->Open(), "forged writer leaf did not open");
 		const std::array<std::byte, 1> attack{std::byte{0xFF}};
 		const auto attack_write = writer->Write(std::span<const std::byte>{attack});
-		if (writer->State() != Buf::IO::State::Fault && attack_write.status == Buf::IO::Status::Ok) {
+		if (writer->State() != Buf::IO::State::Fault && attack_write.status == Buf::IO::Status::Ok)
 			(void)writer->Flush();
-		}
 		Check(writer->State() == Buf::IO::State::Fault,
 			"reader token write did not fail visibly when its buffered operation reached the host");
 		writer.reset();
@@ -794,85 +1223,6 @@ namespace RemoteFileTest {
 		Check(std::filesystem::remove(path), "host file could not be removed after CloseToken");
 	}
 
-	void TestLargePatternReader() {
-		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "large-read.bin";
-		const auto write_path = temporary.Path() / "unused-write.bin";
-		WriteBytes(read_path, MakePattern(1024 * 1024));
-		Server server(read_path, write_path);
-		server.UseFramedPipeline(true);
-		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "large-read server connect failed");
-		Client client;
-		client.UseFramedPipeline(true);
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "large-read client connect failed");
-		ExercisePatternReader(client, read_path);
-	}
-
-	void TestEightInterleavedReaders() {
-		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "interleaved-read.bin";
-		const auto write_path = temporary.Path() / "unused-write.bin";
-		WriteBytes(read_path, MakePattern(1024 * 1024));
-		Server server(read_path, write_path);
-		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "interleaved server connect failed");
-		Client client;
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "interleaved client connect failed");
-		ExerciseEightReaders(client, read_path);
-	}
-
-	void TestCapabilityIsolation() {
-		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "token-read.bin";
-		const auto write_path = temporary.Path() / "unused-write.bin";
-		const StormByte::BinaryData expected = MakePattern(4096);
-		WriteBytes(read_path, expected);
-		Server server(read_path, write_path);
-		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "token server connect failed");
-		Client client;
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "token client connect failed");
-		ExerciseTokenFaultIsolation(client, expected);
-	}
-
-	void TestPatternWriterLifecycle() {
-		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "unused-read.bin";
-		const auto write_path = temporary.Path() / "pattern-write.bin";
-		Server server(read_path, write_path);
-		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "writer server connect failed");
-		Client client;
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "writer client connect failed");
-		ExercisePatternWriter(client, write_path);
-	}
-
-	void TestWriterReaderConflicts() {
-		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "conflict-read.bin";
-		const auto write_path = temporary.Path() / "conflict-write.bin";
-		WriteFile(read_path, "0123456789ABCDEF");
-		WriteFile(write_path, "old deterministic contents");
-		Server server(read_path, write_path);
-		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "conflict server connect failed");
-		Client client;
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "conflict client connect failed");
-		TestWriterAndConflict(server, client, write_path);
-		Check(ReadFile(write_path) == "ABCDxyGHIJ", "writer conflict fixture differed on disk");
-	}
-
-	void TestPipelineAndControlDisconnect() {
-		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "pipeline-read.bin";
-		const auto write_path = temporary.Path() / "pipeline-write.bin";
-		WriteFile(read_path, "0123456789ABCDEF");
-		WriteFile(write_path, "old");
-		Server server(read_path, write_path);
-		server.UseFramedPipeline(true);
-		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "pipeline server connect failed");
-		Client client;
-		client.UseFramedPipeline(true);
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "pipeline client connect failed");
-		TestSharedPipelineAndDisconnect(server, client, read_path, write_path);
-	}
-
 	void ExerciseRemotePlaneScale(const std::filesystem::path& read_path,
 		const std::filesystem::path& write_path, const std::filesystem::path& root) {
 		constexpr std::size_t peer_count = 16;
@@ -906,11 +1256,13 @@ namespace RemoteFileTest {
 				const auto selection = static_cast<std::uint16_t>(path_index + 3);
 				auto [mount, rejected] = client->RequestMount(false, false, selection);
 				Check(!rejected && mount.Result() == Mount::Status::Authorized, "scale reader mount failed");
-				if (!peer_port) peer_port = mount.Port();
+					if (!peer_port)
+					peer_port = mount.Port();
 				Check(mount.Port() == *peer_port, "mounts from one Client did not share a data-plane port");
 				auto reader = client->AttachReader(mount);
 				Check(reader && reader->Open(), "scale reader open failed");
-				Check(reader->Size() == StormByte::ByteSize{64}, "scale reader size mismatch");
+				const auto reader_size = reader->Size();
+				Check(reader_size && *reader_size == StormByte::ByteSize{64}, "scale reader size mismatch");
 				auto device = reader->Device();
 				CheckNetworkDevice(device);
 				if (expected_read_bps == StormByte::ByteSize{0}) {
@@ -931,39 +1283,12 @@ namespace RemoteFileTest {
 			clients.push_back(std::move(client));
 		}
 		Check(plane_ports.size() == peer_count, "expected one data-plane listener per peer");
-		for (auto& reader: readers) Check(reader->Close().status == Buf::IO::Status::Ok,
-			"scale CloseToken failed");
+		for (auto& reader: readers)
+			Check(reader->Close().status == Buf::IO::Status::Ok,
+				"scale CloseToken failed");
 		readers.clear();
 		clients.clear();
 		server.Disconnect();
-	}
-
-	void TestSixteenPeersWithEightReaders() {
-		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "unused-read.bin";
-		const auto write_path = temporary.Path() / "unused-write.bin";
-		ExerciseRemotePlaneScale(read_path, write_path, temporary.Path());
-	}
-
-	void TestPlaneFailureFaultsEveryLeaf() {
-		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "fault-read.bin";
-		const auto write_path = temporary.Path() / "unused-write.bin";
-		WriteBytes(read_path, MakePattern(1024 * 1024));
-		TestTransportFailureMarksReaderFault(read_path, write_path);
-	}
-
-	void TestAclAndIndependentReaderCursors() {
-		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "read.bin";
-		const auto write_path = temporary.Path() / "write.bin";
-		WriteFile(read_path, "0123456789ABCDEF");
-		WriteFile(write_path, "old deterministic contents");
-		Server server(read_path, write_path);
-		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "ACL server connect failed");
-		Client client;
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "ACL client connect failed");
-		TestReadAclAndCursors(server, client, read_path);
 	}
 
 	void SendRawAttach(RawPeer& peer, const Mount::ChannelToken& token) {
@@ -1037,41 +1362,100 @@ namespace RemoteFileTest {
 			"a failed plane accepted new mounts before Client reconnect");
 	}
 
-	void TestInvalidPrivateOpcode() { ExerciseMalformedRawPlane(MalformedFrame::Opcode); }
-	void TestRepeatedPrivateSequence() { ExerciseMalformedRawPlane(MalformedFrame::RepeatedSequence); }
-	void TestTruncatedPrivateFrame() { ExerciseMalformedRawPlane(MalformedFrame::Truncated); }
-	void TestOversizedPrivateFrame() { ExerciseMalformedRawPlane(MalformedFrame::Oversized); }
-
-	void TestMaximumPayloadRead() {
+	// -------------------
+	// Access
+	// -------------------
+	void test_acl_and_independent_reader_cursors() {
 		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "bound-read.bin";
-		const auto write_path = temporary.Path() / "unused-write.bin";
-		const std::size_t payload_size = static_cast<std::size_t>(remote_frame_limit - remote_header_size);
-		const StormByte::BinaryData expected = MakePattern(payload_size);
-		WriteBytes(read_path, expected);
+		const auto read_path = temporary.Path() / "read.bin";
+		const auto write_path = temporary.Path() / "write.bin";
+		WriteFile(read_path, "0123456789ABCDEF");
+		WriteFile(write_path, "old deterministic contents");
 		Server server(read_path, write_path);
-		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "maximum-payload server connect failed");
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "ACL server connect failed");
 		Client client;
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "maximum-payload control connect failed");
-		auto [mount, rejected] = client.RequestMount(false);
-		Check(!rejected && mount.Result() == Mount::Status::Authorized, "maximum-payload mount failed");
-		RawPeer peer(mount.Port());
-		Check(peer.Connected(), "maximum-payload raw connect failed");
-		SendRawAttach(peer, mount.Token());
-		Check(peer.SendMessage(2, 2, mount.Token()), "maximum-payload Open send failed");
-		CheckRawResponse(peer.ReceiveMessage(), 2, 2, 0);
-		Check(peer.SendMessage(4, 3, mount.Token(), 0, payload_size), "maximum-payload Read send failed");
-		const StormByte::BinaryData response = peer.ReceiveMessage();
-		Check(response.size() == remote_frame_limit && std::to_integer<std::uint8_t>(response[1]) == 0,
-			"read at the protocol bound did not return an exact-size successful frame");
-		const auto returned_size = StormByte::Serializable<std::uint64_t>::Deserialize(
-			std::span<const std::byte>{response.data() + 18, sizeof(std::uint64_t)});
-		Check(returned_size && *returned_size == payload_size
-			&& std::equal(response.begin() + static_cast<std::ptrdiff_t>(remote_header_size), response.end(), expected.begin()),
-			"maximum-bound read bytes differed from the host fixture");
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "ACL client connect failed");
+		ExerciseReadAclAndCursors(server, client, read_path);
 	}
 
-	void TestServerHeartbeatTimeoutReleasesPeerPlane() {
+	void test_capability_isolation() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "token-read.bin";
+		const auto write_path = temporary.Path() / "unused-write.bin";
+		const StormByte::BinaryData expected = MakePattern(4096);
+		WriteBytes(read_path, expected);
+		Server server(read_path, write_path);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "token server connect failed");
+		Client client;
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "token client connect failed");
+		ExerciseTokenFaultIsolation(client, expected);
+	}
+
+	// -------------------
+	// Lifecycle
+	// -------------------
+	void test_peer_kill_during_large_read_releases_host_handle() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "killed-peer-read.bin";
+		const auto write_path = temporary.Path() / "unused-write.bin";
+		WriteBytes(read_path, MakePattern(1024 * 1024));
+		Server server(read_path, write_path);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "peer-kill server connect failed");
+		Client client;
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "peer-kill control connect failed");
+		auto [mount, rejected] = client.RequestMount(false);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "peer-kill mount failed");
+		{
+			RawPeer peer(mount.Port());
+			Check(peer.Connected(), "peer-kill raw data-plane connect failed");
+			SendRawAttach(peer, mount.Token());
+			Check(peer.SendMessage(2, 2, mount.Token()), "peer-kill Open send failed");
+			CheckRawResponse(peer.ReceiveMessage(), 2, 2, 0);
+			Check(peer.SendMessage(4, 3, mount.Token(), 0, 1024 * 1024), "large peer-kill Read send failed");
+		}
+
+		std::error_code remove_error;
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+		while (std::chrono::steady_clock::now() < deadline) {
+			remove_error.clear();
+			if (std::filesystem::remove(read_path, remove_error))
+				break;
+			std::this_thread::sleep_for(std::chrono::milliseconds{10});
+		}
+		Check(!std::filesystem::exists(read_path), "peer kill during a large Read left the host handle open");
+		Check(client.Status() == Net::Connection::Status::Connected,
+			"private peer kill disconnected the application control session");
+		client.Disconnect();
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "peer-kill client reconnect failed");
+		auto [remount, remount_rejected] = client.RequestMount(false, true);
+		Check(!remount_rejected && remount.Result() == Mount::Status::Unavailable,
+			"missing path after peer kill did not return Unavailable");
+	}
+
+	void test_pipeline_and_control_disconnect() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "pipeline-read.bin";
+		const auto write_path = temporary.Path() / "pipeline-write.bin";
+		WriteFile(read_path, "0123456789ABCDEF");
+		WriteFile(write_path, "old");
+		Server server(read_path, write_path);
+		server.UseFramedPipeline(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "pipeline server connect failed");
+		Client client;
+		client.UseFramedPipeline(true);
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "pipeline client connect failed");
+		ExerciseSharedPipelineAndDisconnect(server, client, read_path, write_path);
+	}
+
+	void test_plane_failure_faults_every_leaf() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "fault-read.bin";
+		const auto write_path = temporary.Path() / "unused-write.bin";
+		WriteBytes(read_path, MakePattern(1024 * 1024));
+		ExerciseTransportFailureMarksReaderFault(read_path, write_path);
+	}
+
+	void test_server_heartbeat_timeout_releases_peer_plane() {
 		TempDirectory temporary;
 		const auto read_path = temporary.Path() / "heartbeat-read.bin";
 		const auto write_path = temporary.Path() / "unused-write.bin";
@@ -1109,7 +1493,10 @@ namespace RemoteFileTest {
 		Check(std::filesystem::remove(read_path), "host file remained open after heartbeat token cleanup");
 	}
 
-	void TestCoalescedOperationsBackpressureKeepsPlaneAlive() {
+	// -------------------
+	// Protocol
+	// -------------------
+	void test_coalesced_operations_backpressure_keeps_plane_alive() {
 		TempDirectory temporary;
 		const auto read_path = temporary.Path() / "backpressure-read.bin";
 		const auto write_path = temporary.Path() / "unused-write.bin";
@@ -1147,41 +1534,113 @@ namespace RemoteFileTest {
 		CheckRawResponse(peer.ReceiveMessage(), 11, 5, 0);
 	}
 
-	void TestPeerKillDuringLargeReadReleasesHostHandle() {
+	void test_invalid_private_opcode() {
+		ExerciseMalformedRawPlane(MalformedFrame::Opcode);
+	}
+
+	void test_oversized_private_frame() {
+		ExerciseMalformedRawPlane(MalformedFrame::Oversized);
+	}
+
+	void test_repeated_private_sequence() {
+		ExerciseMalformedRawPlane(MalformedFrame::RepeatedSequence);
+	}
+
+	void test_truncated_private_frame() {
+		ExerciseMalformedRawPlane(MalformedFrame::Truncated);
+	}
+
+	// -------------------
+	// Reader
+	// -------------------
+	void test_eight_interleaved_readers() {
 		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "killed-peer-read.bin";
+		const auto read_path = temporary.Path() / "interleaved-read.bin";
 		const auto write_path = temporary.Path() / "unused-write.bin";
 		WriteBytes(read_path, MakePattern(1024 * 1024));
 		Server server(read_path, write_path);
-		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "peer-kill server connect failed");
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "interleaved server connect failed");
 		Client client;
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "peer-kill control connect failed");
-		auto [mount, rejected] = client.RequestMount(false);
-		Check(!rejected && mount.Result() == Mount::Status::Authorized, "peer-kill mount failed");
-		{
-			RawPeer peer(mount.Port());
-			Check(peer.Connected(), "peer-kill raw data-plane connect failed");
-			SendRawAttach(peer, mount.Token());
-			Check(peer.SendMessage(2, 2, mount.Token()), "peer-kill Open send failed");
-			CheckRawResponse(peer.ReceiveMessage(), 2, 2, 0);
-			Check(peer.SendMessage(4, 3, mount.Token(), 0, 1024 * 1024), "large peer-kill Read send failed");
-		}
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "interleaved client connect failed");
+		ExerciseEightReaders(client, read_path);
+	}
 
-		std::error_code remove_error;
-		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
-		while (std::chrono::steady_clock::now() < deadline) {
-			remove_error.clear();
-			if (std::filesystem::remove(read_path, remove_error)) break;
-			std::this_thread::sleep_for(std::chrono::milliseconds{10});
-		}
-		Check(!std::filesystem::exists(read_path), "peer kill during a large Read left the host handle open");
-		Check(client.Status() == Net::Connection::Status::Connected,
-			"private peer kill disconnected the application control session");
-		client.Disconnect();
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "peer-kill client reconnect failed");
-		auto [remount, remount_rejected] = client.RequestMount(false, true);
-		Check(!remount_rejected && remount.Result() == Mount::Status::Unavailable,
-			"missing path after peer kill did not return Unavailable");
+	void test_large_pattern_reader() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "large-read.bin";
+		const auto write_path = temporary.Path() / "unused-write.bin";
+		WriteBytes(read_path, MakePattern(1024 * 1024));
+		Server server(read_path, write_path);
+		server.UseFramedPipeline(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "large-read server connect failed");
+		Client client;
+		client.UseFramedPipeline(true);
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "large-read client connect failed");
+		ExercisePatternReader(client, read_path);
+	}
+
+	void test_maximum_payload_read() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "bound-read.bin";
+		const auto write_path = temporary.Path() / "unused-write.bin";
+		const std::size_t payload_size = static_cast<std::size_t>(remote_frame_limit - remote_header_size);
+		const StormByte::BinaryData expected = MakePattern(payload_size);
+		WriteBytes(read_path, expected);
+		Server server(read_path, write_path);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "maximum-payload server connect failed");
+		Client client;
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "maximum-payload control connect failed");
+		auto [mount, rejected] = client.RequestMount(false);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "maximum-payload mount failed");
+		RawPeer peer(mount.Port());
+		Check(peer.Connected(), "maximum-payload raw connect failed");
+		SendRawAttach(peer, mount.Token());
+		Check(peer.SendMessage(2, 2, mount.Token()), "maximum-payload Open send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 2, 2, 0);
+		Check(peer.SendMessage(4, 3, mount.Token(), 0, payload_size), "maximum-payload Read send failed");
+		const StormByte::BinaryData response = peer.ReceiveMessage();
+		Check(response.size() == remote_frame_limit && std::to_integer<std::uint8_t>(response[1]) == 0,
+			"read at the protocol bound did not return an exact-size successful frame");
+		const auto returned_size = StormByte::Serializable<std::uint64_t>::Deserialize(
+			std::span<const std::byte>{response.data() + 18, sizeof(std::uint64_t)});
+		Check(returned_size && *returned_size == payload_size
+			&& std::equal(response.begin() + static_cast<std::ptrdiff_t>(remote_header_size), response.end(), expected.begin()),
+			"maximum-bound read bytes differed from the host fixture");
+	}
+
+	void test_sixteen_peers_with_eight_readers() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "unused-read.bin";
+		const auto write_path = temporary.Path() / "unused-write.bin";
+		ExerciseRemotePlaneScale(read_path, write_path, temporary.Path());
+	}
+
+	// -------------------
+	// Writer
+	// -------------------
+	void test_pattern_writer_lifecycle() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "unused-read.bin";
+		const auto write_path = temporary.Path() / "pattern-write.bin";
+		Server server(read_path, write_path);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "writer server connect failed");
+		Client client;
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "writer client connect failed");
+		ExercisePatternWriter(client, write_path);
+	}
+
+	void test_writer_reader_conflicts() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "conflict-read.bin";
+		const auto write_path = temporary.Path() / "conflict-write.bin";
+		WriteFile(read_path, "0123456789ABCDEF");
+		WriteFile(write_path, "old deterministic contents");
+		Server server(read_path, write_path);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "conflict server connect failed");
+		Client client;
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "conflict client connect failed");
+		ExerciseWriterAndConflict(server, client, write_path);
+		Check(ReadFile(write_path) == "ABCDxyGHIJ", "writer conflict fixture differed on disk");
 	}
 
 	template<typename TestFunction>
@@ -1200,22 +1659,41 @@ namespace RemoteFileTest {
 int main() {
 	using namespace RemoteFileTest;
 	int result = 0;
-	result += RunOne("TestAclAndIndependentReaderCursors", TestAclAndIndependentReaderCursors);
-	result += RunOne("TestLargePatternReader", TestLargePatternReader);
-	result += RunOne("TestEightInterleavedReaders", TestEightInterleavedReaders);
-	result += RunOne("TestCapabilityIsolation", TestCapabilityIsolation);
-	result += RunOne("TestPatternWriterLifecycle", TestPatternWriterLifecycle);
-	result += RunOne("TestWriterReaderConflicts", TestWriterReaderConflicts);
-	result += RunOne("TestPipelineAndControlDisconnect", TestPipelineAndControlDisconnect);
-	result += RunOne("TestSixteenPeersWithEightReaders", TestSixteenPeersWithEightReaders);
-	result += RunOne("TestPlaneFailureFaultsEveryLeaf", TestPlaneFailureFaultsEveryLeaf);
-	result += RunOne("TestInvalidPrivateOpcode", TestInvalidPrivateOpcode);
-	result += RunOne("TestRepeatedPrivateSequence", TestRepeatedPrivateSequence);
-	result += RunOne("TestTruncatedPrivateFrame", TestTruncatedPrivateFrame);
-	result += RunOne("TestOversizedPrivateFrame", TestOversizedPrivateFrame);
-	result += RunOne("TestMaximumPayloadRead", TestMaximumPayloadRead);
-	result += RunOne("TestServerHeartbeatTimeoutReleasesPeerPlane", TestServerHeartbeatTimeoutReleasesPeerPlane);
-	result += RunOne("TestCoalescedOperationsBackpressureKeepsPlaneAlive", TestCoalescedOperationsBackpressureKeepsPlaneAlive);
-	result += RunOne("TestPeerKillDuringLargeReadReleasesHostHandle", TestPeerKillDuringLargeReadReleasesHostHandle);
+	// -------------------
+	// Access
+	// -------------------
+	result += RunOne("test_acl_and_independent_reader_cursors", test_acl_and_independent_reader_cursors);
+	result += RunOne("test_capability_isolation", test_capability_isolation);
+
+	// -------------------
+	// Lifecycle
+	// -------------------
+	result += RunOne("test_peer_kill_during_large_read_releases_host_handle", test_peer_kill_during_large_read_releases_host_handle);
+	result += RunOne("test_pipeline_and_control_disconnect", test_pipeline_and_control_disconnect);
+	result += RunOne("test_plane_failure_faults_every_leaf", test_plane_failure_faults_every_leaf);
+	result += RunOne("test_server_heartbeat_timeout_releases_peer_plane", test_server_heartbeat_timeout_releases_peer_plane);
+
+	// -------------------
+	// Protocol
+	// -------------------
+	result += RunOne("test_coalesced_operations_backpressure_keeps_plane_alive", test_coalesced_operations_backpressure_keeps_plane_alive);
+	result += RunOne("test_invalid_private_opcode", test_invalid_private_opcode);
+	result += RunOne("test_oversized_private_frame", test_oversized_private_frame);
+	result += RunOne("test_repeated_private_sequence", test_repeated_private_sequence);
+	result += RunOne("test_truncated_private_frame", test_truncated_private_frame);
+
+	// -------------------
+	// Reader
+	// -------------------
+	result += RunOne("test_eight_interleaved_readers", test_eight_interleaved_readers);
+	result += RunOne("test_large_pattern_reader", test_large_pattern_reader);
+	result += RunOne("test_maximum_payload_read", test_maximum_payload_read);
+	result += RunOne("test_sixteen_peers_with_eight_readers", test_sixteen_peers_with_eight_readers);
+
+	// -------------------
+	// Writer
+	// -------------------
+	result += RunOne("test_pattern_writer_lifecycle", test_pattern_writer_lifecycle);
+	result += RunOne("test_writer_reader_conflicts", test_writer_reader_conflicts);
 	return result == 0 ? 0 : 1;
 }

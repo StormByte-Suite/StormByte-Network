@@ -59,13 +59,14 @@ namespace StormByte {
 		 * @class Telemetry
 		 * @brief Base for per-client and aggregate server telemetry snapshots.
 		 *
-		 * Timed operations use Base's named clocks. Each active sample receives
-		 * a clock unique to its telemetry object, thread and nesting depth, so
-		 * concurrent operations never start or stop the same Clock instance.
+		 * Timed operations use independent Base samples sharing named clocks.
+		 * Concurrent and nested operations keep their own start times.
 		 */
 		class STORMBYTE_NETWORK_PUBLIC Telemetry: public StormByte::Telemetry {
 			public:
-				/** @brief Virtual destructor anchors telemetry RTTI in Network. */
+				/**
+				 * @brief Virtual destructor anchors telemetry RTTI in Network.
+				 */
 				~Telemetry() noexcept override;
 
 				/**
@@ -75,54 +76,17 @@ namespace StormByte {
 				virtual operator StormByte::Safe::String() const override = 0;
 
 			protected:
-				/** @brief Construct an empty Network telemetry base. */
+				/**
+				 * @brief Construct an empty Network telemetry base.
+				 */
 				Telemetry() noexcept;
 
 				/**
-				 * @class Sample
-				 * @brief RAII measurement using one Base named clock.
+				 * @brief Base-owned independent RAII measurement token.
+				 * @details Samples may overlap, nest or move between threads.
+				 * Stop is idempotent; destruction records an active sample.
 				 */
-				class Sample final {
-					public:
-						/** @brief Copying an active clock sample is disabled. */
-						Sample(const Sample&) = delete;
-
-						/**
-						 * @brief Transfer responsibility for stopping the clock.
-						 * @param other Active sample to take.
-						 */
-						Sample(Sample&& other) noexcept;
-
-						/** @brief Copy assignment is disabled. */
-						Sample& operator=(const Sample&) = delete;
-
-						/** @brief Move assignment is disabled. */
-						Sample& operator=(Sample&&) = delete;
-
-						/** @brief Stop the clock if still active. */
-						~Sample() noexcept;
-
-						/**
-						 * @brief Stop and return this operation's elapsed time.
-						 * @return Elapsed microseconds; repeated calls return the same value.
-						 */
-						std::chrono::microseconds Stop() noexcept;
-
-					private:
-						friend class Telemetry;
-
-						/**
-						 * @brief Start a named Base clock for this thread and nesting depth.
-						 * @param owner Telemetry object owning the clock drawer.
-						 * @param name Operation label.
-						 */
-						Sample(Telemetry& owner, std::string_view name) noexcept;
-
-						StormByte::Clock* m_clock{nullptr}; ///< Base clock while the sample is active.
-						std::chrono::microseconds m_before{0}; ///< Accumulated clock time before this sample.
-						std::chrono::microseconds m_elapsed{0}; ///< Elapsed time after stopping.
-						std::size_t* m_depth{nullptr}; ///< Creating thread's active sample depth.
-				};
+				using Sample = StormByte::Clock::Sample;
 
 				/**
 				 * @brief Start a named operation sample.
@@ -133,3 +97,10 @@ namespace StormByte {
 		};
 	}
 }
+
+/**
+ * @brief Telemetry uses Base-owned clocks and Network-owned lifecycles.
+ * @details A compatible ABI and all derived providers must remain available
+ * until destruction.
+ */
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Telemetry);

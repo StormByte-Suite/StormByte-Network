@@ -3,6 +3,14 @@
 #include <algorithm>
 
 namespace StormByte::Network {
+	RemoteFileMount::RemoteFileMount(const RemoteFileMount&) = default;
+
+	RemoteFileMount::RemoteFileMount(RemoteFileMount&&) noexcept = default;
+
+	RemoteFileMount& RemoteFileMount::operator=(const RemoteFileMount&) = default;
+
+	RemoteFileMount& RemoteFileMount::operator=(RemoteFileMount&&) noexcept = default;
+
 	RemoteFileMount::~RemoteFileMount() noexcept = default;
 
 	RemoteFileMount::RemoteFileMount(Status status, ChannelToken token, std::uint16_t port,

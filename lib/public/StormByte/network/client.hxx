@@ -48,116 +48,142 @@
 #include <string_view>
 
 /**
- * @brief Network module of the StormByte suite.
+ * @namespace StormByte
+ * @brief Root namespace of the StormByte suite.
  */
-namespace StormByte::Network {
-	namespace Connection {
-		/**
-		 * @brief Forward declaration of the connected client implementation.
-		 */
-		class Client;
-	}
-
+namespace StormByte {
 	/**
-	 * @class Client
-	 * @brief Abstract application client.
-	 *
-	 * Derive and implement InputPipeline() / OutputPipeline(). Use protected Send() for request/response.
-	 *
-	 * @note Inheritance-oriented. Not for direct generic use without a subclass.
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
 	 */
-	class STORMBYTE_NETWORK_PUBLIC Client: private Endpoint {
-		public:
+	namespace Network {
+		/**
+		 * @namespace StormByte::Network::Connection
+		 * @brief Connection namespace.
+		 */
+		namespace Connection {
 			/**
-			 * @brief Construct with a packet factory and a logger.
-			 * @param deserialize_packet_function Builds domain packets from wire data.
-			 * @param logger Diagnostic logger.
+			 * @class Client
+			 * @brief Forward declaration of the connected client implementation.
 			 */
-			Client(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger);
+			class Client;
+		}
 
-			/**
-			 * @brief Copy constructor (deleted).
-			 */
-			Client(const Client& other) = delete;
+		/**
+		 * @class Client
+		 * @brief Abstract application client.
+		 *
+		 * Derive and implement InputPipeline() / OutputPipeline(). Use protected Send() for request/response.
+		 *
+		 * @note Inheritance-oriented. Not for direct generic use without a subclass.
+		 */
+		class STORMBYTE_NETWORK_PUBLIC Client: private Endpoint {
+			public:
+				/**
+				 * @brief Construct with a packet factory and a logger.
+				 * @param deserialize_packet_function Builds domain packets from wire data.
+				 * @param logger Diagnostic logger.
+				 */
+				Client(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger);
 
-			/**
-			 * @brief Move constructor.
-			 */
-			Client(Client&& other) noexcept;
+				/**
+				 * @brief Copy constructor (deleted).
+				 * @param other Client that cannot be copied.
+				 */
+				Client(const Client& other) = delete;
 
-			/**
-			 * @brief Destructor (out-of-line in .cxx).
-			 */
-			virtual ~Client() noexcept;
+				/**
+				 * @brief Move constructor.
+				 * @param other Client whose state is transferred.
+				 */
+				Client(Client&& other) noexcept;
 
-			/**
-			 * @brief Copy assignment (deleted).
-			 */
-			Client& operator=(const Client& other) = delete;
+				/**
+				 * @brief Destructor (out-of-line in .cxx).
+				 */
+				virtual ~Client() noexcept;
 
-			/**
-			 * @brief Move assignment.
-			 */
-			Client& operator=(Client&& other) noexcept;
+				/**
+				 * @brief Copy assignment (deleted).
+				 * @param other Client that cannot be copied.
+				 * @return Reference to this client (operation is deleted).
+				 */
+				Client& operator=(const Client& other) = delete;
 
-			/**
-			 * @brief Connect to a remote host.
-			 * @param protocol Address family.
-			 * @param address Hostname or IP.
-			 * @param port Port number.
-			 * @return true on success.
-			 */
-			bool Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) override;
+				/**
+				 * @brief Move assignment.
+				 * @param other Client whose state is transferred.
+				 * @return Reference to this client.
+				 */
+				Client& operator=(Client&& other) noexcept;
 
-			/**
-			 * @brief Disconnect if connected.
-			 */
-			void Disconnect() noexcept override;
+				/**
+				 * @brief Connect to a remote host.
+				 * @param protocol Address family.
+				 * @param address Hostname or IP.
+				 * @param port Port number.
+				 * @return true on success.
+				 */
+				bool Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) override;
 
-			/**
-			 * @brief Current connection status.
-			 * @return Status.
-			 */
-			Connection::Status Status() const noexcept override;
+				/**
+				 * @brief Disconnect if connected.
+				 */
+				void Disconnect() noexcept override;
 
-			/**
-			 * @brief Shared live telemetry for this Client instance only.
-			 * @return Client-owned counters and request latency.
-			 */
-			StormByte::Safe::Shared<ClientTelemetry> Telemetry() const noexcept;
+				/**
+				 * @brief Current connection status.
+				 * @return Status.
+				 */
+				Connection::Status Status() const noexcept override;
 
-		protected:
-			/**
-			 * @brief Send @p packet and return the response (or nullptr).
-			 * @param packet Request packet.
-			 * @return Response, or nullptr on error.
-			 */
-			PacketPointer Send(const Transport::Packet& packet) noexcept;
+				/**
+				 * @brief Shared live telemetry for this Client instance only.
+				 * @return Client-owned counters and request latency.
+				 */
+				StormByte::Safe::Shared<ClientTelemetry> Telemetry() const noexcept;
 
-			/**
-			 * @brief Attach a reader to an application-authorized remote file mount.
-			 * @param mount Public mount descriptor decoded by the application factory.
-			 * @return Caller-owned remote reader, or an empty handle on failure.
-			 */
-			RemoteFileReaderHandle CreateRemoteFileReader(const RemoteFileMount& mount) noexcept;
+			protected:
+				/**
+				 * @brief Send @p packet and return the response (or nullptr).
+				 * @param packet Request packet.
+				 * @return Response, or nullptr on error.
+				 */
+				PacketPointer Send(const Transport::Packet& packet) noexcept;
 
-			/**
-			 * @brief Attach a writer to an application-authorized exclusive remote mount.
-			 * @param mount Public mount descriptor decoded by the application factory.
-			 * @return Caller-owned remote writer, or an empty handle on failure.
-			 */
-			RemoteFileWriterHandle CreateRemoteFileWriter(const RemoteFileMount& mount) noexcept;
+				/**
+				 * @brief Attach a reader to an application-authorized remote file mount.
+				 * @param mount Public mount descriptor decoded by the application factory.
+				 * @return Caller-owned remote reader, or an empty handle on failure.
+				 */
+				RemoteFileReaderHandle CreateRemoteFileReader(const RemoteFileMount& mount) noexcept;
 
-		private:
-			/**
-			 * @class Implementation
-			 * @brief Private connection and remote-file state.
-			 */
-			class Implementation;
+				/**
+				 * @brief Attach a writer to an application-authorized exclusive remote mount.
+				 * @param mount Public mount descriptor decoded by the application factory.
+				 * @return Caller-owned remote writer, or an empty handle on failure.
+				 */
+				RemoteFileWriterHandle CreateRemoteFileWriter(const RemoteFileMount& mount) noexcept;
 
-			/**
-			 * @brief Base-owned private connection backend.
-			 */
-			StormByte::Safe::Unique<Implementation> m_backend;
-	};
+			private:
+				/**
+				 * @class Implementation
+				 * @brief Private connection and remote-file state.
+				 */
+				class Implementation;
+
+				/**
+				 * @brief Base-owned private connection backend.
+				 */
+				StormByte::Safe::Unique<Implementation> m_backend;
+		};
+	}
 }
+
+/**
+ * @brief Client state is owned by Network.
+ *
+ * Construct exact derived types with Safe factories and keep Base, Network
+ * and the leaf provider loaded until destruction with a compatible ABI.
+ */
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Client);

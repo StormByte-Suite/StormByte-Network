@@ -63,7 +63,7 @@ EventLoop::~EventLoop() noexcept = default;
 		const PlaneList& planes) noexcept {
 		for (const auto& session: sessions) {
 			if (session->ReadyForProcessing()) {
-				return Event{ EventKind::Session, session, true, session->HasOutput() };
+				return Event{ EventKind::Session, session, true, session->HasOutput(), {} };
 			}
 		}
 		for (const auto& plane: planes) {
@@ -92,17 +92,17 @@ EventLoop::~EventLoop() noexcept = default;
 		}
 
 		if (result == 0) {
-			return Event{ EventKind::Timeout, nullptr };
+			return Event{ EventKind::Timeout, nullptr, false, false, {} };
 		}
 
 		if (descriptors[1].revents & POLLIN) {
 			char signal;
 			[[maybe_unused]] const ssize_t received = ::read(m_wakeup_read, &signal, sizeof(signal));
-			return Event{ EventKind::Wakeup, nullptr };
+			return Event{ EventKind::Wakeup, nullptr, false, false, {} };
 		}
 
 		if (descriptors[0].revents & POLLIN) {
-			return Event{ EventKind::Listener, nullptr };
+			return Event{ EventKind::Listener, nullptr, false, false, {} };
 		}
 
 		for (std::size_t index = 0; index < sessions.size(); ++index) {
@@ -117,7 +117,7 @@ EventLoop::~EventLoop() noexcept = default;
 #endif
 				return Event{ EventKind::Session, sessions[index],
 					(descriptors[index + 2].revents & readable_events) != 0,
-					(descriptors[index + 2].revents & POLLOUT) != 0 };
+					(descriptors[index + 2].revents & POLLOUT) != 0, {} };
 			}
 		}
 		for (std::size_t index = 0; index < planes.size(); ++index) {
@@ -166,17 +166,17 @@ EventLoop::~EventLoop() noexcept = default;
 		}
 
 		if (result == 0) {
-			return Event{ EventKind::Timeout, nullptr };
+			return Event{ EventKind::Timeout, nullptr, false, false, {} };
 		}
 
 		if (FD_ISSET(m_wakeup_read, &read_fds)) {
 			char signal;
 			(void)::recv(m_wakeup_read, &signal, sizeof(signal), 0);
-			return Event{ EventKind::Wakeup, nullptr };
+			return Event{ EventKind::Wakeup, nullptr, false, false, {} };
 		}
 
 		if (FD_ISSET(m_listener.Handle(), &read_fds)) {
-			return Event{ EventKind::Listener, nullptr };
+			return Event{ EventKind::Listener, nullptr, false, false, {} };
 		}
 
 		for (const auto& session: sessions) {
@@ -184,7 +184,7 @@ EventLoop::~EventLoop() noexcept = default;
 			const bool writable = session->HasOutput() && FD_ISSET(session->Handle(), &write_fds);
 			if (readable || writable) {
 				ready_session = session;
-				return Event{ EventKind::Session, std::move(ready_session), readable, writable };
+				return Event{ EventKind::Session, std::move(ready_session), readable, writable, {} };
 			}
 		}
 		for (const auto& plane: planes) {

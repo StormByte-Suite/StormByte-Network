@@ -7,7 +7,7 @@
 [![CI](https://github.com/StormByte-Suite/StormByte-Network/actions/workflows/ci.yml/badge.svg)](https://github.com/StormByte-Suite/StormByte-Network/actions/workflows/ci.yml)
 [![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=github-sponsors&logoColor=white)](https://github.com/sponsors/StormBytePP)
 
-StormByte-Network is the C++26 networking module of the [StormByte](http://suite.stormbyte.org/StormByte) suite.
+StormByte-Network is the C++26 networking module of the [StormByte](https://suite.stormbyte.org/StormByte) suite.
 
 It depends on [StormByte Base 2.0.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.0.0) (or newer), [StormByte Buffer 2.0.0](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.0) (or newer), [StormByte Logger 2.0.0](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.0) (or newer), and [StormByte System 2.0.0](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.0) (or newer).
 
@@ -39,7 +39,7 @@ It is not a thin socket wrapper. You inherit `Client` or `Server`, define packet
 ## Documentation
 
 - This README: how to build, architecture, and examples.
-- Doxygen class reference: [http://suite.stormbyte.org/StormByte-Network/](http://suite.stormbyte.org/StormByte-Network/).
+- Doxygen class reference: [https://suite.stormbyte.org/StormByte-Network/](https://suite.stormbyte.org/StormByte-Network/).
 
 ## Installation
 
@@ -87,15 +87,15 @@ cmake --install build
 
 | Module | Role | API |
 | --- | --- | --- |
-| [Base](https://github.com/StormByte-Suite/StormByte) | Exceptions, Expected, serialization, UUID, concepts, safe text and pointer abstractions | [/StormByte](http://suite.stormbyte.org/StormByte) |
-| [Buffer](https://github.com/StormByte-Suite/StormByte-Buffer) | FIFO, SharedFIFO, Ring, Producer/Consumer and multi-stage pipelines | [/StormByte-Buffer](http://suite.stormbyte.org/StormByte-Buffer) |
-| [Config](https://github.com/StormByte-Suite/StormByte-Config) | Human-readable text and versioned binary documents (groups, lists, raw bytes) | [/StormByte-Config](http://suite.stormbyte.org/StormByte-Config) |
-| [Crypto](https://github.com/StormByte-Suite/StormByte-Crypto) | Hash, compression, encryption, signatures and key agreement; Crypto++ remains private | [/StormByte-Crypto](http://suite.stormbyte.org/StormByte-Crypto) |
-| [Database](https://github.com/StormByte-Suite/StormByte-Database) | One SQL API over SQLite, PostgreSQL, MariaDB and MSSQL | [/StormByte-Database](http://suite.stormbyte.org/StormByte-Database) |
-| [Logger](https://github.com/StormByte-Suite/StormByte-Logger) | Stream logging with levels, headers, components, `ThreadedLog` and `Scope` | [/StormByte-Logger](http://suite.stormbyte.org/StormByte-Logger) |
-| [Multimedia](https://github.com/StormByte-Suite/StormByte-Multimedia) | Decode, filter, encode and mux media through FFmpeg; public APIs abstract FFmpeg types | [/StormByte-Multimedia](http://suite.stormbyte.org/StormByte-Multimedia) |
-| **Network** | Framed packets, client/server endpoints, IPv4/IPv6 TCP, Buffer pipelines and authorized remote-file channels | [/StormByte-Network](http://suite.stormbyte.org/StormByte-Network) |
-| [System](https://github.com/StormByte-Suite/StormByte-System) | Processes, pipes, devices, host information and environment variables | [/StormByte-System](http://suite.stormbyte.org/StormByte-System) |
+| [Base](https://github.com/StormByte-Suite/StormByte) | Exceptions, Expected, serialization, UUID, concepts, safe text and pointer abstractions | [/StormByte](https://suite.stormbyte.org/StormByte) |
+| [Buffer](https://github.com/StormByte-Suite/StormByte-Buffer) | FIFO, SharedFIFO, Ring, Producer/Consumer and multi-stage pipelines | [/StormByte-Buffer](https://suite.stormbyte.org/StormByte-Buffer) |
+| [Config](https://github.com/StormByte-Suite/StormByte-Config) | Human-readable text and versioned binary documents (groups, lists, raw bytes) | [/StormByte-Config](https://suite.stormbyte.org/StormByte-Config) |
+| [Crypto](https://github.com/StormByte-Suite/StormByte-Crypto) | Hash, compression, encryption, signatures and key agreement; Crypto++ remains private | [/StormByte-Crypto](https://suite.stormbyte.org/StormByte-Crypto) |
+| [Database](https://github.com/StormByte-Suite/StormByte-Database) | One SQL API over SQLite, PostgreSQL, MariaDB and MSSQL | [/StormByte-Database](https://suite.stormbyte.org/StormByte-Database) |
+| [Logger](https://github.com/StormByte-Suite/StormByte-Logger) | Stream logging with levels, headers, components, `ThreadedLog` and `Scope` | [/StormByte-Logger](https://suite.stormbyte.org/StormByte-Logger) |
+| [Multimedia](https://github.com/StormByte-Suite/StormByte-Multimedia) | Decode, filter, encode and mux media through FFmpeg; public APIs abstract FFmpeg types | [/StormByte-Multimedia](https://suite.stormbyte.org/StormByte-Multimedia) |
+| **Network** | Framed packets, client/server endpoints, IPv4/IPv6 TCP, Buffer pipelines and authorized remote-file channels | [/StormByte-Network](https://suite.stormbyte.org/StormByte-Network) |
+| [System](https://github.com/StormByte-Suite/StormByte-System) | Processes, pipes, devices, host information and environment variables | [/StormByte-System](https://suite.stormbyte.org/StormByte-System) |
 
 ## Public API
 
@@ -115,11 +115,13 @@ Under `StormByte::Network`:
 
 Sockets, frames and Winsock bootstrap are private.
 
+Public polymorphic and callback types are `MAYBE_SAFE`: safe ownership does not make arbitrary derived state or captures safe across modules. Keep Base, Network, relevant dependencies and every provider module loaded with matching ABIs until all objects and callback copies are released. Allocate the exact derived packet type with `PacketPointer::MakePointer<Derived>()`, retain its virtual destruction path, and keep derived payload allocation/destruction in its provider module. Use `StormByte::Safe::DynamicPointerCast` or `StormByte::Safe::StaticPointerCast` for packet casts. Derived servers must call `Disconnect()` in their destructor body before handler state is destroyed. Safe string sizes count content bytes (or wide characters), excluding the null terminator.
+
 ### Network telemetry
 
 `Client::Telemetry()` returns `StormByte::Safe::Shared<ClientTelemetry>` for that client instance. It records connection attempts/results and application `Send` request/response/no-response counts with mean round-trip latency. A no-response result is not necessarily a transport failure: applications may intentionally use one-way commands. `Server::Telemetry()` returns `StormByte::Safe::Shared<ServerTelemetry>` aggregated across all application sessions handled by that server. It records current, accepted, closed and peak connections; packets dispatched; handlers completed, empty and errored; mean handler duration; and worker-queue backpressure events. Counters are cumulative for the telemetry object's lifetime; connection count is a live gauge.
 
-Keep either shared handle to retain its last snapshot after the owning `Client` or `Server` is destroyed. Timed samples use named clocks from `StormByte::Telemetry`. Remote-file byte/read/write statistics remain on Buffer's existing per-handle telemetry and are not folded into the application-protocol counters.
+Keep either shared handle to retain its last snapshot after the owning `Client` or `Server` is destroyed. Timed operations use independent, stable `StormByte::Clock::Sample` values sharing named clocks from `StormByte::Telemetry`; nested or concurrent measurements do not depend on thread-local nesting depth, and a sample can move between threads. Repeated `Stop()` calls do not record it again. Remote-file byte/read/write statistics remain on Buffer's existing per-handle telemetry and are not folded into the application-protocol counters.
 
 ### Remote file channels
 
@@ -131,9 +133,11 @@ The derived server performs its normal application-opcode dispatch and ACL check
 
 The first authorized mount for an application client session creates one private server listener and assigns its ephemeral port. Later mounts for that session reuse the same peer plane and port. The client connects lazily when it creates its first reader or writer. Each `Authorized` descriptor carries its own capability token and access mode, along with the plane's heartbeat timeout. The first authorized mount selects that timeout (3 to 3600 seconds; default 30), and later mounts on the same plane use it. A server allows at most 128 active mount capabilities across all client sessions.
 
-Each peer plane has one cloned `InputPipeline()` / `OutputPipeline()` pair and one shared network-device snapshot. `Pipe::Clone`/`Move` implementations must own or safely share their state and must not retain raw references to the endpoint. Stateful cryptographic pipes need independent plane state/nonces while using the application's negotiated secret/configuration. File operations carry the mount token and an absolute byte offset, so reader handles keep independent cursors without wire-level seek requests.
+Each peer plane has one copied `InputPipeline()` / `OutputPipeline()` pair and one shared network-device snapshot. Construct each `Buffer::Pipe` from a copyable callable taking `const PipeInput&`, `const PipeOutput&` and `const Safe::Shared<Logger::Log>&`; close or fail the output before returning and do not retain these borrowed arguments. Copies independently clone the callable and its value captures; references and shared handles still share their targets. Providers must supply valid independent clone/release operations, own or safely share captured state, and avoid raw endpoint references. Stateful cryptographic pipes need independent plane state/nonces while using the application's negotiated secret/configuration. File operations carry the mount token and an absolute byte offset, so reader handles keep independent cursors without wire-level seek requests.
 
 Remote readers and writers retain Buffer's I/O telemetry, including its existing operation counters and rates. Buffer telemetry derives from `StormByte::Telemetry` and measures operations with Base's named clocks, so remote I/O uses the same instrumentation as other Buffer locations.
+
+Remote reader size queries return `StormByte::Safe::Optional<StormByte::ByteSize>`: an empty value means the size is unavailable, not that the file is empty; a present zero means an empty file.
 
 The remote reader and writer expose the same shared polymorphic `System::Device` snapshot for their plane's local network interface. Its `Throughput()` and `Window()` report the interface link speed when the operating system exposes it, with a nominal network-rate fallback otherwise.
 
@@ -141,7 +145,7 @@ Readers of one canonical path share a mutex-protected host-side file handle; ope
 
 The data plane is owned by the `Client` object and survives `Client::Disconnect()` while that object remains alive, so already attached file handles can continue I/O without the application control connection. A subsequent successful `Connect()` replaces the old plane and invalidates its handles. Destroying the `Client`, a plane heartbeat timeout, or server shutdown also closes the plane and releases its tokens. The descriptor is a capability, not an authorization decision: every data operation revalidates the token and access. The private protocol bounds payloads and validates opcodes and sequence numbers. A failed plane marks every attached `BufferedLocation*` handle `Fault` so later I/O fails visibly.
 
-`DeserializePacketFunction` accepts copyable callables. Its target storage and clone/destroy trampolines stay in the caller's module, so Network can retain and invoke the decoder without freeing callback memory through its own CRT.
+`DeserializePacketFunction` accepts copyable callables. Its target storage and clone/destroy trampolines stay in the caller's module, so Network can retain and invoke the decoder without freeing callback memory through its own CRT. Copies own independently copied targets; reference/shared captures remain shared and must stay valid for every retained copy.
 
 ## Examples
 
@@ -175,6 +179,7 @@ protected:
 class AppServer : public StormByte::Network::Server {
 public:
 	using Server::Server;
+	~AppServer() noexcept override { Disconnect(); }
 
 protected:
 	StormByte::Buffer::Pipeline InputPipeline() const noexcept override { return {}; }
@@ -203,6 +208,10 @@ protected:
 		return {};
 	}
 };
+
+StormByte::Network::PacketPointer MakePingPacket() {
+	return StormByte::Network::PacketPointer::MakePointer<PingPacket>();
+}
 ```
 
 ## Design notes

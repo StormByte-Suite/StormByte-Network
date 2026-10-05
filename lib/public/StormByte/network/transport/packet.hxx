@@ -43,81 +43,117 @@
 #include <StormByte/buffer/fifo.hxx>
 #include <StormByte/network/visibility.h>
 #include <StormByte/serializable.hxx>
+#include <StormByte/type_traits/safe.hxx>
 
 /**
- * @brief Transport types of the Network module.
+ * @namespace StormByte
+ * @brief Root namespace of the StormByte suite.
  */
-namespace StormByte::Network::Transport {
+namespace StormByte {
 	/**
-	 * @class Packet
-	 * @brief Polymorphic wire packet: opcode + payload hook.
-	 *
-	 * Derive and override DoSerialize() for the payload (excluding opcode). Serialize() writes opcode then payload.
-	 *
-	 * Opcodes must fit OpcodeType (unsigned short).
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
 	 */
-	class STORMBYTE_NETWORK_PUBLIC Packet {
-		public:
-			using OpcodeType = unsigned short;	///< Opcode storage type
-
+	namespace Network {
+		/**
+		 * @namespace StormByte::Network::Transport
+		 * @brief Transport namespace.
+		 */
+		namespace Transport {
 			/**
-			 * @brief Copy constructor.
+			 * @class Packet
+			 * @brief Polymorphic wire packet: opcode + payload hook.
+			 *
+			 * Derive and override DoSerialize() for the payload (excluding opcode).
+			 * Serialize() writes opcode then payload.
+			 *
+			 * Opcodes must fit OpcodeType (unsigned short).
 			 */
-			Packet(const Packet& other) = default;
+			class STORMBYTE_NETWORK_PUBLIC Packet {
+				public:
+					/**
+					 * @brief Opcode storage type.
+					 */
+					using OpcodeType = unsigned short;
 
-			/**
-			 * @brief Move constructor.
-			 */
-			Packet(Packet&& other) noexcept = default;
+					/**
+					 * @brief Copy constructor.
+					 * @param other Source packet.
+					 */
+					Packet(const Packet& other);
 
-			/**
-			 * @brief Destructor.
-			 */
-			virtual ~Packet() noexcept;
+					/**
+					 * @brief Move constructor.
+					 * @param other Source packet.
+					 */
+					Packet(Packet&& other) noexcept;
 
-			/**
-			 * @brief Copy assignment.
-			 */
-			Packet& operator=(const Packet& other) = default;
+					/**
+					 * @brief Destructor.
+					 */
+					virtual ~Packet() noexcept;
 
-			/**
-			 * @brief Move assignment.
-			 */
-			Packet& operator=(Packet&& other) noexcept = default;
+					/**
+					 * @brief Copy assignment.
+					 * @param other Source packet.
+					 * @return This packet.
+					 */
+					Packet& operator=(const Packet& other);
 
-			/**
-			 * @brief Stored opcode.
-			 * @return Opcode.
-			 */
-			inline const OpcodeType& Opcode() const noexcept {
-				return m_opcode;
-			}
+					/**
+					 * @brief Move assignment.
+					 * @param other Source packet.
+					 * @return This packet.
+					 */
+					Packet& operator=(Packet&& other) noexcept;
 
-			/**
-			 * @brief Serialize opcode followed by DoSerialize() payload.
-			 * @return Complete on-wire buffer.
-			 */
-			Buffer::FIFO Serialize() const noexcept;
+					/**
+					 * @brief Stored opcode.
+					 * @return Const reference to the stored opcode.
+					 */
+					inline const OpcodeType& Opcode() const noexcept {
+						return m_opcode;
+					}
 
-			/**
-			 * @brief Opcodes at or above this value run payload through Buffer pipelines when framing.
-			 */
-			static constexpr unsigned short PROCESS_THRESHOLD = 10;
+					/**
+					 * @brief Serialize opcode followed by DoSerialize() payload.
+					 * @return Complete on-wire buffer.
+					 */
+					Buffer::FIFO Serialize() const noexcept;
 
-		protected:
-			OpcodeType m_opcode;	///< Packet opcode
+					/**
+					 * @brief Minimum opcode whose payload uses Buffer pipelines when framing.
+					 */
+					static constexpr unsigned short PROCESS_THRESHOLD = 10;
 
-			/**
-			 * @brief Construct with an opcode.
-			 * @param opcode Packet opcode.
-			 */
-			constexpr Packet(const OpcodeType& opcode) noexcept:
-			m_opcode(opcode) {}
+				protected:
+					/**
+					 * @brief Packet opcode.
+					 */
+					OpcodeType m_opcode;
 
-			/**
-			 * @brief Payload-only serialization (no opcode).
-			 * @return Payload bytes (may be empty).
-			 */
-			virtual StormByte::BinaryData DoSerialize() const noexcept = 0;
-	};
+					/**
+					 * @brief Construct with an opcode.
+					 * @param opcode Packet opcode.
+					 */
+					constexpr Packet(const OpcodeType& opcode) noexcept:
+						m_opcode(opcode) {}
+
+					/**
+					 * @brief Payload-only serialization (no opcode).
+					 * @return Payload bytes (may be empty).
+					 */
+					virtual StormByte::BinaryData DoSerialize() const noexcept = 0;
+			};
+		}
+	}
 }
+
+/**
+ * @brief Declare conditional cross-module safety for polymorphic packets.
+ *
+ * Packet ownership crosses modules through Safe pointers. Derived payloads must
+ * keep their allocator operations in their provider module, which must remain
+ * available with a compatible ABI until all such packets are destroyed.
+ */
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Transport::Packet);

@@ -298,11 +298,11 @@ namespace StormByte::Network {
 		return { Status::Ok, StormByte::ByteSize{0} };
 	}
 
-	std::optional<StormByte::ByteSize> BufferedRemoteFileReader::OriginSize() const noexcept {
+	StormByte::Safe::Optional<StormByte::ByteSize> BufferedRemoteFileReader::OriginSize() const noexcept {
 		auto plane = m_plane.lock();
 		if (!plane || plane->Failed()) {
 			const_cast<BufferedRemoteFileReader*>(this)->SetState(State::Fault);
-			return std::nullopt;
+			return {};
 		}
 		Message request;
 		request.opcode = Opcode::Size;
@@ -310,7 +310,7 @@ namespace StormByte::Network {
 		auto response = plane->Exchange(std::move(request));
 		if (!response || response->status != RemoteStatus::Ok) {
 			const_cast<BufferedRemoteFileReader*>(this)->SetState(State::Fault);
-			return std::nullopt;
+			return {};
 		}
 		return StormByte::ByteSize{response->value};
 	}

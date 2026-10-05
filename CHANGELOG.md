@@ -18,46 +18,47 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.0...HEAD
 
-## [2.0.0] - 2026-10-04
+## [2.0.0] - 2026-10-05
 
 ### Added
 
 - **Client/server telemetry**
-    - Added Base-clock telemetry snapshots scoped per Client and aggregated across all Server sessions.
+    - Added Base-clock telemetry snapshots scoped per Client and aggregated across all Server sessions, using independent, stable `Clock::Sample` values for nested and concurrent measurements without thread/depth coupling; samples support thread transfer and idempotent Stop.
     - Return telemetry through `Safe::Shared` handles that remain valid after the owning endpoint is destroyed.
 - **Authorized remote file channels**
     - Added the public, validated `RemoteFileMount` descriptor and application-facing protected mount/attach helpers.
     - Added file-like buffered remote readers and exclusive writers over one bounded peer data plane per Client, with per-operation capabilities and offsets, independent reader cursors, shared-reader/exclusive-writer path reservations, one heartbeat and shared NIC snapshot per peer, and token-scoped CloseToken cleanup.
-    - Clone one input/output pipeline pair per peer data plane; add dedicated authorization, conflict, deterministic file I/O, transformed framing, concurrent reader, and application-disconnect coverage.
+    - Copy one input/output pipeline pair per peer data plane using Buffer's callable `Pipe` API with independently copied callable state; add dedicated authorization, conflict, deterministic file I/O, transformed framing, concurrent reader, and application-disconnect coverage.
 
 ### Changed
 
 - **StormByte Base 2.0 compatibility**
-    - Migrated Network to Base 2.0's `Safe::Shared`, `Safe::String` and `Safe::WString` APIs and the current UUID return type.
+    - Migrated Network to Base 2.0's `Safe::Shared`, `Safe::String` and `Safe::WString` APIs and the current UUID return type; string sizes exclude the null terminator.
     - Aligned Network exceptions with Base's `Path` hierarchy and `std::string_view` message inputs, keeping formatting in the caller module.
     - Remote file leaves retain Buffer telemetry, whose counters derive from `StormByte::Telemetry` and use Base's named clocks.
 - **Build, ABI and packaging**
     - Ported the library to BuildMaster's in-process CMake backend with selectable shared/static builds; static consumers receive the bundled components' private link closure without vendor repacking.
     - Moved heap-owning public/private lifecycle operations, frame payload operations, and exported exception RTTI anchors out of headers to keep DLL allocation and destruction inside their owning modules.
-    - Replaced the deserializer's `std::function` storage with caller-allocated callback trampolines so the Network DLL never allocates, clones, or frees the callback target across CRTs.
+    - Replaced the deserializer's `std::function` storage with caller-allocated callback trampolines so the Network DLL never allocates, clones, or frees the callback target across CRTs; callback copies own independently copied targets, while reference/shared captures retain their sharing semantics.
     - Propagated the selected shared/static mode to the bundled Buffer component instead of forcing it shared in Network's wrapper.
     - Hid Client backend and Server event-loop state behind Base-heap `Safe::Unique` implementations, removing their private STL-heavy state from the exported class layouts.
     - Store retained client and server endpoint addresses in Base-owned `Safe::String` values instead of module-CRT `std::string` buffers.
 - **Suite integration and documentation**
-    - Updated repository and documentation links for the StormByte-Suite move, refreshed the suite catalog, and removed retired StormByte-String references.
-    - Doxygen (`ENABLE_DOC`) resolves Buffer, Logger and Base headers via `INCLUDE_PATH` and skips `thirdparty`. No dependency pin change.
+    - Updated repository and documentation links for the StormByte-Suite move, refreshed the suite catalog, removed retired StormByte-String references, and switched suite documentation links, tag downloads and tag mappings to verified HTTPS endpoints.
+    - Doxygen (`ENABLE_DOC`) resolves Buffer, Logger, System and Base headers via `INCLUDE_PATH` and skips `thirdparty`; completed full multiline public-header documentation, including lifecycle and provider obligations. Updated the coding style with current Safe contracts and the suite's alphabetically grouped `test_snake_case` convention, with identical definition and registration banners. No dependency pin change.
 - **Public API and licensing**
-    - Ported Network APIs and payload handling to the StormByte 2.0 types and Buffer interfaces, including `BinaryData`, `ByteSize`, `string_view`, `Shared<Log>`, and `ReadOnly`/`WriteOnly` pipes.
-    - Remote file handles now use `Safe::Unique`, allowing ownership transfer to `BufferedLocationReader`/`BufferedLocationWriter` consumers without slicing or relocating the remote leaf. Storage is allocated and freed on Base's heap; virtual destruction releases mount tokens. The handle-type change replaces Network's custom deleters and requires consumers to rebuild.
+    - Ported Network APIs and payload handling to the StormByte 2.0 types and Buffer interfaces, including `BinaryData`, `ByteSize`, `string_view`, `Shared<Log>`, and callable `Pipe` stages; replaced polymorphic Pipe clone/move hooks with independent callable copies and synchronous borrowed endpoints.
+    - PacketPointer now uses `Safe::Shared<Transport::Packet>` with `MakePointer<Derived>()` factories and Safe pointer casts, preserving exact derived allocation and virtual destruction. Public lifecycle operations and `MAYBE_SAFE` declarations document provider-owned resources, compatible ABIs and module residency; derived servers must disconnect before destroying handler state.
+    - Remote file handles now use `Safe::Unique`, allowing ownership transfer to `BufferedLocationReader`/`BufferedLocationWriter` consumers without slicing or relocating the remote leaf. Storage is allocated and freed on Base's heap; virtual destruction releases mount tokens. Remote reader sizes use `Safe::Optional<ByteSize>` to distinguish an unavailable size from a present zero. The handle-type change replaces Network's custom deleters and requires consumers to rebuild.
     - Network's original source is now dual-licensed under LGPL-3.0-or-later or a commercial license; third-party and bundled module licenses remain separate.
 - **Integration coverage**
-    - Expanded integration coverage for failed-connect/listen retry, server restart, malformed and truncated peer frames, and concurrent clients issuing repeated requests.
+    - Expanded integration coverage for failed-connect/listen retry, server restart, malformed and truncated peer frames, and concurrent clients issuing repeated requests; added nested/concurrent telemetry, repeated Stop, cross-thread sample transfer, destructor cleanup and exact-derived lifetime coverage.
     - Remote writer lifecycle tests distinguish incomplete writes, failed flushes, unexpected file sizes, and the first mismatching byte offset to diagnose platform-specific visibility failures.
 
 ### Fixed
 
 - **Worker task initialization**
-    - Explicitly initialized the optional worker operation for packet tasks, eliminating Clang's missing-field-initializer warning without changing task behavior.
+    - Explicitly initialized the optional worker operation for packet tasks and every event-loop result field on POSIX and Windows, eliminating Clang's missing-field-initializer warnings without changing task or event behavior.
 - **Windows build and socket compatibility**
     - Included `<ws2tcpip.h>` in the server socket implementation when inspecting bound IPv6 addresses.
     - Propagated Windows network system libraries (`ws2_32`, `iphlpapi`) via BuildMaster `LINK=` option string in [lib/CMakeLists.txt](lib/CMakeLists.txt).

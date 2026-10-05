@@ -38,83 +38,14 @@
 
 #include <StormByte/network/telemetry.hxx>
 
-#include <algorithm>
-#include <array>
-#include <atomic>
-#include <charconv>
-#include <cstdint>
 #include <string_view>
-#include <utility>
 
 namespace StormByte::Network {
-	namespace {
-		std::size_t& SampleDepth() noexcept {
-			static thread_local std::size_t depth = 0;
-			return depth;
-		}
-
-		std::uint64_t SampleThreadId() noexcept {
-			static std::atomic<std::uint64_t> next_id{0};
-			static thread_local const std::uint64_t id = next_id.fetch_add(1, std::memory_order_relaxed);
-			return id;
-		}
-
-	}
-
 	Telemetry::Telemetry() noexcept = default;
+
 	Telemetry::~Telemetry() noexcept = default;
 
 	Telemetry::Sample Telemetry::Measure(const std::string_view name) noexcept {
-		return Sample(*this, name);
-	}
-
-	Telemetry::Sample::Sample(Telemetry& owner, const std::string_view name) noexcept:
-		m_depth(&SampleDepth()) {
-		std::array<char, 128> clock_name{};
-		std::size_t used = 0;
-		auto append = [&clock_name, &used](const std::string_view value) noexcept {
-			const std::size_t count = std::min(value.size(), clock_name.size() - used);
-			std::copy_n(value.data(), count, clock_name.data() + used);
-			used += count;
-		};
-		auto append_number = [&clock_name, &used](const std::uint64_t value) noexcept {
-			if (used >= clock_name.size()) return;
-			const auto result = std::to_chars(clock_name.data() + used, clock_name.data() + clock_name.size(), value);
-			used = static_cast<std::size_t>(result.ptr - clock_name.data());
-		};
-		append("Network.");
-		append(name);
-		append(".");
-		append_number(reinterpret_cast<std::uintptr_t>(&owner));
-		append(".");
-		append_number(SampleThreadId());
-		append(".");
-		append_number(SampleDepth());
-		m_clock = &owner.Clock(std::string_view{clock_name.data(), used});
-		m_before = m_clock->Time();
-		m_clock->Start();
-		++*m_depth;
-	}
-
-	Telemetry::Sample::Sample(Sample&& other) noexcept:
-		m_clock(std::exchange(other.m_clock, nullptr)),
-		m_before(other.m_before),
-		m_elapsed(other.m_elapsed),
-		m_depth(std::exchange(other.m_depth, nullptr)) {}
-
-	Telemetry::Sample::~Sample() noexcept {
-		(void)Stop();
-	}
-
-	std::chrono::microseconds Telemetry::Sample::Stop() noexcept {
-		if (!m_clock) return m_elapsed;
-		m_clock->Stop();
-		m_elapsed = m_clock->Time() - m_before;
-		m_clock = nullptr;
-		if (m_depth) {
-			--*m_depth;
-			m_depth = nullptr;
-		}
-		return m_elapsed;
+		return MeasureClock(name);
 	}
 }
