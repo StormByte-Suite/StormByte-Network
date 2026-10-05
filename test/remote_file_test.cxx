@@ -1618,6 +1618,40 @@ namespace RemoteFileTest {
 	// -------------------
 	// Writer
 	// -------------------
+	void test_flush_after_size_queries() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "unused-read.bin";
+		const auto write_path = temporary.Path() / "flush-size-write.bin";
+		Server server(read_path, write_path);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "flush-size server connect failed");
+		Client client;
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "flush-size control connect failed");
+		auto [mount, rejected] = client.RequestMount(true);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "flush-size mount failed");
+		RawPeer peer(mount.Port());
+		Check(peer.Connected(), "flush-size peer connect failed");
+		SendRawAttach(peer, mount.Token());
+		Check(peer.SendMessage(2, 2, mount.Token()), "flush-size Open send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 2, 2, 0);
+		const auto expected = MakePattern(1024 * 1024);
+		std::uint64_t sequence = 3;
+		for (std::uint64_t round = 0; round < 3; ++round) {
+			Check(peer.SendMessage(5, sequence, mount.Token(), 0, expected.size(), expected), "flush-size Write send failed");
+			CheckRawResponse(peer.ReceiveMessage(), 5, sequence++, 0);
+			Check(peer.SendMessage(7, sequence, mount.Token()), "flush-size Size send failed");
+			const auto response = peer.ReceiveMessage();
+			CheckRawResponse(response, 7, sequence++, 0);
+			const auto size = StormByte::Serializable<std::uint64_t>::Deserialize(
+				std::span<const std::byte>{response.data() + 18, sizeof(std::uint64_t)});
+			Check(size && *size == expected.size(), "remote Size reported an incorrect length");
+			Check(peer.SendMessage(8, sequence, mount.Token()), "flush-size Flush send failed");
+			CheckRawResponse(peer.ReceiveMessage(), 8, sequence++, 0);
+			Check(EqualBytes(ReadBytes(write_path), expected), "flush after Size changed file bytes");
+		}
+		Check(peer.SendMessage(12, sequence, mount.Token()), "flush-size CloseToken send failed");
+		CheckRawResponse(peer.ReceiveMessage(), 12, sequence, 0);
+	}
+
 	void test_pattern_writer_lifecycle() {
 		TempDirectory temporary;
 		const auto read_path = temporary.Path() / "unused-read.bin";
@@ -1693,6 +1727,7 @@ int main() {
 	// -------------------
 	// Writer
 	// -------------------
+	result += RunOne("test_flush_after_size_queries", test_flush_after_size_queries);
 	result += RunOne("test_pattern_writer_lifecycle", test_pattern_writer_lifecycle);
 	result += RunOne("test_writer_reader_conflicts", test_writer_reader_conflicts);
 	return result == 0 ? 0 : 1;

@@ -203,7 +203,14 @@ namespace StormByte::Network::Detail::RemoteFile {
 
 		auto response = ExchangeLocked(request);
 		if (!response) {
+			m_logger << StormByte::Logger::Level::Error << "Remote file exchange failed: opcode="
+				<< static_cast<unsigned int>(request.opcode) << " sequence=" << request.request_id
+				<< " reason=" << response.error()->what() << std::endl;
 			MarkFailed();
+		}
+		else if (response->status == Status::Failed) {
+			m_logger << StormByte::Logger::Level::Error << "Remote file operation rejected: opcode="
+				<< static_cast<unsigned int>(request.opcode) << " sequence=" << request.request_id << std::endl;
 		}
 		return response;
 	}

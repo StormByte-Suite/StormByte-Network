@@ -57,6 +57,8 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ### Fixed
 
+- **Remote writer size and flush**
+    - Query host file size without switching the bidirectional stream's get cursor, avoiding size-probe interference with subsequent writes and flushes. Added repeated write/size/flush byte-integrity coverage and operation/transport failure diagnostics that do not expose capability tokens or file contents.
 - **Worker task initialization**
     - Explicitly initialized the optional worker operation for packet tasks and every event-loop result field on POSIX and Windows, eliminating Clang's missing-field-initializer warnings without changing task or event behavior.
 - **Windows build and socket compatibility**

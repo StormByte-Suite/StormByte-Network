@@ -162,14 +162,17 @@ namespace StormByte::Network::Detail::RemoteFile {
 			case Opcode::Size: {
 				if (request.offset != 0 || request.value != 0 || !request.data.empty()) return response;
 				std::scoped_lock lock(file->mutex);
-				file->stream.clear();
-				if (access == RemoteFileMount::Access::Write) file->stream.flush();
-				file->stream.seekg(0, std::ios::end);
-				const std::streampos end = file->stream.tellg();
-				if (end < 0 || !file->stream) return response;
+				if (access == RemoteFileMount::Access::Write) {
+					file->stream.flush();
+					if (!file->stream)
+						return response;
+				}
+				std::error_code size_error;
+				const auto size = std::filesystem::file_size(file->path, size_error);
+				if (size_error || size > std::numeric_limits<std::uint64_t>::max())
+					return response;
 				response.status = Status::Ok;
-				response.value = static_cast<std::uint64_t>(end);
-				file->stream.clear();
+				response.value = static_cast<std::uint64_t>(size);
 				return response;
 			}
 			case Opcode::Flush: {
