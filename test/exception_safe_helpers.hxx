@@ -281,18 +281,26 @@ namespace NetworkExceptionTest {
 			}
 
 			/**
-			 * @brief Check inherited Safe-string overloads retain the Network root path.
+			 * @brief Check explicit views of Safe strings preserve the leaf path and owned text.
 			 * @return Zero on success, otherwise one.
 			 */
 			static int SafeString() {
 				StormByte::Safe::String message{"owned {literal}"};
-				const Error owned{message};
+				const Error owned{std::string_view{message}};
 				message.clear();
-				const Error temporary{StormByte::Safe::String{"temporary"}};
-				const Error empty{message};
-				ASSERT_EQUAL(std::string_view{"StormByte.Network: owned {literal}"}, std::string_view{owned.what()});
-				ASSERT_EQUAL(std::string_view{"StormByte.Network: temporary"}, std::string_view{temporary.what()});
-				ASSERT_EQUAL(std::string_view{"StormByte.Network: "}, std::string_view{empty.what()});
+				const Error temporary{std::string_view{StormByte::Safe::String{"temporary"}}};
+				const Error empty{std::string_view{message}};
+				const Error literal{"plain {literal}"};
+				std::string dynamic{"dynamic {literal}"};
+				const Error text{dynamic.c_str()};
+				const Error standard{dynamic};
+				dynamic.clear();
+				ASSERT_EQUAL(0, Message(owned, "owned {literal}"));
+				ASSERT_EQUAL(0, Message(temporary, "temporary"));
+				ASSERT_EQUAL(0, Message(empty, ""));
+				ASSERT_EQUAL(0, Message(literal, "plain {literal}"));
+				ASSERT_EQUAL(0, Message(text, "dynamic {literal}"));
+				ASSERT_EQUAL(0, Message(standard, "dynamic {literal}"));
 				RETURN_TEST(0);
 			}
 

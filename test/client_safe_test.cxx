@@ -240,7 +240,8 @@ int test_self_move_assignment() {
 	ClientFixture client;
 	auto retained = client.Telemetry();
 	Network::Client& alias = client;
-	ASSERT_EQUAL(&alias, &(alias = std::move(alias)));
+	auto* source = &alias;
+	ASSERT_EQUAL(&alias, &(alias = std::move(*source)));
 	ASSERT_EQUAL(retained.get(), client.Telemetry().get());
 	ASSERT_EQUAL(Network::Connection::Status::Disconnected, client.Status());
 	RETURN_TEST(0);

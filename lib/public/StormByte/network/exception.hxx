@@ -73,18 +73,13 @@ namespace StormByte {
 			explicit Exception(std::string_view message);
 
 			/**
-			 * @brief Copy Base-owned text under `StormByte.Network`.
-			 * @param message Exception text.
-			 */
-			explicit Exception(const StormByte::Safe::String& message);
-
-			/**
 			 * @brief Format an exception under `StormByte.Network`.
 			 * @tparam Args Format argument types.
 			 * @param fmt Format string.
 			 * @param args Format arguments.
 			 */
 			template <typename... Args>
+			requires (sizeof...(Args) > 0)
 			explicit Exception(std::format_string<Args...> fmt, Args&&... args):
 				StormByte::Exception(StormByte::Exception::Path{"Network"}, fmt,
 					std::forward<Args>(args)...) {}
@@ -97,6 +92,7 @@ namespace StormByte {
 			 * @param args Format arguments.
 			 */
 			template <typename... Args>
+			requires (sizeof...(Args) > 0)
 			explicit Exception(StormByte::Exception::Path child, std::format_string<Args...> fmt,
 				Args&&... args):
 				StormByte::Exception(
@@ -184,6 +180,7 @@ namespace StormByte {
 			 * @param args Format arguments.
 			 */
 			template <typename... Args>
+			requires (sizeof...(Args) > 0)
 			ConnectionError(std::format_string<Args...> fmt, Args&&... args):
 				Exception(StormByte::Exception::Path{"Connection"}, fmt, std::forward<Args>(args)...) {}
 
@@ -244,6 +241,7 @@ namespace StormByte {
 			 * @param args Format arguments.
 			 */
 			template <typename... Args>
+			requires (sizeof...(Args) > 0)
 			ConnectionClosed(std::format_string<Args...> fmt, Args&&... args):
 				Exception(StormByte::Exception::Path{"Connection"}, "Connection closed: {}",
 					std::string_view{FormatMessage(fmt, std::forward<Args>(args)...)}) {}
@@ -305,6 +303,7 @@ namespace StormByte {
 			 * @param args Format arguments.
 			 */
 			template <typename... Args>
+			requires (sizeof...(Args) > 0)
 			PacketError(std::format_string<Args...> fmt, Args&&... args):
 				Exception(StormByte::Exception::Path{"Transport.Packet"}, fmt, std::forward<Args>(args)...) {}
 
@@ -365,6 +364,7 @@ namespace StormByte {
 			 * @param args Format arguments.
 			 */
 			template <typename... Args>
+			requires (sizeof...(Args) > 0)
 			FrameError(std::format_string<Args...> fmt, Args&&... args):
 				Exception(StormByte::Exception::Path{"Transport.Frame"}, fmt, std::forward<Args>(args)...) {}
 

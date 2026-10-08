@@ -45,9 +45,6 @@ using namespace StormByte::Network;
 Exception::Exception(std::string_view message):
 	StormByte::Exception(StormByte::Exception::Path{"Network"}, "{}", message) {}
 
-Exception::Exception(const StormByte::Safe::String& message):
-	Exception(static_cast<std::string_view>(message)) {}
-
 Exception::Exception(StormByte::Exception::Path child, std::string_view message):
 	StormByte::Exception(StormByte::Exception::Path{JoinPath(child.text)}, "{}", message) {}
 

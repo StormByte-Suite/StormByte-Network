@@ -43,6 +43,7 @@
 #include <StormByte/test_handlers.h>
 #include <StormByte/type_traits.hxx>
 
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -177,11 +178,19 @@ int test_plain_string_view() {
 
 int test_safe_string() {
 	Safe::String message{"owned {literal}"};
-	const Network::ConnectionError error{message};
+	const Network::ConnectionError error{std::string_view{message}};
 	message.clear();
-	ASSERT_EQUAL(std::string_view{"StormByte.Network: owned {literal}"}, std::string_view{error.what()});
-	const Network::ConnectionError temporary{Safe::String{"temporary"}};
-	ASSERT_EQUAL(std::string_view{"StormByte.Network: temporary"}, std::string_view{temporary.what()});
+	ASSERT_EQUAL(std::string_view{"StormByte.Network.Connection: owned {literal}"}, std::string_view{error.what()});
+	const Network::ConnectionError temporary{std::string_view{Safe::String{"temporary"}}};
+	ASSERT_EQUAL(std::string_view{"StormByte.Network.Connection: temporary"}, std::string_view{temporary.what()});
+	const Network::ConnectionError literal{"plain {literal}"};
+	std::string dynamic{"dynamic {literal}"};
+	const Network::ConnectionError text{dynamic.c_str()};
+	const Network::ConnectionError standard{dynamic};
+	dynamic.clear();
+	ASSERT_EQUAL(std::string_view{"StormByte.Network.Connection: plain {literal}"}, std::string_view{literal.what()});
+	ASSERT_EQUAL(std::string_view{"StormByte.Network.Connection: dynamic {literal}"}, std::string_view{text.what()});
+	ASSERT_EQUAL(std::string_view{"StormByte.Network.Connection: dynamic {literal}"}, std::string_view{standard.what()});
 	RETURN_TEST(0);
 }
 

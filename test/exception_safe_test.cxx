@@ -173,11 +173,11 @@ int test_plain_string_view() {
 
 int test_safe_string() {
 	Safe::String message{"owned {literal}"};
-	const Network::Exception error{message};
+	const Network::Exception error{std::string_view{message}};
 	message.clear();
 	ASSERT_EQUAL(std::string_view{"StormByte.Network: owned {literal}"}, std::string_view{error.what()});
 	Safe::String empty;
-	const Network::Exception empty_error{empty};
+	const Network::Exception empty_error{std::string_view{empty}};
 	ASSERT_EQUAL(std::string_view{"StormByte.Network: "}, std::string_view{empty_error.what()});
 	RETURN_TEST(0);
 }

@@ -36,7 +36,7 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 - **StormByte Base 2.0 compatibility**
     - Migrated public and private header state to Base 2.0 Safe containers, shared/unique ownership, synchronization, atomics and threads, including `Safe::Binary` payloads in place of removed `BinaryData`. Standard borrowed views and scalars remain permitted; no `std::shared_ptr` ownership bridge is used. String sizes exclude the null terminator.
     - Distinguished `Size` element counts from `ByteSize` byte lengths and offsets, with explicit numeric conversions at protocol and OS boundaries; retained optional remote sizes so unknown and known zero remain distinct.
-    - Aligned Network exceptions with Base's `Path` hierarchy and `std::string_view` message inputs, keeping formatting in the caller module.
+    - Aligned Network exceptions with Base's `Path` hierarchy and `std::string_view` message inputs, keeping formatting in the caller module. Removed the competing `Safe::String` message overload and restricted format constructors to calls with arguments, avoiding GCC ambiguity for literals and dynamic text. Callers convert Safe text explicitly to a view; plain messages retain their leaf prefixes and literal braces. Convert Safe socket-error text to a view before formatting with libstdc++.
     - Remote file leaves retain Buffer telemetry, whose counters derive from `StormByte::Telemetry` and use Base's named clocks.
 - **Build, ABI and packaging**
     - Ported the library to BuildMaster's in-process CMake backend with selectable shared/static builds; static consumers receive the bundled components' private link closure without vendor repacking.
