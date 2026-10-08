@@ -154,7 +154,7 @@ namespace StormByte {
 				 * @param socket Underlying socket client.
 				 * @return Connection::Client.
 				 */
-				std::shared_ptr<Connection::Client> CreateConnection(std::shared_ptr<Socket::Client> socket) noexcept;
+				StormByte::Safe::Shared<Connection::Client> CreateConnection(StormByte::Safe::Shared<Socket::Client> socket) noexcept;
 
 				/**
 				 * @brief Send @p packet and wait for a response frame.
@@ -162,7 +162,7 @@ namespace StormByte {
 				 * @param packet Packet to send.
 				 * @return Response packet, or nullptr on failure.
 				 */
-				PacketPointer Send(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
+				PacketPointer Send(StormByte::Safe::Shared<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
 
 				/**
 				 * @brief Send @p packet without waiting for a reply.
@@ -170,7 +170,7 @@ namespace StormByte {
 				 * @param packet Packet to send.
 				 * @return true on success.
 				 */
-				bool Reply(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
+				bool Reply(StormByte::Safe::Shared<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
 
 			private:
 				/**
@@ -179,15 +179,9 @@ namespace StormByte {
 				 * @param packet Packet to send.
 				 * @return true on success.
 				 */
-				bool SendPacket(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
+				bool SendPacket(StormByte::Safe::Shared<Connection::Client> client_connection, const Transport::Packet& packet) noexcept;
 		};
 	}
 }
 
-/**
- * @brief Endpoint resources have Network-owned lifecycles.
- *
- * Derived providers must keep their own resources and virtual hooks valid
- * until destruction, with a compatible ABI.
- */
 STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Endpoint);

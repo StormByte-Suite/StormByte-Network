@@ -44,35 +44,29 @@
 #include <StormByte/network/remote_file_mount.hxx>
 #include <StormByte/network/server.hxx>
 #include <StormByte/network/telemetry.hxx>
+#include <StormByte/safe/binary.hxx>
 #include <StormByte/serializable.hxx>
 #include <StormByte/system/this_thread.hxx>
 #include <StormByte/test_handlers.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <format>
 #include <iostream>
 #include <latch>
 #include <mutex>
 #include <numeric>
 #include <random>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
-#ifdef UNIX
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#else
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#endif
 // Namespace aliases and commonly used types to reduce verbosity
 namespace SB = StormByte;
 namespace Net = SB::Network;
@@ -107,136 +101,11 @@ static_assert(SB::Type::MaybeSafe<Net::BufferedRemoteFileReader>);
 static_assert(SB::Type::MaybeSafe<Net::BufferedRemoteFileWriter>);
 static_assert(SB::Type::MaybeSafe<DeserializePacketFunction>);
 
-StormByte::Safe::Shared<Log> logger = StormByte::Safe::Heap::MakeShared<ThreadedLog>(std::cout, Level::Info, "[%L] [T%i] %T:");
+StormByte::Safe::Shared<Log> logger = StormByte::Safe::Shared<Log>::MakePointer<ThreadedLog>(std::cout, Level::Info, "[%L] [T%i] %T:");
 constexpr const std::size_t large_data_size = 20 * 1024 * 1024; // 20 MB
 constexpr const char large_data_repeat_char = 'x';
 constexpr const char* HOST = "localhost";
 constexpr const unsigned short PORT = 7080;
-#ifdef WINDOWS
-using RawSocket = SOCKET;
-constexpr RawSocket invalid_raw_socket = INVALID_SOCKET;
-#else
-using RawSocket = int;
-constexpr RawSocket invalid_raw_socket = -1;
-#endif
-
-/**
- * @brief Connect a raw IPv4 socket to the test server.
- * @return Connected socket handle, or the invalid socket sentinel on failure.
- */
-RawSocket ConnectRawSocket() {
-	RawSocket socket_handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (socket_handle == invalid_raw_socket) {
-		return invalid_raw_socket;
-	}
-
-	sockaddr_in address{};
-	address.sin_family = AF_INET;
-	address.sin_port = htons(PORT);
-	if (inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) != 1) {
-#ifdef WINDOWS
-		closesocket(socket_handle);
-#else
-		close(socket_handle);
-#endif
-		return invalid_raw_socket;
-	}
-
-	if (::connect(socket_handle, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) < 0) {
-#ifdef WINDOWS
-		closesocket(socket_handle);
-#else
-		close(socket_handle);
-#endif
-		return invalid_raw_socket;
-	}
-
-	return socket_handle;
-}
-
-/**
- * @brief Close a raw test socket.
- * @param socket_handle Socket handle to close.
- */
-void CloseRawSocket(RawSocket socket_handle) noexcept {
-#ifdef WINDOWS
-	closesocket(socket_handle);
-#else
-	close(socket_handle);
-#endif
-}
-
-/**
- * @brief Send all bytes through a raw test socket.
- * @param socket_handle Connected socket handle.
- * @param data Bytes to send.
- * @return Whether all bytes were sent successfully.
- */
-bool SendRawBytes(RawSocket socket_handle, std::span<const std::byte> data) {
-	while (!data.empty()) {
-#ifdef WINDOWS
-		const int sent = ::send(socket_handle, reinterpret_cast<const char*>(data.data()), static_cast<int>(data.size()), 0);
-#else
-		const ssize_t sent = ::send(socket_handle, data.data(), data.size(), 0);
-#endif
-		if (sent <= 0) {
-			return false;
-		}
-
-		data = data.subspan(static_cast<std::size_t>(sent));
-	}
-
-	return true;
-}
-
-/**
- * @brief Receive all requested bytes from a raw test socket.
- * @param socket_handle Connected socket handle.
- * @param data Destination for received bytes.
- * @return Whether the destination was filled successfully.
- */
-bool ReceiveRawBytes(RawSocket socket_handle, std::span<std::byte> data) {
-	while (!data.empty()) {
-#ifdef WINDOWS
-		const int received = ::recv(socket_handle, reinterpret_cast<char*>(data.data()), static_cast<int>(data.size()), 0);
-#else
-		const ssize_t received = ::recv(socket_handle, data.data(), data.size(), 0);
-#endif
-		if (received <= 0) {
-			return false;
-		}
-
-		data = data.subspan(static_cast<std::size_t>(received));
-	}
-
-	return true;
-}
-
-/**
- * @brief Wait for a raw test socket to report a peer disconnect.
- * @param socket_handle Connected socket handle.
- * @param timeout_duration Maximum wait for socket readability.
- * @return Whether reading the socket reports closure or an error.
- */
-bool WaitForRawDisconnect(RawSocket socket_handle, const std::chrono::seconds timeout_duration) {
-	fd_set read_fds;
-	FD_ZERO(&read_fds);
-	FD_SET(socket_handle, &read_fds);
-	timeval timeout_value{};
-	timeout_value.tv_sec = static_cast<decltype(timeout_value.tv_sec)>(timeout_duration.count());
-#ifdef WINDOWS
-	const int ready = select(0, &read_fds, nullptr, nullptr, &timeout_value);
-#else
-	const int ready = select(socket_handle + 1, &read_fds, nullptr, nullptr, &timeout_value);
-#endif
-	if (ready <= 0) {
-		return false;
-	}
-
-	char byte = 0;
-	return ::recv(socket_handle, &byte, 1, 0) <= 0;
-}
-
 namespace Test {
 	/**
 	 * @brief Expose timing samples and clock values for telemetry tests.
@@ -304,7 +173,7 @@ namespace Test {
 					Generic(Opcode::C_MSG_ASKNAMELIST), m_amount(amount) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return Serializable<std::size_t>(m_amount).Serialize();
 				}
 
@@ -322,7 +191,7 @@ namespace Test {
 					Generic(Opcode::S_MSG_RESPONDNAMELIST), m_names(names) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return Serializable<std::vector<std::string>>(m_names).Serialize();
 				}
 
@@ -339,7 +208,7 @@ namespace Test {
 				AskRandomNumber(): Generic(Opcode::C_MSG_ASKRANDOMNUMBER) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return {};
 				}
 		};
@@ -350,7 +219,7 @@ namespace Test {
 					Generic(Opcode::S_MSG_RESPONDRANDOMNUMBER), m_number(number) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return Serializable<int>(m_number).Serialize();
 				}
 
@@ -368,7 +237,7 @@ namespace Test {
 					Generic(Opcode::C_MSG_SENDLARGEDATA), m_data(std::move(data)) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return Serializable<std::string>(m_data).Serialize();
 				}
 
@@ -394,7 +263,7 @@ namespace Test {
 					Generic(Opcode::S_MSG_REPLYLARGEDATAECHOED), m_data(std::move(data)) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return Serializable<std::string>(m_data).Serialize();
 				}
 
@@ -419,7 +288,7 @@ namespace Test {
 				Ping(): Generic(Opcode::C_MSG_PING) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return {};
 				}
 		};
@@ -429,7 +298,7 @@ namespace Test {
 				Pong(): Generic(Opcode::S_MSG_PONG) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return {};
 				}
 		};
@@ -439,7 +308,7 @@ namespace Test {
 				DisconnectRequest(): Generic(Opcode::C_MSG_DISCONNECT) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return {};
 				}
 		};
@@ -449,7 +318,7 @@ namespace Test {
 				SlowRequest(): Generic(Opcode::C_MSG_SLOW) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return {};
 				}
 		};
@@ -459,7 +328,7 @@ namespace Test {
 				SlowReply(): Generic(Opcode::S_MSG_SLOW) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return {};
 				}
 		};
@@ -469,7 +338,7 @@ namespace Test {
 				StopServerRequest(): Generic(Opcode::C_MSG_STOPSERVER) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return {};
 				}
 		};
@@ -480,7 +349,7 @@ namespace Test {
 					Generic(Opcode::C_MSG_ECHOTEXT), m_text(std::move(text)) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return Serializable<std::string>(m_text).Serialize();
 				}
 
@@ -498,7 +367,7 @@ namespace Test {
 					Generic(Opcode::S_MSG_REPLYTEXT), m_text(std::move(text)) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return Serializable<std::string>(m_text).Serialize();
 				}
 
@@ -516,7 +385,7 @@ namespace Test {
 					Generic(Opcode::C_MSG_SUMNUMBERS), m_numbers(std::move(numbers)) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return Serializable<std::vector<int>>(m_numbers).Serialize();
 				}
 
@@ -534,7 +403,7 @@ namespace Test {
 					Generic(Opcode::S_MSG_REPLYSUM), m_sum(sum) {
 				}
 
-				StormByte::BinaryData DoSerialize() const noexcept override {
+				StormByte::Safe::Binary DoSerialize() const noexcept override {
 					return Serializable<int>(m_sum).Serialize();
 				}
 
@@ -547,10 +416,31 @@ namespace Test {
 		};
 	}
 
+}
+
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Telemetry);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::AskNameList);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::AnswerNameList);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::AskRandomNumber);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::AnswerRandomNumber);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::LargeData);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::AnswerLargeDataEchoed);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::Ping);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::Pong);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::DisconnectRequest);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::SlowRequest);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::SlowReply);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::StopServerRequest);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::EchoText);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::ReplyText);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::SumNumbers);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Packet::ReplySum);
+
+namespace Test {
 	DeserializePacketFunction DeserializeFunction() {
 		return [](Transport::Packet::OpcodeType opcode, Consumer consumer, StormByte::Safe::Shared<Log> logger) -> PacketPointer {
 			(void)logger;
-			StormByte::BinaryData data;
+			StormByte::Safe::Binary data;
 			consumer.ExtractUntilEoF(data);
 			switch (static_cast<Packet::Opcode>(opcode)) {
 				case Packet::Opcode::C_MSG_ASKNAMELIST: {
@@ -686,7 +576,7 @@ namespace Test {
 				constexpr StormByte::ByteSize max_chunk{10 * 1024 * 1024};
 
 				while (!in.EoF()) {
-					StormByte::BinaryData data;
+					StormByte::Safe::Binary data;
 
 					// Blocks until ≥1 byte or EoF/error (no yield spin)
 					if (!in.Read(StormByte::ByteSize{1}, data) || data.empty()) {
@@ -700,11 +590,9 @@ namespace Test {
 					// Non-blocking grab of the rest of the current burst (capped)
 					const StormByte::ByteSize extra = std::min(in.Available(), max_chunk - data.size());
 					if (extra > StormByte::ByteSize{0}) {
-						StormByte::BinaryData more;
+						StormByte::Safe::Binary more;
 						if (in.Read(extra, more) && !more.empty()) {
-							data.insert(data.end(),
-								std::make_move_iterator(more.begin()),
-								std::make_move_iterator(more.end()));
+							data.append(std::move(more));
 						}
 					}
 
@@ -739,6 +627,19 @@ namespace Test {
 			~Client() noexcept = default;
 
 			/**
+			 * @brief Expose public packet requests to protocol tests.
+			 */
+			using Net::Client::Send;
+
+			/**
+			 * @brief Select the output mask before connecting the test peer.
+			 * @param mask Reversible test mask, not encryption.
+			 */
+			void OutputMask(std::byte mask) noexcept {
+				m_output_mask = mask;
+			}
+
+			/**
 			 * @brief Install the fixture's XOR pair explicitly after transport connection.
 			 * @param protocol Address family.
 			 * @param address Remote address.
@@ -762,7 +663,7 @@ namespace Test {
 
 			Pipeline OutputPipeline() const noexcept {
 				Pipeline pipeline;
-				pipeline.Add(Buf::Pipe{XorPipe{}});
+				pipeline.Add(Buf::Pipe{XorPipe{m_output_mask}});
 				return pipeline;
 			}
 
@@ -867,6 +768,12 @@ namespace Test {
 
 				return answer_packet->GetSum();
 			}
+
+		private:
+			/**
+			 * @brief Output mask fixed before connection configuration.
+			 */
+			std::byte m_output_mask{0xAB};
 	};
 
 	/**
@@ -876,10 +783,12 @@ namespace Test {
 		public:
 			/**
 			 * @brief Select unknown opcode or malformed payload for factory regressions.
-			 * @param unknown Whether the opcode is absent from the client factory.
+			 * @param unknown Whether the opcode is absent from the factory.
+			 * @param request Whether to select the request rather than reply opcode.
 			 */
-			explicit InvalidReply(bool unknown): Transport::Packet(unknown ? 0x7FFE
-				: static_cast<OpcodeType>(::Test::Packet::Opcode::S_MSG_REPLYTEXT)) {
+			explicit InvalidReply(bool unknown, bool request = false): Transport::Packet(unknown ? 0x7FFE
+				: static_cast<OpcodeType>(request ? ::Test::Packet::Opcode::C_MSG_ECHOTEXT
+					: ::Test::Packet::Opcode::S_MSG_REPLYTEXT)) {
 			}
 
 		private:
@@ -887,18 +796,28 @@ namespace Test {
 			 * @brief Return an incomplete serialized string.
 			 * @return One byte that cannot contain a complete string header.
 			 */
-			StormByte::BinaryData DoSerialize() const noexcept override {
-				return {std::byte{0xFF}};
+			StormByte::Safe::Binary DoSerialize() const noexcept override {
+				auto bytes = Serializable<std::string>(std::string{"truncated payload"}).Serialize();
+				bytes.pop_back();
+				return bytes;
 			}
 	};
 
+}
+
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Client);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::InvalidReply);
+
+namespace Test {
 	class Server: public Net::Server {
 		public:
 			Server(StormByte::Safe::Shared<Log> logger) noexcept:
 				Net::Server(DeserializeFunction(), logger) {
 			}
 
-			~Server() noexcept = default;
+			~Server() noexcept override {
+				Disconnect();
+			}
 
 			/**
 			 * @brief Select deliberate reply failure before starting the server.
@@ -1078,6 +997,7 @@ namespace Test {
 			 * @brief Record destruction of the derived server.
 			 */
 			~LifetimeServer() noexcept override {
+				Disconnect();
 				++m_destructions;
 			}
 
@@ -1101,6 +1021,10 @@ namespace Test {
 			std::string m_payload;
 	};
 }
+
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::Server);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::LifetimeClient);
+STORMBYTE_DECLARE_MAYBE_SAFE(::Test::LifetimeServer);
 
 /**
  * @namespace LoginTest
@@ -1144,7 +1068,7 @@ namespace LoginTest {
 			 * @brief Encode fields for the test protocol.
 			 * @return Serialized vector.
 			 */
-			StormByte::BinaryData DoSerialize() const noexcept override {
+			StormByte::Safe::Binary DoSerialize() const noexcept override {
 				return Serializable<std::vector<std::string>>(m_fields).Serialize();
 			}
 
@@ -1154,6 +1078,11 @@ namespace LoginTest {
 			std::vector<std::string> m_fields;
 	};
 
+}
+
+STORMBYTE_DECLARE_MAYBE_SAFE(::LoginTest::Packet);
+
+namespace LoginTest {
 	/**
 	 * @brief Decode only well-formed packets of the authorization test protocol.
 	 * @return Provider-owned packet factory.
@@ -1164,8 +1093,8 @@ namespace LoginTest {
 			if (opcode < static_cast<Transport::Packet::OpcodeType>(Opcode::Login)
 				|| opcode > static_cast<Transport::Packet::OpcodeType>(Opcode::ProtectedReply))
 				return {};
-			StormByte::BinaryData bytes;
-			payload.ReadUntilEoF(bytes);
+			StormByte::Safe::Binary bytes;
+			payload.ExtractUntilEoF(bytes);
 			auto fields = Serializable<std::vector<std::string>>::Deserialize(bytes);
 			if (!fields || fields->size() != (opcode == static_cast<Transport::Packet::OpcodeType>(Opcode::Login) ? 2u : 0u))
 				return {};
@@ -1336,74 +1265,73 @@ namespace LoginTest {
 	};
 }
 
+STORMBYTE_DECLARE_MAYBE_SAFE(::LoginTest::Client);
+STORMBYTE_DECLARE_MAYBE_SAFE(::LoginTest::Server);
+
 // -------------------
 // Authentication
 // -------------------
 int test_login_accepts_valid_credentials() {
-	constexpr std::string_view fn_name = "test_login_accepts_valid_credentials";
 	LoginTest::Server server;
-	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
 	LoginTest::Client alice("alice", "alice-test-only");
 	LoginTest::Client bob("bob", "bob-test-only");
-	ASSERT_TRUE(fn_name, alice.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, bob.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, alice.RequestProtected() && bob.RequestProtected());
+	ASSERT_TRUE(alice.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(bob.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(alice.RequestProtected() && bob.RequestProtected());
 	alice.Disconnect();
 	bob.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_login_rejects_invalid_credentials() {
-	constexpr std::string_view fn_name = "test_login_rejects_invalid_credentials";
 	LoginTest::Server server;
-	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
 	LoginTest::Client wrong_password("alice", "wrong-test-password");
 	LoginTest::Client unknown_user("unknown-test-user", "alice-test-only");
-	ASSERT_FALSE(fn_name, wrong_password.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_FALSE(fn_name, unknown_user.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, wrong_password.Status() == Connection::Status::Disconnected);
-	ASSERT_TRUE(fn_name, unknown_user.Status() == Connection::Status::Disconnected);
+	ASSERT_FALSE(wrong_password.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_FALSE(unknown_user.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_EQUAL(Connection::Status::Disconnected, wrong_password.Status());
+	ASSERT_EQUAL(Connection::Status::Disconnected, unknown_user.Status());
 	LoginTest::Client legitimate("alice", "alice-test-only");
-	ASSERT_TRUE(fn_name, legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, legitimate.RequestProtected());
+	ASSERT_TRUE(legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(legitimate.RequestProtected());
 	legitimate.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_login_required_after_reconnect() {
-	constexpr std::string_view fn_name = "test_login_required_after_reconnect";
 	LoginTest::Server server;
-	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
 	LoginTest::Client client("alice", "alice-test-only");
-	ASSERT_TRUE(fn_name, client.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, client.RequestProtected());
+	ASSERT_TRUE(client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(client.RequestProtected());
 	client.Disconnect();
-	ASSERT_TRUE(fn_name, client.ConnectWithoutLogin());
-	ASSERT_FALSE(fn_name, client.RequestProtected());
+	ASSERT_TRUE(client.ConnectWithoutLogin());
+	ASSERT_FALSE(client.RequestProtected());
 	client.Disconnect();
-	ASSERT_TRUE(fn_name, client.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, client.RequestProtected());
+	ASSERT_TRUE(client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(client.RequestProtected());
 	client.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_login_required_before_protected_request() {
-	constexpr std::string_view fn_name = "test_login_required_before_protected_request";
 	LoginTest::Server server;
-	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
 	LoginTest::Client anonymous("alice", "alice-test-only");
-	ASSERT_TRUE(fn_name, anonymous.ConnectWithoutLogin());
-	ASSERT_FALSE(fn_name, anonymous.RequestProtected());
+	ASSERT_TRUE(anonymous.ConnectWithoutLogin());
+	ASSERT_FALSE(anonymous.RequestProtected());
 	anonymous.Disconnect();
 	LoginTest::Client legitimate("bob", "bob-test-only");
-	ASSERT_TRUE(fn_name, legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, legitimate.RequestProtected());
+	ASSERT_TRUE(legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(legitimate.RequestProtected());
 	legitimate.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 // -------------------
@@ -1415,7 +1343,7 @@ int test_client_disconnect_keeps_server_alive() {
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1423,10 +1351,10 @@ int test_client_disconnect_keeps_server_alive() {
 	::Test::Client first_client(logger);
 	if (!first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": first client.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
-	ASSERT_TRUE(fn_name, first_client.RequestPing());
+	ASSERT_TRUE(first_client.RequestPing());
 	first_client.Disconnect();
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1434,53 +1362,76 @@ int test_client_disconnect_keeps_server_alive() {
 	::Test::Client second_client(logger);
 	if (!second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": second client.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
-	ASSERT_TRUE(fn_name, second_client.RequestPing());
+	ASSERT_TRUE(second_client.RequestPing());
 	second_client.Disconnect();
 
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_client_retry_after_failed_connect() {
-	constexpr std::string_view fn_name = "test_client_retry_after_failed_connect";
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	::Test::Client client(logger);
 	const auto invalid_protocol = static_cast<Net::Connection::Protocol>(-1);
-	ASSERT_FALSE(fn_name, client.Connect(invalid_protocol, HOST, PORT));
-	ASSERT_TRUE(fn_name, client.Status() == Net::Connection::Status::Disconnected);
-	ASSERT_TRUE(fn_name, client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, client.RequestPing());
+	ASSERT_FALSE(client.Connect(invalid_protocol, HOST, PORT));
+	ASSERT_EQUAL(Net::Connection::Status::Disconnected, client.Status());
+	ASSERT_TRUE(client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(client.RequestPing());
 
-	ASSERT_FALSE(fn_name, client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, client.Status() == Net::Connection::Status::Connected);
-	ASSERT_TRUE(fn_name, client.RequestPing());
+	ASSERT_FALSE(client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_EQUAL(Net::Connection::Status::Connected, client.Status());
+	ASSERT_TRUE(client.RequestPing());
 
 	client.Disconnect();
-	ASSERT_TRUE(fn_name, client.Status() == Net::Connection::Status::Disconnected);
-	ASSERT_TRUE(fn_name, client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, client.RequestPing());
+	ASSERT_EQUAL(Net::Connection::Status::Disconnected, client.Status());
+	ASSERT_TRUE(client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(client.RequestPing());
 	client.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
+}
+
+int test_client_send_while_disconnected_and_repeated_disconnect() {
+	::Test::Client client(logger);
+	::Test::Packet::Ping request;
+	ASSERT_EQUAL(Connection::Status::Disconnected, client.Status());
+	ASSERT_NULL(client.Send(request));
+	client.Disconnect();
+	client.Disconnect();
+	ASSERT_EQUAL(Connection::Status::Disconnected, client.Status());
+	ASSERT_NULL(client.Send(request));
+
+	::Test::Server server(logger);
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(client.RequestPing());
+	client.Disconnect();
+	client.Disconnect();
+	ASSERT_EQUAL(Connection::Status::Disconnected, client.Status());
+	ASSERT_NULL(client.Send(request));
+	ASSERT_FALSE(client.Telemetry()->Connected());
+	server.Disconnect();
+	server.Disconnect();
+	ASSERT_EQUAL(Connection::Status::Disconnected, server.Status());
+	RETURN_TEST(0);
 }
 
 int test_disconnect_during_slow_handler() {
-	constexpr std::string_view fn_name = "test_disconnect_during_slow_handler";
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	::Test::Client abandoned_client(logger);
-	ASSERT_TRUE(fn_name, abandoned_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(abandoned_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	std::thread pending_thread([&]() {
 		(void)abandoned_client.RequestSlow();
 	});
@@ -1491,47 +1442,45 @@ int test_disconnect_during_slow_handler() {
 	}
 
 	::Test::Client surviving_client(logger);
-	ASSERT_TRUE(fn_name, surviving_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, surviving_client.RequestPing());
+	ASSERT_TRUE(surviving_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(surviving_client.RequestPing());
 	surviving_client.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_disconnect_requested_by_handler() {
-	constexpr std::string_view fn_name = "test_disconnect_requested_by_handler";
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	::Test::Client first_client(logger);
 	if (!first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
-	ASSERT_TRUE(fn_name, first_client.RequestDisconnect());
+	ASSERT_TRUE(first_client.RequestDisconnect());
 	first_client.Disconnect();
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	::Test::Client second_client(logger);
 	if (!second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
-	ASSERT_TRUE(fn_name, second_client.RequestPing());
+	ASSERT_TRUE(second_client.RequestPing());
 	second_client.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_many_concurrent_clients_keep_responses_isolated() {
-	constexpr std::string_view fn_name = "test_many_concurrent_clients_keep_responses_isolated";
 	constexpr std::size_t client_count = 12;
 	constexpr std::size_t requests_per_client = 4;
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::vector<int> client_results(client_count, 0);
@@ -1565,47 +1514,45 @@ int test_many_concurrent_clients_keep_responses_isolated() {
 	}
 
 	for (const int result: client_results) {
-		ASSERT_EQUAL(fn_name, result, 0);
+		ASSERT_EQUAL(0, result);
 	}
 
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_server_retry_after_failed_connect_and_restart() {
-	constexpr std::string_view fn_name = "test_server_retry_after_failed_connect_and_restart";
 	::Test::Server server(logger);
 	const auto invalid_protocol = static_cast<Net::Connection::Protocol>(-1);
-	ASSERT_FALSE(fn_name, server.Connect(invalid_protocol, HOST, PORT));
-	ASSERT_TRUE(fn_name, server.Status() == Net::Connection::Status::Disconnected);
+	ASSERT_FALSE(server.Connect(invalid_protocol, HOST, PORT));
+	ASSERT_EQUAL(Net::Connection::Status::Disconnected, server.Status());
 
-	ASSERT_TRUE(fn_name, server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	::Test::Client first_client(logger);
-	ASSERT_TRUE(fn_name, first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, first_client.RequestPing());
+	ASSERT_TRUE(first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(first_client.RequestPing());
 	first_client.Disconnect();
 	server.Disconnect();
-	ASSERT_TRUE(fn_name, server.Status() == Net::Connection::Status::Disconnected);
+	ASSERT_EQUAL(Net::Connection::Status::Disconnected, server.Status());
 
-	ASSERT_TRUE(fn_name, server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	::Test::Client second_client(logger);
-	ASSERT_TRUE(fn_name, second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, second_client.RequestPing());
+	ASSERT_TRUE(second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(second_client.RequestPing());
 	second_client.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_shutdown_with_pending_task() {
-	constexpr std::string_view fn_name = "test_shutdown_with_pending_task";
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	::Test::Client client(logger);
-	ASSERT_TRUE(fn_name, client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	std::thread pending_thread([&]() {
 		(void)client.RequestSlow();
 	});
@@ -1616,68 +1563,65 @@ int test_shutdown_with_pending_task() {
 	}
 
 	client.Disconnect();
-	ASSERT_TRUE(fn_name, server.Status() == Connection::Status::Disconnected);
-	RETURN_TEST(fn_name, 0);
+	ASSERT_EQUAL(Connection::Status::Disconnected, server.Status());
+	RETURN_TEST(0);
 }
 
 int test_slow_handler_does_not_block_other_clients() {
-	constexpr std::string_view fn_name = "test_slow_handler_does_not_block_other_clients";
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	::Test::Client slow_client(logger);
 	::Test::Client fast_client(logger);
-	ASSERT_TRUE(fn_name, slow_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, fast_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(slow_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(fast_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 	std::atomic<bool> slow_result{false};
 	std::thread slow_thread([&]() {
 		slow_result.store(slow_client.RequestSlow());
 	});
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	const auto start = std::chrono::steady_clock::now();
-	ASSERT_TRUE(fn_name, fast_client.RequestPing());
+	ASSERT_TRUE(fast_client.RequestPing());
 	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
 		std::chrono::steady_clock::now() - start).count();
-	ASSERT_TRUE(fn_name, elapsed < 300);
+	ASSERT_TRUE(elapsed < 300);
 	if (slow_thread.joinable()) {
 		slow_thread.join();
 	}
 
-	ASSERT_TRUE(fn_name, slow_result.load());
+	ASSERT_TRUE(slow_result.load());
 	slow_client.Disconnect();
 	fast_client.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_stop_requested_by_handler() {
-	constexpr std::string_view fn_name = "test_stop_requested_by_handler";
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	::Test::Client client(logger);
-	ASSERT_TRUE(fn_name, client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, client.RequestStopServer());
+	ASSERT_TRUE(client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(client.RequestStopServer());
 	client.Disconnect();
 	for (int attempt = 0; attempt < 40 && server.Status() != Connection::Status::Disconnected; ++attempt) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(25));
 	}
 
-	ASSERT_TRUE(fn_name, server.Status() == Connection::Status::Disconnected);
-	RETURN_TEST(fn_name, 0);
+	ASSERT_EQUAL(Connection::Status::Disconnected, server.Status());
+	RETURN_TEST(0);
 }
 
 // -------------------
 // Ownership
 // -------------------
 int test_deserializer_function_copy() {
-	constexpr std::string_view test_name = "test_deserializer_function_copy";
 	int invocation_count = 0;
 	int destruction_count = 0;
 	/**
@@ -1717,16 +1661,39 @@ int test_deserializer_function_copy() {
 		DeserializePacketFunction original{probe};
 		DeserializePacketFunction copy = original;
 		(void)copy(0, Consumer{}, {});
-		ASSERT_TRUE(test_name, invocation_count == 1);
+		ASSERT_EQUAL(1, invocation_count);
 	}
 
-	ASSERT_TRUE(test_name, invocation_count == 1);
-	ASSERT_TRUE(test_name, destruction_count == 3);
+	ASSERT_EQUAL(1, invocation_count);
+	ASSERT_EQUAL(3, destruction_count);
 	return 0;
 }
 
+int test_exact_derived_packet_copy() {
+	const std::string payload{"owned\0packet", 12};
+	auto original = PacketPointer::MakePointer<::Test::Packet::EchoText>(payload);
+	auto original_leaf = SB::Safe::DynamicPointerCast<::Test::Packet::EchoText>(original);
+	ASSERT_NOT_NULL(original_leaf);
+	auto clone = PacketPointer::MakePointer<::Test::Packet::EchoText>(*original_leaf);
+	auto clone_leaf = SB::Safe::DynamicPointerCast<::Test::Packet::EchoText>(clone);
+	ASSERT_NOT_NULL(clone_leaf);
+	ASSERT_NOT_EQUAL(original.get(), clone.get());
+	ASSERT_NOT_EQUAL(original_leaf->GetText().data(), clone_leaf->GetText().data());
+	ASSERT_EQUAL(original->Opcode(), clone->Opcode());
+	ASSERT_EQUAL(payload, clone_leaf->GetText());
+	original_leaf.reset();
+	original.reset();
+	auto retained = clone;
+	clone.reset();
+	clone_leaf.reset();
+	auto retained_leaf = SB::Safe::DynamicPointerCast<::Test::Packet::EchoText>(retained);
+	ASSERT_NOT_NULL(retained_leaf);
+	ASSERT_SIZE(retained_leaf->GetText(), SB::Size{payload.size()});
+	ASSERT_EQUAL(payload, retained_leaf->GetText());
+	RETURN_TEST(0);
+}
+
 int test_safe_shared_endpoint_lifetime() {
-	constexpr std::string_view fn_name = "test_safe_shared_endpoint_lifetime";
 	int client_destructions = 0;
 	int server_destructions = 0;
 	auto client = SB::Safe::Shared<Net::Client>::MakePointer<::Test::LifetimeClient>(client_destructions);
@@ -1735,279 +1702,129 @@ int test_safe_shared_endpoint_lifetime() {
 	auto server_telemetry = server->Telemetry();
 	auto client_leaf = SB::Safe::DynamicPointerCast<::Test::LifetimeClient>(client);
 	auto server_leaf = SB::Safe::DynamicPointerCast<::Test::LifetimeServer>(server);
-	ASSERT_TRUE(fn_name, client_leaf && server_leaf);
-	ASSERT_TRUE(fn_name, client_telemetry && server_telemetry);
-	ASSERT_TRUE(fn_name, client_leaf->Payload() == std::string(1024, 'c'));
-	ASSERT_TRUE(fn_name, server_leaf->Payload() == std::string(1024, 's'));
+	ASSERT_NOT_NULL(client_leaf);
+	ASSERT_NOT_NULL(server_leaf);
+	ASSERT_NOT_NULL(client_telemetry);
+	ASSERT_NOT_NULL(server_telemetry);
+	ASSERT_EQUAL(std::string(1024, 'c'), client_leaf->Payload());
+	ASSERT_EQUAL(std::string(1024, 's'), server_leaf->Payload());
 	auto client_copy = client;
 	auto server_copy = server;
 	client_leaf.reset();
 	server_leaf.reset();
 	client.reset();
 	server.reset();
-	ASSERT_EQUAL(fn_name, 0, client_destructions);
-	ASSERT_EQUAL(fn_name, 0, server_destructions);
+	ASSERT_EQUAL(0, client_destructions);
+	ASSERT_EQUAL(0, server_destructions);
 	client_copy.reset();
 	server_copy.reset();
-	ASSERT_EQUAL(fn_name, 1, client_destructions);
-	ASSERT_EQUAL(fn_name, 1, server_destructions);
-	ASSERT_EQUAL(fn_name, 0u, client_telemetry->ConnectionAttempts());
-	ASSERT_FALSE(fn_name, client_telemetry->Connected());
-	ASSERT_EQUAL(fn_name, 0u, server_telemetry->AcceptedConnections());
-	ASSERT_EQUAL(fn_name, 0u, server_telemetry->CurrentConnections());
-	RETURN_TEST(fn_name, 0);
+	ASSERT_EQUAL(1, client_destructions);
+	ASSERT_EQUAL(1, server_destructions);
+	ASSERT_EQUAL(SB::Size{0}, client_telemetry->ConnectionAttempts());
+	ASSERT_FALSE(client_telemetry->Connected());
+	ASSERT_EQUAL(SB::Size{0}, server_telemetry->AcceptedConnections());
+	ASSERT_EQUAL(SB::Size{0}, server_telemetry->CurrentConnections());
+	RETURN_TEST(0);
 }
 
 // -------------------
 // Protocol
 // -------------------
 int test_factory_failure_disconnects_client() {
-	constexpr std::string_view fn_name = "test_factory_failure_disconnects_client";
 	for (unsigned int mode = 1; mode <= 3; ++mode) {
 		::Test::Server server(logger);
 		server.InvalidReplyMode(mode);
-		ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+		ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
 		::Test::Client client(logger);
-		ASSERT_TRUE(fn_name, client.Connect(Connection::Protocol::IPv4, HOST, PORT));
-		ASSERT_FALSE(fn_name, client.RequestEchoText("factory_rejection_payload").has_value());
-		ASSERT_TRUE(fn_name, client.Status() == Connection::Status::Disconnected);
-		ASSERT_EQUAL(fn_name, 1u, client.Telemetry()->RequestsWithoutResponse());
+		ASSERT_TRUE(client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+		ASSERT_FALSE(client.RequestEchoText("factory_rejection_payload").has_value());
+		ASSERT_EQUAL(Connection::Status::Disconnected, client.Status());
+		ASSERT_EQUAL(SB::Size{1}, client.Telemetry()->RequestsWithoutResponse());
 		server.Disconnect();
 	}
 	::Test::Server healthy(logger);
-	ASSERT_TRUE(fn_name, healthy.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(healthy.Connect(Connection::Protocol::IPv4, HOST, PORT));
 	::Test::Client legitimate(logger);
-	ASSERT_TRUE(fn_name, legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
 	const auto echoed = legitimate.RequestEchoText("healthy_factory_payload");
-	ASSERT_TRUE(fn_name, echoed && *echoed == "healthy_factory_payload");
+	ASSERT_TRUE(echoed && *echoed == "healthy_factory_payload");
 	legitimate.Disconnect();
 	healthy.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_factory_failure_disconnects_only_server_peer() {
-	constexpr std::string_view fn_name = "test_factory_failure_disconnects_only_server_peer";
 	::Test::Server server(logger);
-	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	for (const auto opcode: std::array<Transport::Packet::OpcodeType, 2>{0x7FFE,
-		static_cast<Transport::Packet::OpcodeType>(::Test::Packet::Opcode::C_MSG_ECHOTEXT)}) {
-		const RawSocket peer = ConnectRawSocket();
-		ASSERT_TRUE(fn_name, peer != invalid_raw_socket);
-		StormByte::BinaryData frame = Serializable<Transport::Packet::OpcodeType>(opcode).Serialize();
-		frame.append(Serializable<std::size_t>(1).Serialize());
-		frame.push_back(std::byte{0xFF});
-		ASSERT_TRUE(fn_name, SendRawBytes(peer, std::span<const std::byte>{frame}));
-		const bool closed = WaitForRawDisconnect(peer, std::chrono::seconds{2});
-		CloseRawSocket(peer);
-		ASSERT_TRUE(fn_name, closed);
-	}
-	ASSERT_EQUAL(fn_name, 0u, server.Telemetry()->PacketsDispatched());
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
 	::Test::Client legitimate(logger);
-	ASSERT_TRUE(fn_name, legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	for (const bool unknown: {true, false}) {
+		::Test::Client peer(logger);
+		ASSERT_TRUE(peer.Connect(Connection::Protocol::IPv4, HOST, PORT));
+		::Test::InvalidReply request(unknown, true);
+		ASSERT_NULL(peer.Send(request));
+		ASSERT_EQUAL(Connection::Status::Disconnected, peer.Status());
+		ASSERT_EQUAL(SB::Size{1}, peer.Telemetry()->RequestsWithoutResponse());
+		ASSERT_EQUAL(Connection::Status::Connected, server.Status());
+	}
+	ASSERT_EQUAL(SB::Size{0}, server.Telemetry()->PacketsDispatched());
 	const auto echoed = legitimate.RequestEchoText("server_still_usable");
-	ASSERT_TRUE(fn_name, echoed && *echoed == "server_still_usable");
+	ASSERT_TRUE(echoed && *echoed == "server_still_usable");
 	legitimate.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
-}
-
-int test_fragmented_and_batched_frames() {
-	constexpr std::string_view fn_name = "test_fragmented_and_batched_frames";
-	constexpr std::size_t frame_header_size = sizeof(Transport::Packet::OpcodeType) + sizeof(std::size_t);
-
-	::Test::Server server(logger);
-	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
-	}
-
-	std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-	const RawSocket socket_handle = ConnectRawSocket();
-	if (socket_handle == invalid_raw_socket) {
-		logger << Level::Error << fn_name << ": raw socket connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
-	}
-
-	auto make_wire_frame = [](const ::Test::Packet::Opcode opcode, const StormByte::BinaryData& payload) {
-		StormByte::BinaryData frame = Serializable<Transport::Packet::OpcodeType>(
-			static_cast<Transport::Packet::OpcodeType>(opcode)).Serialize();
-		const StormByte::BinaryData payload_size = Serializable<std::size_t>(payload.size()).Serialize();
-		frame.insert(frame.end(), payload_size.begin(), payload_size.end());
-		frame.insert(frame.end(), payload.begin(), payload.end());
-		return frame;
-	};
-
-	auto receive_frame = [&](const ::Test::Packet::Opcode expected_opcode, const std::string* expected_text = nullptr) -> bool {
-		StormByte::BinaryData header(frame_header_size);
-		if (!ReceiveRawBytes(socket_handle, std::span<std::byte>(header.data(), header.size()))) {
-			return false;
-		}
-
-		auto opcode = Serializable<Transport::Packet::OpcodeType>::Deserialize(header);
-		auto payload_size = Serializable<std::size_t>::Deserialize(std::span<const std::byte>{
-			header.data() + sizeof(Transport::Packet::OpcodeType),
-			header.size() - sizeof(Transport::Packet::OpcodeType)});
-		if (!opcode || !payload_size || *opcode != static_cast<Transport::Packet::OpcodeType>(expected_opcode)) {
-			return false;
-		}
-
-		if (*payload_size == 0) {
-			return expected_text == nullptr;
-		}
-
-		if (expected_text == nullptr) {
-			return false;
-		}
-
-		StormByte::BinaryData payload(*payload_size);
-		if (!ReceiveRawBytes(socket_handle, std::span<std::byte>(payload.data(), payload.size()))) {
-			return false;
-		}
-
-		for (auto& byte: payload) {
-			byte ^= std::byte{0xAB};
-		}
-
-		auto text = Serializable<std::string>::Deserialize(payload);
-		return text && *text == *expected_text;
-	};
-
-	const StormByte::BinaryData ping_data = make_wire_frame(::Test::Packet::Opcode::C_MSG_PING, {});
-	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(ping_data.data(), 1)));
-	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(ping_data.data() + 1, ping_data.size() - 1)));
-	ASSERT_TRUE(fn_name, receive_frame(::Test::Packet::Opcode::S_MSG_PONG));
-
-	const std::string text = "fragmented payload";
-	StormByte::BinaryData text_payload = Serializable<std::string>(text).Serialize();
-	for (auto& byte: text_payload) {
-		byte ^= std::byte{0xAB};
-	}
-
-	const StormByte::BinaryData text_data = make_wire_frame(::Test::Packet::Opcode::C_MSG_ECHOTEXT, text_payload);
-	const std::size_t split = frame_header_size + 2;
-	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(text_data.data(), split)));
-	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(text_data.data() + split, text_data.size() - split)));
-	ASSERT_TRUE(fn_name, receive_frame(::Test::Packet::Opcode::S_MSG_REPLYTEXT, &text));
-
-	StormByte::BinaryData batched;
-	batched.insert(batched.end(), ping_data.begin(), ping_data.end());
-	batched.insert(batched.end(), ping_data.begin(), ping_data.end());
-	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>(batched.data(), batched.size())));
-	ASSERT_TRUE(fn_name, receive_frame(::Test::Packet::Opcode::S_MSG_PONG));
-	ASSERT_TRUE(fn_name, receive_frame(::Test::Packet::Opcode::S_MSG_PONG));
-
-	CloseRawSocket(socket_handle);
-	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
-}
-
-int test_malformed_frames_disconnect_only_peer() {
-	constexpr std::string_view fn_name = "test_malformed_frames_disconnect_only_peer";
-	::Test::Server server(logger);
-	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
-		RETURN_TEST(fn_name, 1);
-	}
-
-	auto make_header = [](const Transport::Packet::OpcodeType opcode, const std::size_t payload_size) {
-		StormByte::BinaryData header = Serializable<Transport::Packet::OpcodeType>(opcode).Serialize();
-		const StormByte::BinaryData size_bytes = Serializable<std::size_t>(payload_size).Serialize();
-		header.insert(header.end(), size_bytes.begin(), size_bytes.end());
-		return header;
-	};
-
-	const RawSocket unknown_opcode_socket = ConnectRawSocket();
-	if (unknown_opcode_socket == invalid_raw_socket) {
-		server.Disconnect();
-		RETURN_TEST(fn_name, 1);
-	}
-	const StormByte::BinaryData unknown_opcode_frame = make_header(
-		static_cast<Transport::Packet::OpcodeType>(0xFFFF), 0);
-	const bool unknown_sent = SendRawBytes(unknown_opcode_socket,
-		std::span<const std::byte>{unknown_opcode_frame.data(), unknown_opcode_frame.size()});
-	const bool unknown_closed = unknown_sent && WaitForRawDisconnect(unknown_opcode_socket, std::chrono::seconds{3});
-	CloseRawSocket(unknown_opcode_socket);
-	ASSERT_TRUE(fn_name, unknown_closed);
-
-	const RawSocket malformed_payload_socket = ConnectRawSocket();
-	if (malformed_payload_socket == invalid_raw_socket) {
-		server.Disconnect();
-		RETURN_TEST(fn_name, 1);
-	}
-	const StormByte::BinaryData malformed_header = make_header(
-		static_cast<Transport::Packet::OpcodeType>(::Test::Packet::Opcode::C_MSG_ASKNAMELIST), 1);
-	const std::byte malformed_payload{0xAB};
-	const bool malformed_sent = SendRawBytes(malformed_payload_socket,
-		std::span<const std::byte>{malformed_header.data(), malformed_header.size()})
-		&& SendRawBytes(malformed_payload_socket, std::span<const std::byte>{&malformed_payload, 1});
-	const bool malformed_closed = malformed_sent
-		&& WaitForRawDisconnect(malformed_payload_socket, std::chrono::seconds{3});
-	CloseRawSocket(malformed_payload_socket);
-	ASSERT_TRUE(fn_name, malformed_closed);
-
-	const RawSocket truncated_payload_socket = ConnectRawSocket();
-	if (truncated_payload_socket == invalid_raw_socket) {
-		server.Disconnect();
-		RETURN_TEST(fn_name, 1);
-	}
-	const StormByte::BinaryData truncated_header = make_header(
-		static_cast<Transport::Packet::OpcodeType>(::Test::Packet::Opcode::C_MSG_ECHOTEXT), 16);
-	const std::byte partial_payload{0xAB};
-	const bool partial_frame_sent = SendRawBytes(truncated_payload_socket,
-		std::span<const std::byte>{truncated_header.data(), truncated_header.size()})
-		&& SendRawBytes(truncated_payload_socket, std::span<const std::byte>{&partial_payload, 1});
-	CloseRawSocket(truncated_payload_socket);
-	ASSERT_TRUE(fn_name, partial_frame_sent);
-
-	::Test::Client healthy_client(logger);
-	ASSERT_TRUE(fn_name, healthy_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_TRUE(fn_name, healthy_client.RequestPing());
-	healthy_client.Disconnect();
-	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_mismatched_pipeline_disconnects_only_peer() {
-	constexpr std::string_view fn_name = "test_mismatched_pipeline_disconnects_only_peer";
 	::Test::Server server(logger);
-	ASSERT_TRUE(fn_name, server.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	const RawSocket socket_handle = ConnectRawSocket();
-	ASSERT_TRUE(fn_name, socket_handle != invalid_raw_socket);
-	Producer producer;
-	ASSERT_TRUE(fn_name, producer.Write(Serializable<std::string>("untrusted client").Serialize()));
-	producer.Close();
-	Pipeline attacker_pipeline;
-	attacker_pipeline.Add(Buf::Pipe{::Test::XorPipe{std::byte{0xCD}}});
-	auto output = attacker_pipeline.Process(producer.Consumer(), logger, ExecutionMode::Sync);
-	StormByte::BinaryData payload;
-	ASSERT_TRUE(fn_name, output.Extract(0, payload) && !payload.empty());
-	StormByte::BinaryData frame = Serializable<Transport::Packet::OpcodeType>(
-		static_cast<Transport::Packet::OpcodeType>(::Test::Packet::Opcode::C_MSG_ECHOTEXT)).Serialize();
-	frame.append(Serializable<std::size_t>(payload.size()).Serialize());
-	frame.append(std::move(payload));
-	ASSERT_TRUE(fn_name, SendRawBytes(socket_handle, std::span<const std::byte>{frame}));
-	const bool disconnected = WaitForRawDisconnect(socket_handle, std::chrono::seconds{2});
-	CloseRawSocket(socket_handle);
-	ASSERT_TRUE(fn_name, disconnected);
-	ASSERT_EQUAL(fn_name, 0u, server.Telemetry()->PacketsDispatched());
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
 	::Test::Client legitimate(logger);
-	ASSERT_TRUE(fn_name, legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	::Test::Client peer(logger);
+	peer.OutputMask(std::byte{0xCD});
+	ASSERT_TRUE(peer.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_FALSE(peer.RequestEchoText("untrusted client").has_value());
+	ASSERT_EQUAL(Connection::Status::Disconnected, peer.Status());
+	ASSERT_EQUAL(SB::Size{1}, peer.Telemetry()->RequestsWithoutResponse());
+	ASSERT_EQUAL(SB::Size{0}, server.Telemetry()->PacketsDispatched());
+	ASSERT_EQUAL(Connection::Status::Connected, server.Status());
 	const auto echoed = legitimate.RequestEchoText("legitimate client");
-	ASSERT_TRUE(fn_name, echoed && *echoed == "legitimate client");
+	ASSERT_TRUE(echoed && *echoed == "legitimate client");
 	legitimate.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_network_exception_string_view() {
-	constexpr std::string_view fn_name = "test_network_exception_string_view";
 	const Net::Exception network_error{std::string_view{"request failed"}};
 	const Net::ConnectionError connection_error{std::string_view{"socket closed"}};
 	const Net::FrameError frame_error{std::string_view{"invalid frame"}};
-	ASSERT_TRUE(fn_name, std::string_view{network_error.what()} == "StormByte.Network: request failed");
-	ASSERT_TRUE(fn_name, std::string_view{connection_error.what()} == "StormByte.Network.Connection: socket closed");
-	ASSERT_TRUE(fn_name, std::string_view{frame_error.what()} == "StormByte.Network.Transport.Frame: invalid frame");
+	ASSERT_EQUAL(std::string_view{"StormByte.Network: request failed"}, std::string_view{network_error.what()});
+	ASSERT_EQUAL(std::string_view{"StormByte.Network.Connection: socket closed"}, std::string_view{connection_error.what()});
+	ASSERT_EQUAL(std::string_view{"StormByte.Network.Transport.Frame: invalid frame"}, std::string_view{frame_error.what()});
 	return 0;
+}
+
+int test_ordered_batch_requests() {
+	::Test::Server server(logger);
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	::Test::Client client(logger);
+	ASSERT_TRUE(client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	for (std::size_t index = 0; index < 8; ++index) {
+		const std::string text = std::format("ordered request {}", index);
+		::Test::Packet::EchoText request(text);
+		auto reply = SB::Safe::DynamicPointerCast<::Test::Packet::ReplyText>(client.Send(request));
+		ASSERT_NOT_NULL(reply);
+		ASSERT_EQUAL(text, reply->GetText());
+		::Test::Packet::Ping ping;
+		ASSERT_NOT_NULL(SB::Safe::DynamicPointerCast<::Test::Packet::Pong>(client.Send(ping)));
+	}
+	ASSERT_EQUAL(SB::Size{16}, client.Telemetry()->Requests());
+	ASSERT_EQUAL(SB::Size{16}, client.Telemetry()->Responses());
+	ASSERT_EQUAL(SB::Size{0}, client.Telemetry()->RequestsWithoutResponse());
+	client.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(0);
 }
 
 int test_request_additional_commands() {
@@ -2016,7 +1833,7 @@ int test_request_additional_commands() {
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2024,24 +1841,52 @@ int test_request_additional_commands() {
 	::Test::Client client(logger);
 	if (!client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": client.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
-	ASSERT_TRUE(fn_name, client.RequestPing());
+	ASSERT_TRUE(client.RequestPing());
 
 	const std::string text = "StormByte network command with spaces and UTF-8: cafe";
 	auto echoed_text = client.RequestEchoText(text);
-	ASSERT_TRUE(fn_name, echoed_text.has_value());
-	ASSERT_TRUE(fn_name, echoed_text.value() == text);
+	ASSERT_TRUE(echoed_text.has_value());
+	ASSERT_EQUAL(text, echoed_text.value());
 
 	const std::vector<int> numbers{ -100, 0, 1, 2, 42, 1000 };
 	auto sum = client.RequestSum(numbers);
-	ASSERT_TRUE(fn_name, sum.has_value());
-	ASSERT_EQUAL(fn_name, sum.value(), 945);
+	ASSERT_TRUE(sum.has_value());
+	ASSERT_EQUAL(945, sum.value());
 
 	client.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
+}
+
+int test_request_empty_and_embedded_nul_payloads() {
+	::Test::Server server(logger);
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	::Test::Client client(logger);
+	ASSERT_TRUE(client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(client.RequestPing());
+	auto text = client.RequestEchoText({});
+	ASSERT_TRUE(text.has_value());
+	ASSERT_EMPTY(*text);
+	const std::string embedded_nul{"before\0after", 12};
+	text = client.RequestEchoText(embedded_nul);
+	ASSERT_TRUE(text.has_value());
+	ASSERT_SIZE(*text, SB::Size{embedded_nul.size()});
+	ASSERT_EQUAL(embedded_nul, *text);
+	auto names = client.RequestNameList(0);
+	ASSERT_TRUE(names.has_value());
+	ASSERT_EMPTY(*names);
+	auto sum = client.RequestSum({});
+	ASSERT_TRUE(sum.has_value());
+	ASSERT_EQUAL(0, *sum);
+	auto large = client.RequestLargeDataEcho(0);
+	ASSERT_TRUE(large.has_value());
+	ASSERT_EMPTY(*large);
+	client.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(0);
 }
 
 int test_request_large_data_echoed() {
@@ -2050,7 +1895,7 @@ int test_request_large_data_echoed() {
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2058,25 +1903,25 @@ int test_request_large_data_echoed() {
 	::Test::Client client(logger);
 	if (!client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": client.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	auto data_expected = client.RequestLargeDataEcho(large_data_size);
 	if (!data_expected) {
 		logger << Level::Error << fn_name << ": RequestLargeDataEcho failed: " << data_expected.error()->what() << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	// Single 20 MiB buffer: size + content check without a second reference string
 	const std::string& data = data_expected.value();
-	ASSERT_EQUAL(fn_name, data.size(), large_data_size);
-	ASSERT_TRUE(fn_name, data.find_first_not_of(large_data_repeat_char) == std::string::npos);
+	ASSERT_SIZE(data, SB::Size{large_data_size});
+	ASSERT_EQUAL(std::string::npos, data.find_first_not_of(large_data_repeat_char));
 
 	logger << Level::Info << fn_name << ": Received large data size: " << humanreadable_bytes << data.size()
 		<< nohumanreadable << std::endl;
 	client.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_request_name_list() {
@@ -2085,7 +1930,7 @@ int test_request_name_list() {
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2093,29 +1938,29 @@ int test_request_name_list() {
 	::Test::Client client(logger);
 	if (!client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": client.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	const std::size_t amount = 3;
 	auto names_expected = client.RequestNameList(amount);
 	if (!names_expected) {
 		logger << Level::Error << fn_name << ": RequestNameList failed: " << names_expected.error()->what() << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	auto names = names_expected.value();
 	std::string all_names;
-	ASSERT_TRUE(fn_name, names.size() == amount);
+	ASSERT_SIZE(names, SB::Size{amount});
 	for (std::size_t i = 0; i < amount; ++i) {
 		all_names += names[i] + " ";
-		ASSERT_TRUE(fn_name, names[i] == ("Name_" + std::to_string(i + 1)));
+		ASSERT_EQUAL("Name_" + std::to_string(i + 1), names[i]);
 	}
 
 	logger << Level::Info << fn_name << ": Received names: " << std::string_view{all_names} << std::endl;
 
 	client.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 int test_request_random_number() {
@@ -2124,7 +1969,7 @@ int test_request_random_number() {
 	::Test::Server server(logger);
 	if (!server.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": server.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2132,67 +1977,46 @@ int test_request_random_number() {
 	::Test::Client client(logger);
 	if (!client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT)) {
 		logger << Level::Error << fn_name << ": client.Connect failed." << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	auto number_expected = client.RequestRandomNumber();
 	if (!number_expected) {
 		logger << Level::Error << fn_name << ": RequestRandomNumber failed: " << number_expected.error()->what() << std::endl;
-		RETURN_TEST(fn_name, 1);
+		RETURN_TEST(1);
 	}
 
 	int n = number_expected.value();
-	ASSERT_TRUE(fn_name, n >= 0 && n < 100);
+	ASSERT_TRUE(n >= 0 && n < 100);
 	logger << Level::Info << fn_name << ": Received random number: " << n << std::endl;
 	client.Disconnect();
 	server.Disconnect();
-	RETURN_TEST(fn_name, 0);
+	RETURN_TEST(0);
 }
 
 // -------------------
 // Remote File
 // -------------------
 int test_remote_file_mount_codec() {
-	constexpr std::string_view fn_name = "test_remote_file_mount_codec";
 	using Mount = Net::RemoteFileMount;
 
 	for (const Mount& mount: { Mount::NotAuthorized(), Mount::Unavailable() }) {
-		const StormByte::BinaryData encoded = Serializable<Mount>(mount).Serialize();
-		const auto decoded = Serializable<Mount>::Deserialize(encoded);
-		ASSERT_TRUE(fn_name, decoded.has_value());
-		ASSERT_TRUE(fn_name, decoded->Result() == mount.Result());
-		ASSERT_TRUE(fn_name, decoded->Port() == 0);
-		ASSERT_TRUE(fn_name, decoded->Mode() == Mount::Access::None);
+		const SB::Safe::Binary encoded = Serializable<Mount>(mount).Serialize();
+		const auto decoded = Serializable<Mount>::Deserialize(encoded.span());
+		ASSERT_TRUE(decoded.has_value());
+		ASSERT_EQUAL(mount.Result(), decoded->Result());
+		ASSERT_EQUAL(0u, decoded->Port());
+		ASSERT_EQUAL(Mount::Access::None, decoded->Mode());
+		ASSERT_EQUAL(0u, decoded->MaximumTimeoutSeconds());
+		ASSERT_EQUAL(mount.Token(), decoded->Token());
+		ASSERT_NOT_EMPTY(encoded);
+		SB::Safe::Binary truncated = encoded;
+		truncated.resize(truncated.size() - SB::ByteSize{1});
+		ASSERT_FALSE(Serializable<Mount>::Deserialize(truncated.span()).has_value());
+		SB::Safe::Binary extended = encoded;
+		extended.push_back(std::byte{0});
+		ASSERT_FALSE(Serializable<Mount>::Deserialize(extended.span()).has_value());
 	}
-
-	StormByte::BinaryData authorized;
-	authorized.append(Serializable<std::uint32_t>(0x5342464Du).Serialize());
-	authorized.append(Serializable<std::uint16_t>(1).Serialize());
-	authorized.append(Serializable<std::uint16_t>(7081).Serialize());
-	authorized.append(Serializable<std::uint16_t>(30).Serialize());
-	authorized.append(Serializable<std::uint8_t>(static_cast<std::uint8_t>(Mount::Status::Authorized)).Serialize());
-	authorized.append(Serializable<std::uint8_t>(static_cast<std::uint8_t>(Mount::Access::Read)).Serialize());
-	Mount::ChannelToken token{};
-	token.back() = std::byte{0x5A};
-	authorized.append(std::span<const std::byte>{token});
-	const auto decoded_authorized = Serializable<Mount>::Deserialize(authorized);
-	ASSERT_TRUE(fn_name, decoded_authorized.has_value());
-	ASSERT_TRUE(fn_name, decoded_authorized->Result() == Mount::Status::Authorized);
-	ASSERT_TRUE(fn_name, decoded_authorized->Port() == 7081);
-	ASSERT_TRUE(fn_name, decoded_authorized->MaximumTimeoutSeconds() == 30);
-	ASSERT_TRUE(fn_name, decoded_authorized->Token() == token);
-
-	StormByte::BinaryData truncated = authorized;
-	truncated.pop_back();
-	ASSERT_FALSE(fn_name, Serializable<Mount>::Deserialize(truncated).has_value());
-	StormByte::BinaryData extended = authorized;
-	extended.push_back(std::byte{0});
-	ASSERT_FALSE(fn_name, Serializable<Mount>::Deserialize(extended).has_value());
-
-	StormByte::BinaryData forged_denial = authorized;
-	forged_denial[sizeof(std::uint32_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t)] =
-		static_cast<std::byte>(Mount::Status::NotAuthorized);
-	ASSERT_FALSE(fn_name, Serializable<Mount>::Deserialize(forged_denial).has_value());
 	return 0;
 }
 
@@ -2200,7 +2024,6 @@ int test_remote_file_mount_codec() {
 // Telemetry
 // -------------------
 int test_telemetry_concurrent_samples() {
-	constexpr std::string_view fn_name = "test_telemetry_concurrent_samples";
 	constexpr std::size_t sample_count = 4;
 	::Test::Telemetry telemetry;
 	std::latch ready{sample_count};
@@ -2224,22 +2047,21 @@ int test_telemetry_concurrent_samples() {
 	for (auto& worker: workers) {
 		worker.join();
 	}
-	ASSERT_EQUAL(fn_name, 0u, active_values.Count);
+	ASSERT_EQUAL(SB::Size{0}, active_values.Count);
 	const auto values = telemetry.Values("concurrent");
-	ASSERT_EQUAL(fn_name, sample_count, values.Count);
+	ASSERT_EQUAL(SB::Size{sample_count}, values.Count);
 	std::chrono::microseconds total{};
 	for (std::size_t index = 0; index < sample_count; ++index) {
-		ASSERT_TRUE(fn_name, elapsed[index].count() > 0);
-		ASSERT_TRUE(fn_name, elapsed[index] == repeated[index]);
+		ASSERT_TRUE(elapsed[index].count() > 0);
+		ASSERT_EQUAL(elapsed[index], repeated[index]);
 		total += elapsed[index];
 	}
-	ASSERT_TRUE(fn_name, values.Time == total);
-	ASSERT_TRUE(fn_name, values.MeanDuration == total / sample_count);
-	RETURN_TEST(fn_name, 0);
+	ASSERT_EQUAL(total, values.Time);
+	ASSERT_EQUAL(total / sample_count, values.MeanDuration);
+	RETURN_TEST(0);
 }
 
 int test_telemetry_cross_thread_sample_destruction() {
-	constexpr std::string_view fn_name = "test_telemetry_cross_thread_sample_destruction";
 	::Test::Telemetry telemetry;
 	{
 		auto sample = telemetry.Measure("transferred-raii");
@@ -2249,18 +2071,17 @@ int test_telemetry_cross_thread_sample_destruction() {
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 		});
 		worker.join();
-		ASSERT_TRUE(fn_name, sample.Stop() == std::chrono::microseconds::zero());
-		ASSERT_EQUAL(fn_name, 1u, telemetry.Values("transferred-raii").Count);
+		ASSERT_EQUAL(std::chrono::microseconds::zero(), sample.Stop());
+		ASSERT_EQUAL(SB::Size{1}, telemetry.Values("transferred-raii").Count);
 	}
 	const auto values = telemetry.Values("transferred-raii");
-	ASSERT_EQUAL(fn_name, 1u, values.Count);
-	ASSERT_TRUE(fn_name, values.Time.count() > 0);
-	ASSERT_TRUE(fn_name, values.MeanDuration == values.Time);
-	RETURN_TEST(fn_name, 0);
+	ASSERT_EQUAL(SB::Size{1}, values.Count);
+	ASSERT_TRUE(values.Time.count() > 0);
+	ASSERT_EQUAL(values.Time, values.MeanDuration);
+	RETURN_TEST(0);
 }
 
 int test_telemetry_cross_thread_sample_transfer() {
-	constexpr std::string_view fn_name = "test_telemetry_cross_thread_sample_transfer";
 	::Test::Telemetry telemetry;
 	std::chrono::microseconds elapsed{};
 	std::chrono::microseconds repeated{};
@@ -2272,20 +2093,19 @@ int test_telemetry_cross_thread_sample_transfer() {
 			repeated = transferred.Stop();
 		});
 		worker.join();
-		ASSERT_TRUE(fn_name, sample.Stop() == std::chrono::microseconds::zero());
-		ASSERT_EQUAL(fn_name, 1u, telemetry.Values("transferred").Count);
+		ASSERT_EQUAL(std::chrono::microseconds::zero(), sample.Stop());
+		ASSERT_EQUAL(SB::Size{1}, telemetry.Values("transferred").Count);
 	}
 	const auto values = telemetry.Values("transferred");
-	ASSERT_EQUAL(fn_name, 1u, values.Count);
-	ASSERT_TRUE(fn_name, elapsed.count() > 0);
-	ASSERT_TRUE(fn_name, elapsed == repeated);
-	ASSERT_TRUE(fn_name, values.Time == elapsed);
-	ASSERT_TRUE(fn_name, values.MeanDuration == elapsed);
-	RETURN_TEST(fn_name, 0);
+	ASSERT_EQUAL(SB::Size{1}, values.Count);
+	ASSERT_TRUE(elapsed.count() > 0);
+	ASSERT_EQUAL(elapsed, repeated);
+	ASSERT_EQUAL(elapsed, values.Time);
+	ASSERT_EQUAL(elapsed, values.MeanDuration);
+	RETURN_TEST(0);
 }
 
 int test_telemetry_nested_samples() {
-	constexpr std::string_view fn_name = "test_telemetry_nested_samples";
 	::Test::Telemetry telemetry;
 	std::chrono::microseconds inner_elapsed{};
 	{
@@ -2296,21 +2116,20 @@ int test_telemetry_nested_samples() {
 			std::this_thread::sleep_for(std::chrono::milliseconds(5));
 			inner_elapsed = inner.Stop();
 			const auto values = telemetry.Values("nested");
-			ASSERT_EQUAL(fn_name, 1u, values.Count);
-			ASSERT_TRUE(fn_name, values.Time == inner_elapsed);
+			ASSERT_EQUAL(SB::Size{1}, values.Count);
+			ASSERT_EQUAL(inner_elapsed, values.Time);
 		}
-		ASSERT_EQUAL(fn_name, 1u, telemetry.Values("nested").Count);
+		ASSERT_EQUAL(SB::Size{1}, telemetry.Values("nested").Count);
 	}
 	const auto values = telemetry.Values("nested");
-	ASSERT_EQUAL(fn_name, 2u, values.Count);
-	ASSERT_TRUE(fn_name, inner_elapsed.count() > 0);
-	ASSERT_TRUE(fn_name, values.Time - inner_elapsed >= inner_elapsed + std::chrono::milliseconds(1));
-	ASSERT_TRUE(fn_name, values.MeanDuration == values.Time / 2);
-	RETURN_TEST(fn_name, 0);
+	ASSERT_EQUAL(SB::Size{2}, values.Count);
+	ASSERT_TRUE(inner_elapsed.count() > 0);
+	ASSERT_TRUE(values.Time - inner_elapsed >= inner_elapsed + std::chrono::milliseconds(1));
+	ASSERT_EQUAL(values.Time / 2, values.MeanDuration);
+	RETURN_TEST(0);
 }
 
 int test_telemetry_repeated_stop() {
-	constexpr std::string_view fn_name = "test_telemetry_repeated_stop";
 	::Test::Telemetry telemetry;
 	std::chrono::microseconds elapsed{};
 	{
@@ -2318,91 +2137,90 @@ int test_telemetry_repeated_stop() {
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 		elapsed = sample.Stop();
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
-		ASSERT_TRUE(fn_name, sample.Stop() == elapsed);
-		ASSERT_TRUE(fn_name, sample.Stop() == elapsed);
-		ASSERT_EQUAL(fn_name, 1u, telemetry.Values("repeated").Count);
+		ASSERT_EQUAL(elapsed, sample.Stop());
+		ASSERT_EQUAL(elapsed, sample.Stop());
+		ASSERT_EQUAL(SB::Size{1}, telemetry.Values("repeated").Count);
 	}
 	const auto values = telemetry.Values("repeated");
-	ASSERT_EQUAL(fn_name, 1u, values.Count);
-	ASSERT_TRUE(fn_name, elapsed.count() > 0);
-	ASSERT_TRUE(fn_name, values.Time == elapsed);
-	ASSERT_TRUE(fn_name, values.MeanDuration == elapsed);
-	RETURN_TEST(fn_name, 0);
+	ASSERT_EQUAL(SB::Size{1}, values.Count);
+	ASSERT_TRUE(elapsed.count() > 0);
+	ASSERT_EQUAL(elapsed, values.Time);
+	ASSERT_EQUAL(elapsed, values.MeanDuration);
+	RETURN_TEST(0);
 }
 
 int test_telemetry_snapshots_and_lifetime() {
-	constexpr std::string_view fn_name = "test_telemetry_snapshots_and_lifetime";
 	StormByte::Safe::Shared<Net::ServerTelemetry> server_telemetry;
 	StormByte::Safe::Shared<Net::ClientTelemetry> first_telemetry;
 	StormByte::Safe::Shared<Net::ClientTelemetry> second_telemetry;
 
 	{
-		auto server = std::make_unique<::Test::Server>(logger);
-		ASSERT_TRUE(fn_name, server->Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+		auto server = SB::Safe::Shared<Net::Server>::MakePointer<::Test::Server>(logger);
+		ASSERT_TRUE(server->Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 		server_telemetry = server->Telemetry();
-		ASSERT_TRUE(fn_name, static_cast<bool>(server_telemetry));
+		ASSERT_NOT_NULL(server_telemetry);
 
 		{
 			::Test::Client first_client(logger);
 			::Test::Client second_client(logger);
-			ASSERT_TRUE(fn_name, first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
-			ASSERT_TRUE(fn_name, second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+			ASSERT_TRUE(first_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
+			ASSERT_TRUE(second_client.Connect(Net::Connection::Protocol::IPv4, HOST, PORT));
 			first_telemetry = first_client.Telemetry();
 			second_telemetry = second_client.Telemetry();
-			ASSERT_TRUE(fn_name, static_cast<bool>(first_telemetry));
-			ASSERT_TRUE(fn_name, static_cast<bool>(second_telemetry));
-			ASSERT_TRUE(fn_name, first_telemetry.get() != second_telemetry.get());
+			ASSERT_NOT_NULL(first_telemetry);
+			ASSERT_NOT_NULL(second_telemetry);
+			ASSERT_NOT_EQUAL(first_telemetry.get(), second_telemetry.get());
 
-			ASSERT_TRUE(fn_name, first_client.RequestPing());
-			ASSERT_TRUE(fn_name, second_client.RequestPing());
+			ASSERT_TRUE(first_client.RequestPing());
+			ASSERT_TRUE(second_client.RequestPing());
 
-			ASSERT_TRUE(fn_name, first_telemetry->ConnectionAttempts() == 1);
-			ASSERT_TRUE(fn_name, first_telemetry->ConnectionsEstablished() == 1);
-			ASSERT_TRUE(fn_name, first_telemetry->ConnectionFailures() == 0);
-			ASSERT_TRUE(fn_name, first_telemetry->Connected());
-			ASSERT_TRUE(fn_name, first_telemetry->Requests() == 1);
-			ASSERT_TRUE(fn_name, first_telemetry->Responses() == 1);
-			ASSERT_TRUE(fn_name, first_telemetry->RequestsWithoutResponse() == 0);
-			ASSERT_TRUE(fn_name, first_telemetry->RequestLatencySamples() == 1);
-			ASSERT_TRUE(fn_name, first_telemetry->MeanRequestLatency().count() >= 0);
+			ASSERT_EQUAL(SB::Size{1}, first_telemetry->ConnectionAttempts());
+			ASSERT_EQUAL(SB::Size{1}, first_telemetry->ConnectionsEstablished());
+			ASSERT_EQUAL(SB::Size{0}, first_telemetry->ConnectionFailures());
+			ASSERT_TRUE(first_telemetry->Connected());
+			ASSERT_EQUAL(SB::Size{1}, first_telemetry->Requests());
+			ASSERT_EQUAL(SB::Size{1}, first_telemetry->Responses());
+			ASSERT_EQUAL(SB::Size{0}, first_telemetry->RequestsWithoutResponse());
+			ASSERT_EQUAL(SB::Size{1}, first_telemetry->RequestLatencySamples());
+			ASSERT_TRUE(first_telemetry->MeanRequestLatency().count() >= 0);
 
-			ASSERT_TRUE(fn_name, second_telemetry->ConnectionAttempts() == 1);
-			ASSERT_TRUE(fn_name, second_telemetry->ConnectionsEstablished() == 1);
-			ASSERT_TRUE(fn_name, second_telemetry->Requests() == 1);
-			ASSERT_TRUE(fn_name, second_telemetry->Responses() == 1);
-			ASSERT_TRUE(fn_name, second_telemetry->RequestsWithoutResponse() == 0);
-			ASSERT_TRUE(fn_name, second_telemetry->RequestLatencySamples() == 1);
+			ASSERT_EQUAL(SB::Size{1}, second_telemetry->ConnectionAttempts());
+			ASSERT_EQUAL(SB::Size{1}, second_telemetry->ConnectionsEstablished());
+			ASSERT_EQUAL(SB::Size{1}, second_telemetry->Requests());
+			ASSERT_EQUAL(SB::Size{1}, second_telemetry->Responses());
+			ASSERT_EQUAL(SB::Size{0}, second_telemetry->RequestsWithoutResponse());
+			ASSERT_EQUAL(SB::Size{1}, second_telemetry->RequestLatencySamples());
 
-			ASSERT_TRUE(fn_name, server_telemetry->CurrentConnections() == 2);
-			ASSERT_TRUE(fn_name, server_telemetry->AcceptedConnections() == 2);
-			ASSERT_TRUE(fn_name, server_telemetry->ClosedConnections() == 0);
-			ASSERT_TRUE(fn_name, server_telemetry->PeakConnections() == 2);
-			ASSERT_TRUE(fn_name, server_telemetry->PacketsDispatched() == 2);
-			ASSERT_TRUE(fn_name, server_telemetry->HandlersCompleted() == 2);
-			ASSERT_TRUE(fn_name, server_telemetry->HandlersWithoutResponse() == 0);
-			ASSERT_TRUE(fn_name, server_telemetry->HandlerErrors() == 0);
-			ASSERT_TRUE(fn_name, server_telemetry->HandlerLatencySamples() == 2);
-			ASSERT_TRUE(fn_name, server_telemetry->MeanHandlerLatency().count() >= 0);
+			ASSERT_EQUAL(SB::Size{2}, server_telemetry->CurrentConnections());
+			ASSERT_EQUAL(SB::Size{2}, server_telemetry->AcceptedConnections());
+			ASSERT_EQUAL(SB::Size{0}, server_telemetry->ClosedConnections());
+			ASSERT_EQUAL(SB::Size{2}, server_telemetry->PeakConnections());
+			ASSERT_EQUAL(SB::Size{2}, server_telemetry->PacketsDispatched());
+			ASSERT_EQUAL(SB::Size{2}, server_telemetry->HandlersCompleted());
+			ASSERT_EQUAL(SB::Size{0}, server_telemetry->HandlersWithoutResponse());
+			ASSERT_EQUAL(SB::Size{0}, server_telemetry->HandlerErrors());
+			ASSERT_EQUAL(SB::Size{2}, server_telemetry->HandlerLatencySamples());
+			ASSERT_TRUE(server_telemetry->MeanHandlerLatency().count() >= 0);
 
 			first_client.Disconnect();
 			second_client.Disconnect();
-			ASSERT_FALSE(fn_name, first_telemetry->Connected());
+			ASSERT_FALSE(first_telemetry->Connected());
 		}
 
 		server->Disconnect();
-		ASSERT_TRUE(fn_name, server_telemetry->CurrentConnections() == 0);
-		ASSERT_TRUE(fn_name, server_telemetry->ClosedConnections() == 2);
+		ASSERT_EQUAL(SB::Size{0}, server_telemetry->CurrentConnections());
+		ASSERT_EQUAL(SB::Size{2}, server_telemetry->ClosedConnections());
 	}
 
-	ASSERT_TRUE(fn_name, server_telemetry->AcceptedConnections() == 2);
-	ASSERT_TRUE(fn_name, server_telemetry->PacketsDispatched() == 2);
-	ASSERT_TRUE(fn_name, first_telemetry->Responses() == 1);
-	ASSERT_TRUE(fn_name, second_telemetry->Responses() == 1);
+	ASSERT_EQUAL(SB::Size{2}, server_telemetry->AcceptedConnections());
+	ASSERT_EQUAL(SB::Size{2}, server_telemetry->PacketsDispatched());
+	ASSERT_EQUAL(SB::Size{1}, first_telemetry->Responses());
+	ASSERT_EQUAL(SB::Size{1}, second_telemetry->Responses());
 	const auto snapshot = static_cast<SB::Safe::String>(*first_telemetry);
 	const std::string_view snapshot_text = snapshot;
-	ASSERT_FALSE(fn_name, snapshot_text.empty());
-	ASSERT_TRUE(fn_name, snapshot_text.find('\0') == std::string_view::npos);
-	ASSERT_TRUE(fn_name, snapshot.size() == SB::Size{std::char_traits<char>::length(snapshot.data())});
+	ASSERT_NOT_EMPTY(snapshot_text);
+	ASSERT_EQUAL(std::string_view::npos, snapshot_text.find('\0'));
+	ASSERT_SIZE(snapshot, SB::Size{std::char_traits<char>::length(snapshot.data())});
 	return 0;
 }
 
@@ -2416,11 +2234,13 @@ int main() {
 	result += test_login_rejects_invalid_credentials();
 	result += test_login_required_after_reconnect();
 	result += test_login_required_before_protected_request();
+
 	// -------------------
 	// Connection
 	// -------------------
 	result += test_client_disconnect_keeps_server_alive();
 	result += test_client_retry_after_failed_connect();
+	result += test_client_send_while_disconnected_and_repeated_disconnect();
 	result += test_disconnect_during_slow_handler();
 	result += test_disconnect_requested_by_handler();
 	result += test_many_concurrent_clients_keep_responses_isolated();
@@ -2433,6 +2253,7 @@ int main() {
 	// Ownership
 	// -------------------
 	result += test_deserializer_function_copy();
+	result += test_exact_derived_packet_copy();
 	result += test_safe_shared_endpoint_lifetime();
 
 	// -------------------
@@ -2440,11 +2261,11 @@ int main() {
 	// -------------------
 	result += test_factory_failure_disconnects_client();
 	result += test_factory_failure_disconnects_only_server_peer();
-	result += test_fragmented_and_batched_frames();
-	result += test_malformed_frames_disconnect_only_peer();
 	result += test_mismatched_pipeline_disconnects_only_peer();
 	result += test_network_exception_string_view();
+	result += test_ordered_batch_requests();
 	result += test_request_additional_commands();
+	result += test_request_empty_and_embedded_nul_payloads();
 	result += test_request_large_data_echoed();
 	result += test_request_name_list();
 	result += test_request_random_number();

@@ -46,12 +46,15 @@ It is not a thin socket wrapper. You inherit `Client` or `Server`, define packet
 ```bash
 git clone https://github.com/StormByte-Suite/StormByte-Network.git
 cd StormByte-Network
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
-cmake --build build -j
-cmake --install build
+cmake -S . -B build-install -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+	-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+cmake --build build-install -j
+cmake --install build-install
 ```
 
 `BUILD_SHARED_LIBS` defaults to `ON`; use `-DBUILD_SHARED_LIBS=OFF` for a static build. BuildMaster carries the selected mode through the bundled StormByte dependency graph. In static mode it flattens private dependency link requirements for consumers; no vendor repack is needed.
+
+These examples use `ccache`; install it or omit the two compiler-launcher options when it is unavailable.
 
 ## Why StormByte-Network
 
@@ -78,7 +81,7 @@ cmake --install build
 
 | Dependency | Required Version | Role |
 |------------|------------------|------|
-| [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/2.0.0) | [2.0.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.0.0) | Expected, BinaryData, Size, ByteSize, visibility |
+| [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/2.0.0) | [2.0.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.0.0) | Expected, Safe ownership/containers/synchronization/threads, Size, ByteSize, visibility |
 | [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.0) | [2.0.0](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.0) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
 | [StormByte-Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.0) | [2.0.0](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.0) | Diagnostics |
 | [StormByte-System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.0) | [2.0.0](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.0) | Calling-thread utilities |
@@ -116,6 +119,10 @@ Under `StormByte::Network`:
 Sockets, frames and Winsock bootstrap are private.
 
 Public polymorphic and callback types are `MAYBE_SAFE`: safe ownership does not make arbitrary derived state or captures safe across modules. Keep Base, Network, relevant dependencies and every provider module loaded with matching ABIs until all objects and callback copies are released. Allocate the exact derived packet type with `PacketPointer::MakePointer<Derived>()`, retain its virtual destruction path, and keep derived payload allocation/destruction in its provider module. Use `StormByte::Safe::DynamicPointerCast` or `StormByte::Safe::StaticPointerCast` for packet casts. Derived servers must call `Disconnect()` in their destructor body before handler state is destroyed. Safe string sizes count content bytes (or wide characters), excluding the null terminator.
+
+Packet payloads use `StormByte::Safe::Binary`. Header-defined state, public and private, uses Safe containers, shared/unique ownership, synchronization, atomics and threads; standard borrowed views and scalars remain permitted. There is no ownership bridge through `std::shared_ptr`. `StormByte::Size` represents element counts and `StormByte::ByteSize` represents byte lengths and offsets, with explicit conversions at numeric and wire/OS boundaries. Do not interpret a container's element count as a byte length without accounting for its element type.
+
+The exact `STORMBYTE_DECLARE_MAYBE_SAFE` macro registers complete public types and appropriate private types. It carries a provider lifecycle contract, not a blanket certification: fields and allocation paths must comply, each constructor, assignment and destructor must be implemented or explicitly deleted, and moved-from objects must remain valid for cleanup. A derived type needs its own review; the base declaration does not cover arbitrary derived storage. PIMPL is reserved for native OS resources (sockets, `HANDLE`, `FILE*`) or external-library state, not for hiding Safe values or owning STL state. See [CODING_STYLE.md](CODING_STYLE.md) for the full contract.
 
 ### Network telemetry
 
@@ -161,7 +168,7 @@ Each peer plane has one pipeline pair and one shared network-device snapshot. Co
 
 Remote readers and writers retain Buffer's I/O telemetry, including its existing operation counters and rates. Buffer telemetry derives from `StormByte::Telemetry` and measures operations with Base's named clocks, so remote I/O uses the same instrumentation as other Buffer locations.
 
-Remote reader size queries return `StormByte::Safe::Optional<StormByte::ByteSize>`: an empty value means the size is unavailable, not that the file is empty; a present zero means an empty file.
+Remote reader size queries return `StormByte::Safe::Optional<StormByte::ByteSize>`: an empty value means the size is unavailable, not that the file is empty; a present zero means an empty file. Byte lengths and seek offsets use `ByteSize`; convert explicitly when an application needs a plain numeric value. A successful writer flush synchronizes buffered writes with the host stream; size queries must not disturb its write position. Flush is not a transactional commit or a guarantee of crash-durable storage.
 
 The remote reader and writer expose the same shared polymorphic `System::Device` snapshot for their plane's local network interface. Its `Throughput()` and `Window()` report the interface link speed when the operating system exposes it, with a nominal network-rate fallback otherwise.
 
@@ -171,7 +178,7 @@ The data plane is owned by the `Client` object and survives `Client::Disconnect(
 
 Heartbeat failure during disk I/O revokes the plane's capabilities, stops new work and wakes failed client buffers. Results completed after revocation are discarded. A system call already in progress may finish and partially modify a file: its contents must then be treated as unreliable, with no rollback guarantee. Its worker retains the stream until the operation returns, allowing safe deferred release. Transport cancellation does not guarantee immediate interruption of that call or bounded shutdown time while the operating system keeps it blocked.
 
-`DeserializePacketFunction` accepts copyable callables. Its target storage and clone/destroy trampolines stay in the caller's module, so Network can retain and invoke the decoder without freeing callback memory through its own CRT. Copies own independently copied targets; reference/shared captures remain shared and must stay valid for every retained copy.
+`DeserializePacketFunction` accepts copyable callables taking a packet opcode, `Buffer::Consumer` payload and `Safe::Shared<Logger::Log>`, and returning `PacketPointer`. Its target storage and clone/destroy trampolines belong to the provider that constructs it, so Network can retain and invoke the decoder without freeing callback memory through its own CRT. Copies own independently copied targets; reference/shared captures remain shared and must stay valid for every retained copy. Caller-sensitive construction uses `STORMBYTE_FORCE_INLINE`; conversions that create owning standard-library values must likewise execute in the caller's module. These rules also apply to Buffer pipe providers and require their modules to remain loaded.
 
 ## Examples
 
@@ -179,6 +186,7 @@ Heartbeat failure during disk I/O revokes the plane's capabilities, stops new wo
 
 ```cpp
 #include <StormByte/network/client.hxx>
+
 #include <utility>
 
 class AppClient : public StormByte::Network::Client {
@@ -187,6 +195,10 @@ public:
 	          StormByte::Safe::Shared<StormByte::Logger::Log> log)
 		: Client(std::move(fn), std::move(log)) {}
 
+	StormByte::Network::PacketPointer Request(
+		const StormByte::Network::Transport::Packet& packet) noexcept {
+		return Send(packet);
+	}
 };
 ```
 
@@ -194,6 +206,8 @@ public:
 
 ```cpp
 #include <StormByte/network/server.hxx>
+
+#include <string_view>
 
 class AppServer : public StormByte::Network::Server {
 public:
@@ -214,13 +228,14 @@ protected:
 
 ```cpp
 #include <StormByte/network/transport/packet.hxx>
+#include <StormByte/network/typedefs.hxx>
 
 class PingPacket : public StormByte::Network::Transport::Packet {
 public:
 	PingPacket() : Packet(1) {}
 
 protected:
-	StormByte::BinaryData DoSerialize() const noexcept override {
+	StormByte::Safe::Binary DoSerialize() const noexcept override {
 		return {};
 	}
 };
@@ -237,11 +252,20 @@ StormByte::Network::PacketPointer MakePingPacket() {
 - A slow peer is isolated by per-session output limits; once a session exceeds its output budget, the server closes that session rather than allowing unbounded memory growth.
 - `Connect` on `Server` means bind + listen + accept loop.
 - Frame layout uses host `size_t` for payload length. Same architecture on both ends.
-- Pipelines run only when the opcode is at or above `PROCESS_THRESHOLD`.
+- Application payload pipelines run only when the opcode is at or above `PROCESS_THRESHOLD`; private remote-file messages always pass through their plane's pipelines.
 
 ## Testing
 
-Enable tests in CMake (`ENABLE_TEST`) and run CTest from the build tree.
+Enable tests with `-DENABLE_TEST=ON` and run CTest from the build's `test/` registration root. For development validation, use a temporary build directory and leave the user's `build/` untouched unless explicitly authorized:
+
+```bash
+cmake -S . -B build-validation -DENABLE_TEST=ON -DCMAKE_BUILD_TYPE=Release \
+	-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+cmake --build build-validation -j
+ctest --test-dir build-validation/test --output-on-failure
+```
+
+The registered suites cover client/server exchanges, negotiated handshakes and remote-file behavior. Fourteen public Safe suites cover `Client`, `ClientTelemetry`, `ConnectionClosed`, `ConnectionError`, `DeserializePacketFunction`, `Endpoint`, `Exception`, `FrameError`, `Packet`, `PacketError`, `RemoteFileMount`, `Server`, `ServerTelemetry` and `Telemetry`. Integration regressions exercise exact-derived destruction, callback copies, endpoint lifecycle and remote writer write/size/flush byte integrity. No private-class suites are registered. Coverage in the source tree is not a claim that every platform or configuration passes. Linux tests and sanitizers do not prove separate Windows CRT heap safety; that requires provider/consumer module validation on Windows with compatible ABIs and explicit module-lifetime checks.
 
 ## Contributing
 

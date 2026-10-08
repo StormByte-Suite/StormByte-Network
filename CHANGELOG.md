@@ -18,7 +18,7 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.0...HEAD
 
-## [2.0.0] - 2026-10-05
+## [2.0.0] - 2026-10-08
 
 ### Added
 
@@ -34,7 +34,8 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 ### Changed
 
 - **StormByte Base 2.0 compatibility**
-    - Migrated Network to Base 2.0's `Safe::Shared`, `Safe::String` and `Safe::WString` APIs and the current UUID return type; string sizes exclude the null terminator.
+    - Migrated public and private header state to Base 2.0 Safe containers, shared/unique ownership, synchronization, atomics and threads, including `Safe::Binary` payloads in place of removed `BinaryData`. Standard borrowed views and scalars remain permitted; no `std::shared_ptr` ownership bridge is used. String sizes exclude the null terminator.
+    - Distinguished `Size` element counts from `ByteSize` byte lengths and offsets, with explicit numeric conversions at protocol and OS boundaries; retained optional remote sizes so unknown and known zero remain distinct.
     - Aligned Network exceptions with Base's `Path` hierarchy and `std::string_view` message inputs, keeping formatting in the caller module.
     - Remote file leaves retain Buffer telemetry, whose counters derive from `StormByte::Telemetry` and use Base's named clocks.
 - **Build, ABI and packaging**
@@ -42,24 +43,28 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
     - Moved heap-owning public/private lifecycle operations, frame payload operations, and exported exception RTTI anchors out of headers to keep DLL allocation and destruction inside their owning modules.
     - Replaced the deserializer's `std::function` storage with caller-allocated callback trampolines so the Network DLL never allocates, clones, or frees the callback target across CRTs; callback copies own independently copied targets, while reference/shared captures retain their sharing semantics.
     - Propagated the selected shared/static mode to the bundled Buffer component instead of forcing it shared in Network's wrapper.
-    - Hid Client backend and Server event-loop state behind Base-heap `Safe::Unique` implementations, removing their private STL-heavy state from the exported class layouts.
+    - Replaced hidden Client backend and Server event-loop owning STL state with explicit Safe state. Reserve PIMPL for native OS resources or external-library state, not Safe values or a workaround for header ownership rules.
     - Store retained client and server endpoint addresses in Base-owned `Safe::String` values instead of module-CRT `std::string` buffers.
 - **Suite integration and documentation**
     - Updated repository and documentation links for the StormByte-Suite move, refreshed the suite catalog, removed retired StormByte-String references, and switched suite documentation links, tag downloads and tag mappings to verified HTTPS endpoints.
     - Doxygen (`ENABLE_DOC`) resolves Buffer, Logger, System and Base headers via `INCLUDE_PATH` and skips `thirdparty`; completed full multiline public-header documentation, including lifecycle and provider obligations. Updated the coding style with current Safe contracts and the suite's alphabetically grouped `test_snake_case` convention, with identical definition and registration banners. No dependency pin change.
 - **Public API and licensing**
     - Replace automatic endpoint pipeline factory overrides with protected one-time `Client::ConfigurePipelines` and per-UUID `Server::ConfigureClientPipelines`. New connections start no-op; control and file planes use the negotiated configuration with independent templates. Add incoming/outgoing opcode-policy filters, session lifecycle hooks and server-initiated closure after a rejection reply, discarding pending unprocessed frames.
-    - Ported Network APIs and payload handling to the StormByte 2.0 types and Buffer interfaces, including `BinaryData`, `ByteSize`, `string_view`, `Shared<Log>`, and callable `Pipe` stages; replaced polymorphic Pipe clone/move hooks with independent callable copies and synchronous borrowed endpoints.
+    - Ported Network APIs and payload handling to the StormByte 2.0 types and Buffer interfaces, including `Safe::Binary`, `ByteSize`, `string_view`, `Safe::Shared<Log>`, and callable `Pipe` stages; replaced polymorphic Pipe clone/move hooks with independent callable copies and synchronous borrowed endpoints.
     - PacketPointer now uses `Safe::Shared<Transport::Packet>` with `MakePointer<Derived>()` factories and Safe pointer casts, preserving exact derived allocation and virtual destruction. Public lifecycle operations and `MAYBE_SAFE` declarations document provider-owned resources, compatible ABIs and module residency; derived servers must disconnect before destroying handler state.
+    - Use the exact `STORMBYTE_DECLARE_MAYBE_SAFE` macro for complete public and appropriate private types, with implemented or explicitly deleted lifecycle operations and valid moved-from cleanup. The declaration does not certify arbitrary derived state. Keep callbacks provider-owned and caller-sensitive construction or owning STL conversions `STORMBYTE_FORCE_INLINE`; do not attach Doxygen blocks to macro invocations.
     - Remote file handles now use `Safe::Unique`, allowing ownership transfer to `BufferedLocationReader`/`BufferedLocationWriter` consumers without slicing or relocating the remote leaf. Storage is allocated and freed on Base's heap; virtual destruction releases mount tokens. Remote reader sizes use `Safe::Optional<ByteSize>` to distinguish an unavailable size from a present zero. The handle-type change replaces Network's custom deleters and requires consumers to rebuild.
     - Network's original source is now dual-licensed under LGPL-3.0-or-later or a commercial license; third-party and bundled module licenses remain separate.
 - **Integration coverage**
     - Add a separate, documented handshake/XOR example covering trusted-key rejection, actual pipeline execution after acceptance, per-client secrets, clone-failure retry, single installation, reconnection, coalesced frames and binary file transfers. Fictitious keys, XOR and hardcoded login credentials demonstrate application protocol extension, not cryptographic security. Add unknown-opcode, corrupted-payload and incompatible-transform factory-failure/disconnection tests on both endpoints.
     - Expanded integration coverage for failed-connect/listen retry, server restart, malformed and truncated peer frames, and concurrent clients issuing repeated requests; added nested/concurrent telemetry, repeated Stop, cross-thread sample transfer, destructor cleanup and exact-derived lifetime coverage.
     - Remote writer lifecycle tests distinguish incomplete writes, failed flushes, unexpected file sizes, and the first mismatching byte offset to diagnose platform-specific visibility failures.
+    - Registered fourteen public Safe lifecycle suites covering endpoints, client/server, packets, decoder callbacks, exceptions, telemetry and mount descriptors, alongside integration coverage for callback copy/move, exact-derived destruction and remote reader/writer lifecycle. No private-class suites are registered. These tests do not alone establish separate Windows CRT heap safety, and their presence is not a claim of passing validation on every platform.
 
 ### Fixed
 
+- **Closed-connection exception messages**
+    - Pass formatted Base-owned text as a borrowed string view when adding the connection-closed prefix, preserving message bytes and embedded nulls instead of formatting `Safe::String` as a character range.
 - **Application packet admission and decoding**
     - Delay input pipeline and factory execution until the previous handler completes and the current opcode policy accepts the raw frame. Factory exceptions/null results fail closed, including client disconnection on invalid replies. Preserve encoded-response order for stateful pipelines; server rejection replies drain before closure without processing queued messages.
 - **Remote capability close validation**
@@ -68,7 +73,7 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
     - Service Ping/Pong independently of a pending file operation, so disk I/O taking longer than the heartbeat interval no longer fails the peer plane merely because its response is delayed. A single client receiver correlates operation and heartbeat responses; frames remain serialized, pending work and response queues stay bounded, and the receiver sleeps when no response is outstanding.
     - Missing heartbeat revokes the plane, wakes waiting callers and faults attached buffers. Late worker responses are discarded; a stream retained by already executing I/O is released when that operation returns. Interrupted writes may leave partial contents, which must be treated as unreliable; cancellation does not promise rollback or immediate interruption of a system call.
 - **Remote writer size and flush**
-    - Query host file size without switching the bidirectional stream's get cursor, avoiding size-probe interference with subsequent writes and flushes. Added repeated write/size/flush byte-integrity coverage and operation/transport failure diagnostics that do not expose capability tokens or file contents.
+    - Flush the writable host stream before querying filesystem size without switching the bidirectional stream's get cursor, avoiding stale size results and size-probe interference with subsequent writes and flushes. Added repeated write/size/flush byte-integrity coverage and operation/transport failure diagnostics that do not expose capability tokens or file contents.
 - **Worker task initialization**
     - Explicitly initialized the optional worker operation for packet tasks and every event-loop result field on POSIX and Windows, eliminating Clang's missing-field-initializer warnings without changing task or event behavior.
 - **Windows build and socket compatibility**

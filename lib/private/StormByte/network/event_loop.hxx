@@ -40,84 +40,166 @@
 
 #pragma once
 
-#include <StormByte/network/socket/server.hxx>
+#include <StormByte/network/remote_file_host.hxx>
 #include <StormByte/network/session.hxx>
+#include <StormByte/network/socket/server.hxx>
 #include <StormByte/network/typedefs.hxx>
 #include <StormByte/network/visibility.h>
+#include <StormByte/safe/atomic.hxx>
+#include <StormByte/safe/function.hxx>
+#include <StormByte/safe/vector.hxx>
 
-#include <atomic>
-#include <functional>
-#include <memory>
-#include <vector>
-
-namespace StormByte::Network::Detail {
-	namespace RemoteFile {
-		class Host;
-	}
-
+/**
+ * @namespace StormByte
+ * @brief Root namespace of the StormByte suite.
+ */
+namespace StormByte {
 	/**
-	 * @class EventLoop
-	 * @brief Private listener and wakeup event loop.
-	 *
-	 * The loop owns listener, wakeup, and session I/O. Packet processing is
-	 * intentionally synchronous here until a bounded worker pool is introduced.
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
 	 */
-	class STORMBYTE_NETWORK_PRIVATE EventLoop final {
-		public:
-			using ListenerCallback = std::function<void()>; ///< Listener-ready callback.
-			using SessionList = std::vector<std::shared_ptr<Session>>; ///< Session snapshot.
-			using SessionSnapshot = std::function<SessionList()>; ///< Session snapshot callback.
-			using SessionCallback = std::function<void(const std::shared_ptr<Session>&, bool, bool)>; ///< Session-ready callback.
-			using PlaneList = std::vector<std::shared_ptr<RemoteFile::Host>>; ///< Peer data-plane snapshot.
-			using PlaneSnapshot = std::function<PlaneList()>; ///< Peer data-plane snapshot callback.
-			using PlaneCallback = std::function<void(const std::shared_ptr<RemoteFile::Host>&, bool, bool)>; ///< Plane-ready callback.
-			using WakeupCallback = std::function<void()>; ///< Wakeup callback.
-
+	namespace Network {
+		/**
+		 * @namespace StormByte::Network::Detail
+		 * @brief Private implementation details of the Network module.
+		 */
+		namespace Detail {
 			/**
-			 * @brief Bind the loop to a listener and wakeup read handle.
-			 * @param listener Listening socket.
-			 * @param wakeup_read Read end of the private wakeup channel.
-			 * @param status Server lifecycle status.
-			 * @param logger Diagnostic logger.
+			 * @class EventLoop
+			 * @brief Private listener, wakeup and endpoint I/O dispatcher.
+			 * @note Listener, wakeup handle and status are borrowed for the loop's
+			 * lifetime. Callbacks run synchronously on the Run caller and must not
+			 * destroy the loop. Packet processing is delegated by those callbacks.
 			 */
-			EventLoop(Socket::Server& listener, Connection::HandlerType wakeup_read,
-				const std::atomic<Connection::Status>& status,
-				StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+			class STORMBYTE_NETWORK_PRIVATE EventLoop final {
+				public:
+					/**
+					 * @brief Provider-owned listener-ready callback.
+					 */
+					using ListenerCallback = Safe::Function<void()>;
 
-				/** @brief Releases the loop state in the Network library. */
-				~EventLoop() noexcept;
+					/**
+					 * @brief Base-owned snapshot of Network-owned sessions.
+					 */
+					using SessionList = Safe::Vector<Safe::Shared<Session>>;
 
-			/**
-			 * @brief Run until the server stops or the wakeup is signalled.
-			 * @param on_listener_ready Called when the listener is readable.
-			 */
-			void Run(const ListenerCallback& on_listener_ready,
-				const SessionSnapshot& snapshot,
-				const SessionCallback& on_session_ready,
-				const PlaneSnapshot& plane_snapshot,
-				const PlaneCallback& on_plane_ready,
-				const WakeupCallback& on_wakeup) noexcept;
+					/**
+					 * @brief Callback writing a session snapshot to caller-owned storage.
+					 */
+					using SessionSnapshot = Safe::Function<SessionList()>;
 
-		private:
-			Socket::Server& m_listener; ///< Listening socket.
-			Connection::HandlerType m_wakeup_read; ///< Wakeup read handle.
-			const std::atomic<Connection::Status>& m_status; ///< Server status.
-			StormByte::Safe::Shared<Logger::Log> m_logger; ///< Diagnostic logger.
+					/**
+					 * @brief Synchronously borrow a ready session and its I/O flags.
+					 */
+					using SessionCallback = Safe::Function<void(const Safe::Shared<Session>&, bool, bool)>;
 
-			enum class EventKind: unsigned short { Timeout, Listener, Session, DataPlane, Wakeup }; ///< Wait event kind.
-			struct Event {
-				EventKind kind; ///< Event type.
-				std::shared_ptr<Session> session; ///< Application session, if this is Session.
-				bool readable = false; ///< Whether the handle can be read.
-				bool writable = false; ///< Whether the handle can be written.
-				std::shared_ptr<RemoteFile::Host> plane; ///< Peer data plane, if this is DataPlane.
-			}; ///< One ready event.
+					/**
+					 * @brief Base-owned snapshot of Network-owned peer data planes.
+					 */
+					using PlaneList = Safe::Vector<Safe::Shared<RemoteFile::Host>>;
 
-			/**
-			 * @brief Wait for listener, wakeup, or a session descriptor.
-			 * @param sessions Current session snapshot.
-			 * @return Wait event.
-			 */
-			Expected<Event, ConnectionClosed> Wait(const SessionList& sessions, const PlaneList& planes) noexcept;
-	};
+					/**
+					 * @brief Callback writing a data-plane snapshot to caller-owned storage.
+					 */
+					using PlaneSnapshot = Safe::Function<PlaneList()>;
+
+					/**
+					 * @brief Synchronously borrow a ready data plane and its I/O flags.
+					 */
+					using PlaneCallback = Safe::Function<void(const Safe::Shared<RemoteFile::Host>&, bool, bool)>;
+
+					/**
+					 * @brief Provider-owned wakeup callback, invoked only while connected.
+					 */
+					using WakeupCallback = Safe::Function<void()>;
+
+					/**
+					 * @brief Bind to borrowed listener, wakeup channel and lifecycle status.
+					 * @param listener Listening socket, kept alive by its owner.
+					 * @param wakeup_read Read end of the private wakeup channel.
+					 * @param status Safe lifecycle word, kept alive by its owner.
+					 * @param logger Shared diagnostic logger; may be empty.
+					 */
+					EventLoop(Socket::Server& listener, Connection::HandlerType wakeup_read,
+						const Safe::Atomic<Connection::Status>& status, Safe::Shared<Logger::Log> logger) noexcept;
+
+					/**
+					 * @brief Copy construction is not supported.
+					 * @param other Loop that cannot be copied.
+					 */
+					EventLoop(const EventLoop& other) = delete;
+
+					/**
+					 * @brief Move construction is not supported for borrowed bindings.
+					 * @param other Loop that cannot be moved.
+					 */
+					EventLoop(EventLoop&& other) = delete;
+
+					/**
+					 * @brief Release Safe owners without closing borrowed OS resources.
+					 */
+					~EventLoop() noexcept;
+
+					/**
+					 * @brief Copy assignment is not supported.
+					 * @param other Loop that cannot be copied.
+					 * @return This loop; operation is deleted.
+					 */
+					EventLoop& operator=(const EventLoop& other) = delete;
+
+					/**
+					 * @brief Move assignment is not supported.
+					 * @param other Loop that cannot be moved.
+					 * @return This loop; operation is deleted.
+					 */
+					EventLoop& operator=(EventLoop&& other) = delete;
+
+					/**
+					 * @brief Dispatch until disconnected or a wait or callback fails.
+					 * @param on_listener_ready Called when the listener is readable.
+					 * @param snapshot Supplies the current session owners.
+					 * @param on_session_ready Receives a session and readable/writable flags.
+					 * @param plane_snapshot Supplies the current data-plane owners.
+					 * @param on_plane_ready Receives a plane and readable/writable flags.
+					 * @param on_wakeup Called after consuming a signal while still connected.
+					 * @note Missing or failed callbacks stop the loop; exceptions do not escape.
+					 */
+					void Run(const ListenerCallback& on_listener_ready, const SessionSnapshot& snapshot,
+						const SessionCallback& on_session_ready, const PlaneSnapshot& plane_snapshot,
+						const PlaneCallback& on_plane_ready, const WakeupCallback& on_wakeup) noexcept;
+
+				private:
+					/**
+					 * @brief Kind of native or buffered readiness event.
+					 */
+					enum class EventKind: unsigned short { Timeout, Listener, Session, DataPlane, Wakeup };
+
+					/**
+					 * @brief One readiness event retaining its Network-owned endpoint.
+					 */
+					struct Event {
+						EventKind kind;				///< Event type.
+						Safe::Shared<Session> session;		///< Session owner for a session event.
+						bool readable = false;			///< Read or terminal readiness.
+						bool writable = false;			///< Write readiness.
+						Safe::Shared<RemoteFile::Host> plane;	///< Plane owner for a data-plane event.
+					};
+
+					/**
+					 * @brief Wait for native readiness or an already buffered endpoint.
+					 * @param sessions Current session snapshot, with no empty owners.
+					 * @param planes Current plane snapshot, with no empty owners.
+					 * @return Ready event or a wait failure.
+					 */
+					Expected<Event, ConnectionClosed> Wait(const SessionList& sessions, const PlaneList& planes);
+
+					Socket::Server& m_listener;				///< Borrowed listening socket.
+					Connection::HandlerType m_wakeup_read;			///< Borrowed wakeup read handle.
+					const Safe::Atomic<Connection::Status>& m_status;		///< Borrowed Safe lifecycle word.
+					Safe::Shared<Logger::Log> m_logger;			///< Shared diagnostic logger.
+			};
+		}
+	}
 }
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Detail::EventLoop);

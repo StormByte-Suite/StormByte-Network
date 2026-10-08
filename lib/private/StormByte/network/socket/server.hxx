@@ -42,84 +42,110 @@
 
 #include <StormByte/network/socket/client.hxx>
 #include <StormByte/network/typedefs.hxx>
+#include <StormByte/safe/vector.hxx>
 
-#include <vector>
+#include <string_view>
 
 /**
- * @brief Socket wrappers of the Network module.
+ * @namespace StormByte
+ * @brief Root namespace of the StormByte suite.
  */
-namespace StormByte::Network::Socket {
+namespace StormByte {
 	/**
-	 * @class Server
-	 * @brief Listening socket: bind, listen, accept.
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
 	 */
-	class STORMBYTE_NETWORK_PRIVATE Server final: public Socket {
-		public:
+	namespace Network {
+		/**
+		 * @namespace StormByte::Network::Socket
+		 * @brief Socket namespace.
+		 */
+		namespace Socket {
 			/**
-			 * @brief Construct with protocol and logger.
-			 * @param protocol Address family.
-			 * @param logger Logger.
+			 * @class Server
+			 * @brief Listening socket: bind, listen, accept.
+				 * @details Safe accepted-client owners retain provider release operations.
+				 * Network, Base and logger providers must remain loaded until release.
+				 * Serialize accept, moves and lifecycle operations externally. Destruction
+				 * disconnects accepted clients even when another Safe handle retains them.
 			 */
-			Server(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+			class STORMBYTE_NETWORK_PRIVATE Server final: public Socket {
+				public:
+					/**
+					 * @brief Construct with protocol and logger.
+					 * @param protocol Address family.
+					 * @param logger Logger.
+					 */
+					Server(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger);
 
-			/**
-			 * @brief Copy constructor (deleted).
-			 */
-			Server(const Server& other) = delete;
+					/**
+					 * @brief Copy constructor (deleted).
+					 * @param other Server that cannot be copied.
+					 */
+					Server(const Server& other) = delete;
 
-			/**
-			 * @brief Move constructor.
-			 */
-			Server(Server&& other) noexcept = default;
+					/**
+					 * @brief Transfer Safe owners and native socket state inside Network.
+					 * @param other Source server.
+					 */
+					Server(Server&& other) noexcept;
 
-			/**
-			 * @brief Destructor.
-			 */
-			~Server() noexcept override;
+					/**
+					 * @brief Release accepted-client owners and native socket state inside Network.
+					 */
+					~Server() noexcept override;
 
-			/**
-			 * @brief Copy assignment (deleted).
-			 */
-			Server& operator=(const Server& other) = delete;
+					/**
+					 * @brief Copy assignment (deleted).
+					 * @param other Server that cannot be copied.
+					 * @return This server (operation is deleted).
+					 */
+					Server& operator=(const Server& other) = delete;
 
-			/**
-			 * @brief Move assignment.
-			 */
-			Server& operator=(Server&& other) noexcept = default;
+					/**
+					 * @brief Move-assign Safe owners and native socket state inside Network.
+					 * @param other Source server.
+					 * @return This server.
+					 */
+					Server& operator=(Server&& other) noexcept;
 
-			/**
-			 * @brief Bind and listen on host:port.
-			 * @param hostname Bind address.
-			 * @param port Port.
-			 * @return Empty Expected on success.
-			 */
-			ExpectedVoid Listen(std::string_view hostname, const unsigned short& port) noexcept;
+					/**
+					 * @brief Bind and listen on host:port.
+					 * @param hostname Bind address.
+					 * @param port Port.
+					 * @return Empty Expected on success.
+					 */
+					ExpectedVoid Listen(std::string_view hostname, const unsigned short& port) noexcept;
 
-			/**
-			 * @brief Port assigned to the listener, including an ephemeral port.
-			 * @return Bound port, or 0 when not listening.
-			 */
-			unsigned short Port() const noexcept;
+					/**
+					 * @brief Port assigned to the listener, including an ephemeral port.
+					 * @return Bound port, or 0 when not listening.
+					 */
+					unsigned short Port() const noexcept;
 
-			/**
-			 * @brief Accept one client.
-			 * @return Shared Client or error.
-			 */
-			ExpectedClient Accept() noexcept;
+					/**
+					 * @brief Accept one client allocated through the Network provider.
+					 * @return Safe shared Client or error.
+					 */
+					ExpectedClient Accept() noexcept;
 
-			/**
-			 * @brief Disconnect all accepted clients then the listener.
-			 */
-			void Disconnect() noexcept override;
+					/**
+					 * @brief Disconnect all accepted clients then the listener.
+					 */
+					void Disconnect() noexcept override;
 
-			/**
-			 * @brief Disconnect one accepted client by UUID.
-			 * @param client_uuid Client UUID.
-			 */
-			void DisconnectClient(std::string_view client_uuid) noexcept;
+					/**
+					 * @brief Disconnect one accepted client by UUID.
+					 * @param client_uuid Client UUID.
+					 */
+					void DisconnectClient(std::string_view client_uuid) noexcept;
 
-		private:
-			std::vector<std::shared_ptr<Client>> m_active_clients;	///< Accepted clients
-			unsigned short m_port = 0;	///< Bound listener port.
-	};
+				private:
+					StormByte::Safe::Vector<StormByte::Safe::Shared<Client>> m_active_clients;	///< Safe owners of accepted clients.
+					unsigned short m_port = 0;											///< Bound listener port.
+			};
+		}
+	}
 }
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Socket::Server);

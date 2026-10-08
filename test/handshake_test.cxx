@@ -1,7 +1,50 @@
+/*
+ * Copyright (C) 2024-2026 David C. Manuelda (StormBytePP)
+ *
+ * This file is part of StormByte-Network.
+ *
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
+ *
+ * StormByte-Network is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * version 3 along with StormByte-Network. If not, see
+ * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
+ */
+
 #include <StormByte/network/client.hxx>
 #include <StormByte/network/remote_file.hxx>
 #include <StormByte/network/server.hxx>
+#include <StormByte/safe/binary.hxx>
+#include <StormByte/safe/pointers.hxx>
 #include <StormByte/serializable.hxx>
+#include <StormByte/test_handlers.h>
 
 #include <atomic>
 #include <chrono>
@@ -94,7 +137,7 @@ namespace HandshakeExample {
 			 * @brief Serialize message fields.
 			 * @return Provider-independent owned bytes.
 			 */
-			BinaryData DoSerialize() const noexcept override {
+			Safe::Binary DoSerialize() const noexcept override {
 				return Serializable<std::vector<std::string>>(m_fields).Serialize();
 			}
 
@@ -103,6 +146,11 @@ namespace HandshakeExample {
 			 */
 			std::vector<std::string> m_fields;
 	};
+}
+
+STORMBYTE_DECLARE_MAYBE_SAFE(HandshakeExample::Packet);
+
+namespace HandshakeExample {
 
 	/**
 	 * @brief Count factory calls for messages that must never be decoded after rejection.
@@ -137,7 +185,7 @@ namespace HandshakeExample {
 				return {};
 			if (opcode == static_cast<unsigned short>(Operation::Echo))
 				++protected_decodes;
-			BinaryData bytes;
+			Safe::Binary bytes;
 			payload.ReadUntilEoF(bytes);
 			auto fields = Serializable<std::vector<std::string>>::Deserialize(bytes);
 			const std::size_t count = opcode == static_cast<unsigned short>(Operation::Welcome) ? 2 : 1;
@@ -157,14 +205,14 @@ namespace HandshakeExample {
 		result.Add(Buffer::Pipe{[secret](const Buffer::PipeInput& input,
 			const Buffer::PipeOutput& output, const Safe::Shared<Logger::Log>&) {
 			while (!input.EoF()) {
-				BinaryData bytes;
+				Safe::Binary bytes;
 				if (!input.Read(1, bytes)) {
 					output.SetError();
 					return;
 				}
 				const auto available = input.Available();
 				if (available > ByteSize{0}) {
-					BinaryData remaining;
+					Safe::Binary remaining;
 					if (!input.Read(available, remaining)) {
 						output.SetError();
 						return;
@@ -189,7 +237,7 @@ namespace HandshakeExample {
 	 * @return Moveable pipeline that fails when configuration clones its templates.
 	 */
 	Buffer::Pipeline UnclonablePipeline() {
-		std::unique_ptr<unsigned char, Safe::Heap::ObjectDeleter> context = Safe::Heap::MakeUnique<unsigned char>(1);
+		std::unique_ptr<unsigned char, Safe::Heap::ObjectDeleter> context = Safe::MakeUnique<unsigned char>(1);
 		Buffer::Pipe::Callback callback(context.get(),
 			[](void*, const Buffer::PipeInput&, const Buffer::PipeOutput& output,
 				const Safe::Shared<Logger::Log>&) {
@@ -333,7 +381,8 @@ namespace HandshakeExample {
 					if (packet->Opcode() == static_cast<unsigned short>(Operation::MountRead)
 						|| packet->Opcode() == static_cast<unsigned short>(Operation::MountWrite)) {
 						const auto mount = packet->Opcode() == static_cast<unsigned short>(Operation::MountRead)
-							? MountRemoteFileReader(uuid, m_read_path, 3) : MountRemoteFileWriter(uuid, m_write_path, 3);
+							? MountRemoteFileReader(uuid, m_read_path.string(), 3)
+							: MountRemoteFileWriter(uuid, m_write_path.string(), 3);
 						const auto encoded = Serializable<RemoteFileMount>(mount).Serialize();
 						return PacketPointer::MakePointer<Packet>(Operation::MountReply,
 							std::vector<std::string>{std::string(reinterpret_cast<const char*>(encoded.data()),
@@ -526,9 +575,9 @@ namespace HandshakeExample {
 	 * @param field One application field.
 	 * @return Complete frame bytes for a coalesced TCP write.
 	 */
-	BinaryData Wire(Operation operation, std::string field) {
-		BinaryData payload = Serializable<std::vector<std::string>>(std::vector<std::string>{std::move(field)}).Serialize();
-		BinaryData frame = Serializable<Transport::Packet::OpcodeType>(static_cast<unsigned short>(operation)).Serialize();
+	Safe::Binary Wire(Operation operation, std::string field) {
+		Safe::Binary payload = Serializable<std::vector<std::string>>(std::vector<std::string>{std::move(field)}).Serialize();
+		Safe::Binary frame = Serializable<Transport::Packet::OpcodeType>(static_cast<unsigned short>(operation)).Serialize();
 		frame.append(Serializable<std::size_t>(payload.size()).Serialize());
 		frame.append(std::move(payload));
 		return frame;
@@ -596,7 +645,7 @@ namespace HandshakeExample {
 				inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
 				if (::connect(m_socket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) {
 					Close();
-					throw Network::Exception("raw peer Connect failed");
+					throw Network::Exception(std::string_view{"raw peer Connect failed"});
 				}
 			}
 
@@ -640,8 +689,8 @@ namespace HandshakeExample {
 			 * @param size Number of bytes expected.
 			 * @return Complete received bytes.
 			 */
-			BinaryData Receive(std::size_t size) {
-				BinaryData bytes{ByteSize{size}};
+			Safe::Binary Receive(std::size_t size) {
+				Safe::Binary bytes{ByteSize{size}};
 				std::size_t offset = 0;
 				while (offset < size) {
 					const auto received = ::recv(m_socket, reinterpret_cast<char*>(bytes.data() + offset),
@@ -753,12 +802,12 @@ int test_handshake_keeps_client_secrets_isolated() {
 	HandshakeExample::Client second;
 	Check(first.Connect(Connection::Protocol::IPv4, "127.0.0.1", port) && first.Handshake(), "first handshake failed");
 	Check(second.Connect(Connection::Protocol::IPv4, "127.0.0.1", port) && second.Handshake(), "second handshake failed");
-	Check(first.Secret() != second.Secret(), "fixture did not negotiate independent secrets");
+	ASSERT_NOT_EQUAL(first.Secret(), second.Secret());
 	Check(first.Echo() && second.Echo() && first.Echo() && second.Echo(), "one UUID configuration changed another session");
 	first.Disconnect();
 	second.Disconnect();
 	server.Disconnect();
-	Check(server.Sessions() == 0, "disconnect hooks retained negotiated session state");
+	ASSERT_EQUAL(Size{0}, server.Sessions());
 	return 0;
 }
 
@@ -786,14 +835,14 @@ int test_handshake_pipelines_apply_to_file_planes() {
 	transformed_bytes.store(0);
 	auto reader = client.Reader(read_mount);
 	Check(reader && reader->Open(), "negotiated reader Attach/Open failed");
-	BinaryData received{ByteSize{expected.size()}};
+	Safe::Binary received{ByteSize{expected.size()}};
 	const auto result = reader->Read(std::span<std::byte>{received.data(), static_cast<std::size_t>(received.size())});
 	Check(result.count == ByteSize{expected.size()} && std::string_view{
 		reinterpret_cast<const char*>(received.data()), static_cast<std::size_t>(received.size())} == expected,
 		"file-plane decode did not preserve bytes");
 	Check(transformed_bytes.load() > 0, "file plane bypassed negotiated pipelines");
 	Check(!client.Reconfigure(), "configuration was replaced after creating a file plane");
-	Check(reader->Close().status == Buffer::IO::Status::Ok, "negotiated reader Close failed");
+	ASSERT_EQUAL(Buffer::IO::Status::Ok, reader->Close().status);
 	reader.reset();
 	const auto write_mount = client.Mount(true);
 	transformed_bytes.store(0);
@@ -804,7 +853,7 @@ int test_handshake_pipelines_apply_to_file_planes() {
 	Check(writer->Close(), "negotiated writer Close failed");
 	writer.reset();
 	Check(transformed_bytes.load() > 0, "writer file plane bypassed negotiated transformations");
-	Check(std::filesystem::file_size(write_path) == expected.size(), "transport framing or transformed bytes leaked into the disk file");
+	ASSERT_EQUAL(ByteSize{expected.size()}, std::filesystem::file_size(write_path));
 	std::ifstream written(write_path, std::ios::binary);
 	std::string bytes(expected.size(), '\0');
 	written.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
@@ -827,7 +876,7 @@ int test_handshake_reconnect_requires_new_negotiation() {
 	Check(client.Handshake() && client.Secret() != previous_secret && client.Echo(), "new connection inherited negotiated state");
 	client.Disconnect();
 	server.Disconnect();
-	Check(server.Sessions() == 0, "reconnected session state leaked");
+	ASSERT_EQUAL(Size{0}, server.Sessions());
 	return 0;
 }
 
@@ -837,7 +886,7 @@ int test_handshake_rejection_discards_coalesced_messages() {
 	Check(server.Connect(Connection::Protocol::IPv4, "127.0.0.1", port), "server Connect failed");
 	RawPeer peer;
 	protected_decodes.store(0);
-	BinaryData batch = Wire(Operation::Hello, "valid_but_untrusted_pubkey_contents");
+	Safe::Binary batch = Wire(Operation::Hello, "valid_but_untrusted_pubkey_contents");
 	for (unsigned int index = 0; index < 4; ++index)
 		batch.append(Wire(Operation::Echo, "must_not_be_processed"));
 	peer.Send(std::span<const std::byte>{batch});
@@ -884,7 +933,7 @@ int test_handshake_rejects_plaintext_coalesced_after_hello() {
 	RawPeer peer;
 	protected_decodes.store(0);
 	transformed_bytes.store(0);
-	BinaryData batch = Wire(Operation::Hello, "pubkey_contents");
+	Safe::Binary batch = Wire(Operation::Hello, "pubkey_contents");
 	batch.append(Wire(Operation::Echo, "plaintext_after_handshake"));
 	peer.Send(std::span<const std::byte>{batch});
 	const auto welcome = peer.Fields(Operation::Welcome);
@@ -905,8 +954,8 @@ int test_handshake_transforms_coalesced_accepted_messages() {
 	const auto welcome = peer.Fields(Operation::Welcome);
 	Check(welcome.size() == 2 && welcome[0] == "xor", "negotiation algorithm missing");
 	const auto secret = static_cast<unsigned char>(std::stoul(welcome[1]));
-	Check(secret != 0, "invalid fixture secret");
-	BinaryData batch;
+	ASSERT_NOT_EQUAL(static_cast<unsigned char>(0), secret);
+	Safe::Binary batch;
 	for (unsigned int index = 0; index < 4; ++index) {
 		auto frame = Wire(Operation::Echo, "coalesced_protected_payload");
 		constexpr std::size_t header_size = sizeof(Transport::Packet::OpcodeType) + sizeof(std::size_t);

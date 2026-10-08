@@ -39,15 +39,19 @@
  */
 
 #include <StormByte/network/connection/handler.hxx>
+#include <StormByte/safe/string.hxx>
+#include <StormByte/safe/wstring.hxx>
+
+#include <string>
+
 #ifdef UNIX
 #include <cerrno>		// For errno
 #include <cstring>		// For strerror_r
 #else
 #include <winsock2.h>
 #endif
-#include <StormByte/safe/string.hxx>
-#include <StormByte/safe/wstring.hxx>
 using namespace StormByte::Network::Connection;
+
 Handler::Handler() noexcept {
 	#ifdef WINDOWS
 	// Initialize Winsock; set initialized=true only on success
@@ -68,23 +72,22 @@ Handler& Handler::Instance() noexcept {
 	return instance;
 }
 
-std::string Handler::LastError() const noexcept {
-	std::string error_string;
+StormByte::Safe::String Handler::LastError() const noexcept {
+	StormByte::Safe::String error_string;
 	#ifdef WINDOWS
 	wchar_t* errorMsg = nullptr;
-	DWORD res = FormatMessage(
+	DWORD res = FormatMessageW(
 				FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
 				nullptr, WSAGetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
 				reinterpret_cast<LPWSTR>(&errorMsg), 0, nullptr);
 	if (res != 0 && errorMsg != nullptr) {
 		const StormByte::Safe::WString wide_message{std::wstring_view{errorMsg}};
 		const StormByte::Safe::String utf8_message{wide_message};
-		error_string.assign(static_cast<std::string_view>(utf8_message));
+		error_string = utf8_message;
 		LocalFree(errorMsg);
-	} else {
-		// No message available; leave empty so callers can decide how to present it
-		if (errorMsg) LocalFree(errorMsg);
 	}
+	else if (errorMsg)
+		LocalFree(errorMsg);
 	#else
 	if (errno != 0)
 		error_string = ErrnoToString(errno);
@@ -100,20 +103,22 @@ int Handler::LastErrorCode() const noexcept {
 	#endif
 }
 
-std::string Handler::ErrnoToString(int errnum) const noexcept {
+StormByte::Safe::String Handler::ErrnoToString(int errnum) const noexcept {
 	#ifdef WINDOWS
 	char buf[256] = {0};
-	if (strerror_s(buf, sizeof(buf), errnum) == 0) return std::string(buf);
-	return std::to_string(errnum);
+	if (strerror_s(buf, sizeof(buf), errnum) == 0)
+		return StormByte::Safe::String(buf);
+	return StormByte::Safe::String(std::to_string(errnum));
 	#else
 	char buf[256] = {0};
 	// Handle both GNU (returns char*) and POSIX (returns int) strerror_r variants
 	#if defined(__GLIBC__) && !defined(__APPLE__)
 	char *msg = strerror_r(errnum, buf, sizeof(buf));
-	return std::string(msg ? msg : "Unknown error");
+	return StormByte::Safe::String(msg ? msg : "Unknown error");
 	#else
-	if (strerror_r(errnum, buf, sizeof(buf)) == 0) return std::string(buf);
-	return std::to_string(errnum);
+	if (strerror_r(errnum, buf, sizeof(buf)) == 0)
+		return StormByte::Safe::String(buf);
+	return StormByte::Safe::String(std::to_string(errnum));
 	#endif
 	#endif
 }

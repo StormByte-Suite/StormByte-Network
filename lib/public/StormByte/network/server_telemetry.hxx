@@ -8,8 +8,8 @@
  * 1. GNU Lesser General Public License v3.0 (or later)
  *    You may redistribute and/or modify this file under the terms of the
  *    GNU Lesser General Public License as published by the Free Software
- *    Foundation, either version 3 of the License, or (at your option) any
- *    later version.
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
  *
  * 2. Commercial license
  *    Alternatively, this file may be used under the terms of a commercial
@@ -18,7 +18,9 @@
  *
  * Both licenses apply only to original StormByte-Network source in this
  * repository. They do not cover other StormByte modules or any third-party
- * material shipped with this repository, which remains under its own license.
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
  *
  * Neither license grants any patent rights. Any patent licenses required
  * to use this software or third-party components must be obtained separately
@@ -40,8 +42,9 @@
 
 #include <StormByte/network/telemetry.hxx>
 #include <StormByte/network/visibility.h>
+#include <StormByte/safe/atomic.hxx>
+#include <StormByte/size.hxx>
 
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 
@@ -81,56 +84,56 @@ namespace StormByte {
 				 * @brief Number of currently active application sessions.
 				 * @return Current active-session count.
 				 */
-				std::uint64_t CurrentConnections() const noexcept;
+				Size CurrentConnections() const noexcept;
 
 				/**
 				 * @brief Total application sessions accepted by this Server.
 				 * @return Cumulative accepted-session count.
 				 */
-				std::uint64_t AcceptedConnections() const noexcept;
+				Size AcceptedConnections() const noexcept;
 
 				/**
 				 * @brief Total application sessions closed by this Server.
 				 * @return Cumulative closed-session count.
 				 */
-				std::uint64_t ClosedConnections() const noexcept;
+				Size ClosedConnections() const noexcept;
 
 				/**
 				 * @brief Maximum simultaneous application sessions observed.
 				 * @return Highest recorded active-session count.
 				 */
-				std::uint64_t PeakConnections() const noexcept;
+				Size PeakConnections() const noexcept;
 
 				/**
 				 * @brief Valid application packets submitted to the worker pool.
 				 * @return Cumulative dispatched-packet count.
 				 */
-				std::uint64_t PacketsDispatched() const noexcept;
+				Size PacketsDispatched() const noexcept;
 
 				/**
 				 * @brief Packet handlers that returned a non-null response.
 				 * @return Cumulative count of handlers returning responses.
 				 */
-				std::uint64_t HandlersCompleted() const noexcept;
+				Size HandlersCompleted() const noexcept;
 
 				/**
 				 * @brief Packet handlers that returned no response.
 				 * @return Cumulative no-response count, including intentional
 				 * disconnects.
 				 */
-				std::uint64_t HandlersWithoutResponse() const noexcept;
+				Size HandlersWithoutResponse() const noexcept;
 
 				/**
 				 * @brief Worker-pool callbacks that completed with an error.
 				 * @return Cumulative worker-pool error count.
 				 */
-				std::uint64_t HandlerErrors() const noexcept;
+				Size HandlerErrors() const noexcept;
 
 				/**
 				 * @brief Number of completed packet-handler duration samples.
 				 * @return Cumulative completed handler-duration sample count.
 				 */
-				std::uint64_t HandlerLatencySamples() const noexcept;
+				Size HandlerLatencySamples() const noexcept;
 
 				/**
 				 * @brief Mean ProcessClientPacket duration, or zero without samples.
@@ -143,7 +146,7 @@ namespace StormByte {
 				 * @brief Times a ready session was blocked by a full worker queue.
 				 * @return Cumulative worker-queue backpressure event count.
 				 */
-				std::uint64_t WorkerQueueBackpressureEvents() const noexcept;
+				Size WorkerQueueBackpressureEvents() const noexcept;
 
 				/**
 				 * @brief Flatten the aggregate server counters to owned UTF-8 text.
@@ -203,67 +206,19 @@ namespace StormByte {
 				 */
 				void RecordWorkerQueueBackpressure() noexcept;
 
-				/**
-				 * @brief Currently active application sessions.
-				 */
-				std::atomic<std::uint64_t> m_current_connections{0};
-
-				/**
-				 * @brief Cumulative accepted application sessions.
-				 */
-				std::atomic<std::uint64_t> m_accepted_connections{0};
-
-				/**
-				 * @brief Cumulative closed application sessions.
-				 */
-				std::atomic<std::uint64_t> m_closed_connections{0};
-
-				/**
-				 * @brief Peak simultaneous application sessions.
-				 */
-				std::atomic<std::uint64_t> m_peak_connections{0};
-
-				/**
-				 * @brief Cumulative packets submitted to handlers.
-				 */
-				std::atomic<std::uint64_t> m_packets_dispatched{0};
-
-				/**
-				 * @brief Cumulative handlers returning a non-null response.
-				 */
-				std::atomic<std::uint64_t> m_handlers_completed{0};
-
-				/**
-				 * @brief Empty replies, including intentional disconnects.
-				 */
-				std::atomic<std::uint64_t> m_handlers_without_response{0};
-
-				/**
-				 * @brief Cumulative worker-pool errors.
-				 */
-				std::atomic<std::uint64_t> m_handler_errors{0};
-
-				/**
-				 * @brief Completed handler samples, with or without a response.
-				 */
-				std::atomic<std::uint64_t> m_latency_samples{0};
-
-				/**
-				 * @brief Sum of nonnegative recorded handler microseconds.
-				 */
-				std::atomic<std::uint64_t> m_latency_us{0};
-
-				/**
-				 * @brief Cumulative worker-queue backpressure events.
-				 */
-				std::atomic<std::uint64_t> m_queue_backpressure_events{0};
+				Safe::Atomic<std::uint64_t> m_current_connections{0};			///< Currently active application sessions.
+				Safe::Atomic<std::uint64_t> m_accepted_connections{0};			///< Cumulative accepted application sessions.
+				Safe::Atomic<std::uint64_t> m_closed_connections{0};			///< Cumulative closed application sessions.
+				Safe::Atomic<std::uint64_t> m_peak_connections{0};				///< Peak simultaneous application sessions.
+				Safe::Atomic<std::uint64_t> m_packets_dispatched{0};			///< Cumulative packets submitted to handlers.
+				Safe::Atomic<std::uint64_t> m_handlers_completed{0};			///< Cumulative handlers returning a non-null response.
+				Safe::Atomic<std::uint64_t> m_handlers_without_response{0};	///< Empty replies, including intentional disconnects.
+				Safe::Atomic<std::uint64_t> m_handler_errors{0};				///< Cumulative worker-pool errors.
+				Safe::Atomic<std::uint64_t> m_latency_samples{0};				///< Completed handler samples, with or without a response.
+				Safe::Atomic<std::uint64_t> m_latency_us{0};					///< Sum of nonnegative recorded handler microseconds.
+				Safe::Atomic<std::uint64_t> m_queue_backpressure_events{0};		///< Cumulative worker-queue backpressure events.
 		};
 	}
 }
 
-/**
- * @brief Server telemetry has Network-owned lifecycle operations.
- * @details Base and Network must remain loaded with a compatible ABI until
- * every shared handle is released.
- */
 STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::ServerTelemetry);

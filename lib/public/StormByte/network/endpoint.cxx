@@ -93,7 +93,7 @@ Endpoint::Endpoint(Endpoint&& other) noexcept = default;
 
 Endpoint& Endpoint::operator=(Endpoint&& other) noexcept = default;
 
-PacketPointer Endpoint::Send(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept {
+PacketPointer Endpoint::Send(StormByte::Safe::Shared<Connection::Client> client_connection, const Transport::Packet& packet) noexcept {
 	if (!SendPacket(client_connection, packet)) {
 		return nullptr;
 	}
@@ -104,15 +104,15 @@ PacketPointer Endpoint::Send(std::shared_ptr<Connection::Client> client_connecti
 	return response_frame.ProcessPacket(m_deserialize_packet_function, m_logger);
 }
 
-bool Endpoint::Reply(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept {
+bool Endpoint::Reply(StormByte::Safe::Shared<Connection::Client> client_connection, const Transport::Packet& packet) noexcept {
 	return SendPacket(client_connection, packet);
 }
 
-std::shared_ptr<Connection::Client> Endpoint::CreateConnection(std::shared_ptr<Socket::Client> socket) noexcept {
-	return std::make_shared<Connection::Client>(std::move(socket), Buffer::Pipeline{}, Buffer::Pipeline{});
+StormByte::Safe::Shared<Connection::Client> Endpoint::CreateConnection(StormByte::Safe::Shared<Socket::Client> socket) noexcept {
+	return StormByte::Safe::MakeShared<Connection::Client>(std::move(socket), Buffer::Pipeline{}, Buffer::Pipeline{});
 }
 
-bool Endpoint::SendPacket(std::shared_ptr<Connection::Client> client_connection, const Transport::Packet& packet) noexcept {
+bool Endpoint::SendPacket(StormByte::Safe::Shared<Connection::Client> client_connection, const Transport::Packet& packet) noexcept {
 	if (!client_connection || !Connection::IsConnected(client_connection->Status())) {
 		m_logger << Logger::Level::Error << "Cannot send packet: not connected." << std::endl;
 		return false;

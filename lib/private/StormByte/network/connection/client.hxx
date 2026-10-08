@@ -43,129 +43,155 @@
 #include <StormByte/buffer/pipeline.hxx>
 #include <StormByte/network/socket/client.hxx>
 #include <StormByte/network/transport/frame.hxx>
+#include <StormByte/safe/mutex.hxx>
+#include <StormByte/safe/pair.hxx>
+#include <StormByte/safe/pointers.hxx>
 
 /**
- * @brief Connection helpers of the Network module.
+ * @namespace StormByte
+ * @brief Root namespace of the StormByte suite.
  */
-namespace StormByte::Network::Connection {
+namespace StormByte {
 	/**
-	 * @class Client
-	 * @brief High-level connection over a Socket::Client with I/O pipelines.
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
 	 */
-	class STORMBYTE_NETWORK_PRIVATE Client final {
-		public:
+	namespace Network {
+		/**
+		 * @namespace StormByte::Network::Connection
+		 * @brief Connection namespace.
+		 */
+		namespace Connection {
 			/**
-			 * @brief Bind a socket and two pipelines.
-			 * @param socket Underlying socket client.
-			 * @param in_pipeline Input pipeline.
-			 * @param out_pipeline Output pipeline.
+			 * @class Client
+			 * @brief High-level connection over a Socket::Client with I/O pipelines.
+			 * @note Moving, I/O and borrowed state access require external serialization.
 			 */
-			Client(std::shared_ptr<Socket::Client> socket, Buffer::Pipeline in_pipeline, Buffer::Pipeline out_pipeline) noexcept;
+			class STORMBYTE_NETWORK_PRIVATE Client final {
+				public:
+					/**
+					 * @brief Shared connection owner retaining its Network lifecycle.
+					 */
+					using Pointer = StormByte::Safe::Shared<Client>;
 
-			/**
-			 * @brief Copy constructor (deleted).
-			 */
-			Client(const Client& other) = delete;
+					/**
+					 * @brief Non-owning observer of a connection owner.
+					 */
+					using WeakPointer = StormByte::Safe::Weak<Client>;
 
-			/**
-			 * @brief Move constructor.
-			 */
-			Client(Client&& other) noexcept = default;
+					/**
+					 * @brief Bind a socket and two pipelines.
+					 * @param socket Underlying socket client.
+					 * @param in_pipeline Input pipeline.
+					 * @param out_pipeline Output pipeline.
+					 */
+					Client(StormByte::Safe::Shared<Network::Socket::Client> socket, Buffer::Pipeline in_pipeline, Buffer::Pipeline out_pipeline) noexcept;
 
-			/**
-			 * @brief Destructor.
-			 */
-			~Client() noexcept;
+					/**
+					 * @brief Copy constructor (deleted).
+					 * @param other Connection that cannot be copied.
+					 */
+					Client(const Client& other) = delete;
 
-			/**
-			 * @brief Install one complete pair before any file plane is created.
-			 * @param input Incoming transformation pipeline.
-			 * @param output Outgoing transformation pipeline.
-			 * @return False after configuration or sealing, without replacing state.
-			 */
-			bool ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output);
+					/**
+					 * @brief Transfer connection state with externally serialized ownership.
+					 * @param other Source connection.
+					 */
+					Client(Client&& other) noexcept;
 
-			/**
-			 * @brief Copy independent pipeline templates and seal configuration.
-			 * @return Input and output templates for one file plane.
-			 */
-			std::pair<Buffer::Pipeline, Buffer::Pipeline> FilePipelines();
+					/**
+					 * @brief Release connection state inside Network.
+					 */
+					~Client() noexcept;
 
-			/**
-			 * @brief Copy assignment (deleted).
-			 */
-			Client& operator=(const Client& other) = delete;
+					/**
+					 * @brief Copy assignment (deleted).
+					 * @param other Connection that cannot be copied.
+					 * @return Reference to this connection (operation is deleted).
+					 */
+					Client& operator=(const Client& other) = delete;
 
-			/**
-			 * @brief Move assignment.
-			 */
-			Client& operator=(Client&& other) noexcept = default;
+					/**
+					 * @brief Transfer state with externally serialized ownership.
+					 * @param other Source connection.
+					 * @return Reference to this connection.
+					 */
+					Client& operator=(Client&& other) noexcept;
 
-			/**
-			 * @brief Input pipeline.
-			 * @return Pipeline.
-			 */
-			inline Buffer::Pipeline& InputPipeline() noexcept {
-				return m_in_pipeline;
-			}
+					/**
+					 * @brief Allocate an exact connection through Network's Safe factory.
+					 * @param socket Underlying socket client.
+					 * @param input Initial input pipeline.
+					 * @param output Initial output pipeline.
+					 * @return Shared connection owner.
+					 */
+					static Pointer Create(StormByte::Safe::Shared<Network::Socket::Client> socket, Buffer::Pipeline input = {}, Buffer::Pipeline output = {}) noexcept;
 
-			/**
-			 * @brief Output pipeline.
-			 * @return Pipeline.
-			 */
-			inline Buffer::Pipeline& OutputPipeline() noexcept {
-				return m_out_pipeline;
-			}
+					/**
+					 * @brief Install one complete pair before any file plane is created.
+					 * @param input Incoming transformation pipeline.
+					 * @param output Outgoing transformation pipeline.
+					 * @return False after configuration or sealing, without replacing state.
+					 */
+					bool ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output);
 
-			/**
-			 * @brief Underlying socket client.
-			 * @return Socket.
-			 */
-			inline std::shared_ptr<Socket::Client>& Socket() noexcept {
-				return m_socket;
-			}
+					/**
+					 * @brief Copy independent pipeline templates and seal configuration.
+					 * @return Input and output templates for one file plane.
+					 */
+					StormByte::Safe::Pair<Buffer::Pipeline, Buffer::Pipeline> FilePipelines();
 
-			/**
-			 * @brief Send a frame (payload through the output pipeline).
-			 * @param frame Frame to send (use std::move).
-			 * @param logger Logger.
-			 * @return true on success.
-			 */
-			bool Send(Transport::Frame&& frame, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+					/**
+					 * @brief Borrow the input pipeline.
+					 * @return Pipeline requiring externally serialized access.
+					 */
+					Buffer::Pipeline& InputPipeline() noexcept;
 
-			/**
-			 * @brief Status from the socket (or Disconnected).
-			 * @return Status.
-			 */
-			inline Connection::Status Status() const noexcept {
-				return m_socket ? m_socket->Status() : Connection::Status::Disconnected;
-			}
+					/**
+					 * @brief Borrow the output pipeline.
+					 * @return Pipeline requiring externally serialized access.
+					 */
+					Buffer::Pipeline& OutputPipeline() noexcept;
 
-			/**
-			 * @brief Receive one framed message.
-			 * @param logger Logger.
-			 * @return Frame (empty on failure).
-			 */
-			Transport::Frame Receive(StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+					/**
+					 * @brief Borrow the underlying socket owner.
+					 * @return Safe socket owner requiring externally serialized access.
+					 */
+					StormByte::Safe::Shared<Network::Socket::Client>& Socket() noexcept;
 
-		private:
-			std::shared_ptr<Socket::Client> m_socket;	///< Socket
-			Buffer::Pipeline m_in_pipeline;				///< Input pipeline
-			Buffer::Pipeline m_out_pipeline;			///< Output pipeline
+					/**
+					 * @brief Send a frame through the output pipeline.
+					 * @param frame Frame to send.
+					 * @param logger Logger.
+					 * @return True on success, false without a socket.
+					 */
+					bool Send(Transport::Frame&& frame, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
-			/**
-			 * @brief Immutable configured template for independent file input stages.
-			 */
-			Buffer::Pipeline m_file_input;
+					/**
+					 * @brief Status from the socket, or Disconnected without a socket.
+					 * @return Connection status.
+					 */
+					Connection::Status Status() const noexcept;
 
-			/**
-			 * @brief Immutable configured template for independent file output stages.
-			 */
-			Buffer::Pipeline m_file_output;
+					/**
+					 * @brief Receive one framed message.
+					 * @param logger Logger.
+					 * @return Frame, empty on failure.
+					 * @pre A socket owner is bound to this connection.
+					 */
+					Transport::Frame Receive(StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
-			/**
-			 * @brief Whether configuration has already succeeded or been sealed.
-			 */
-			bool m_configured{false};
-	};
+				private:
+					StormByte::Safe::Shared<Network::Socket::Client> m_socket;	///< Safe socket owner.
+					Buffer::Pipeline m_in_pipeline;							///< Input pipeline.
+					Buffer::Pipeline m_out_pipeline;							///< Output pipeline.
+					Buffer::Pipeline m_file_input;							///< Independent file input template.
+					Buffer::Pipeline m_file_output;							///< Independent file output template.
+					StormByte::Safe::Mutex m_configuration_mutex;				///< Protects configuration and sealing.
+					bool m_configured{false};								///< Configuration succeeded or was sealed.
+			};
+		}
+	}
 }
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Connection::Client);

@@ -1,6 +1,33 @@
 option(ENABLE_TEST "Enable Unit Tests" OFF)
 if(ENABLE_TEST)
 	enable_testing()
+	foreach(test_class IN ITEMS
+		Client
+		ClientTelemetry
+		ConnectionClosed
+		ConnectionError
+		DeserializePacketFunction
+		Endpoint
+		Exception
+		FrameError
+		Packet
+		PacketError
+		RemoteFileMount
+		Server
+		ServerTelemetry
+		Telemetry
+	)
+		string(REGEX REPLACE "([a-z])([A-Z])" "\\1_\\2" test_source "${test_class}")
+		string(TOLOWER "${test_source}" test_source)
+		add_executable(${test_class}SafeTest ${test_source}_safe_test.cxx)
+		target_link_libraries(${test_class}SafeTest StormByte::Network)
+		if(WIN32)
+			target_link_libraries(${test_class}SafeTest ws2_32)
+		endif()
+		add_test(NAME ${test_class}SafeTest COMMAND ${test_class}SafeTest)
+		set_tests_properties(${test_class}SafeTest PROPERTIES TIMEOUT 30)
+	endforeach()
+
 	add_executable(HandshakeTest handshake_test.cxx)
 	target_link_libraries(HandshakeTest StormByte::Network)
 	if(WIN32)

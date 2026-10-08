@@ -40,10 +40,12 @@
 
 #pragma once
 
-#include <StormByte/network/endpoint.hxx>
 #include <StormByte/network/client_telemetry.hxx>
+#include <StormByte/network/endpoint.hxx>
 #include <StormByte/network/remote_file.hxx>
+#include <StormByte/safe/mutex.hxx>
 #include <StormByte/safe/pointers.hxx>
+#include <StormByte/safe/string.hxx>
 
 #include <string_view>
 
@@ -77,6 +79,13 @@ namespace StormByte {
 		 * installs one connection's transformation pair after application negotiation.
 		 *
 		 * @note Inheritance-oriented. Not for direct generic use without a subclass.
+			 * @details All owned fields use Safe handles; construction, moves,
+			 * assignment and destruction run inside Network. Allocate an exact derived
+			 * type through its provider's Safe factory when sharing ownership across
+			 * modules; the base registration does not certify derived state. Keep Base,
+			 * Network, logger, packet, pipeline and callback providers loaded until
+			 * their objects are released. Serialize client use, moves and destruction.
+			 * Opcode UUIDs and Connect addresses are synchronous borrowed views.
 		 */
 		class STORMBYTE_NETWORK_PUBLIC Client: private Endpoint {
 			public:
@@ -94,13 +103,13 @@ namespace StormByte {
 				Client(const Client& other) = delete;
 
 				/**
-				 * @brief Move constructor.
+				 * @brief Transfer Safe owners inside Network without moving the mutex.
 				 * @param other Client whose state is transferred.
 				 */
 				Client(Client&& other) noexcept;
 
 				/**
-				 * @brief Destructor (out-of-line in .cxx).
+				 * @brief Disconnect and release Safe owners inside Network.
 				 */
 				virtual ~Client() noexcept;
 
@@ -112,7 +121,7 @@ namespace StormByte {
 				Client& operator=(const Client& other) = delete;
 
 				/**
-				 * @brief Move assignment.
+				 * @brief Disconnect this client before transferring Safe owners in Network.
 				 * @param other Client whose state is transferred.
 				 * @return Reference to this client.
 				 */
@@ -121,7 +130,7 @@ namespace StormByte {
 				/**
 				 * @brief Connect to a remote host.
 				 * @param protocol Address family.
-				 * @param address Hostname or IP.
+				 * @param address Hostname or IP borrowed for this call, without embedded nulls.
 				 * @param port Port number.
 				 * @return true on success.
 				 */
@@ -193,24 +202,14 @@ namespace StormByte {
 				RemoteFileWriterHandle CreateRemoteFileWriter(const RemoteFileMount& mount) noexcept;
 
 			private:
-				/**
-				 * @class Implementation
-				 * @brief Private connection and remote-file state.
-				 */
-				class Implementation;
-
-				/**
-				 * @brief Base-owned private connection backend.
-				 */
-				StormByte::Safe::Unique<Implementation> m_backend;
+				Safe::Shared<Connection::Client> m_connection;					///< Active framed connection.
+				Safe::String m_remote_address;								///< Address used for private file channels.
+				Connection::Protocol m_protocol{Connection::Protocol::IPv4};	///< File-channel address family.
+				Safe::Mutex m_remote_file_mutex;								///< Guards peer-plane creation and mount registration.
+				Safe::Shared<Detail::RemoteFile::DataPlane> m_remote_file_plane;	///< Shared peer data plane.
+				Safe::Shared<ClientTelemetry> m_telemetry;						///< Client-scoped counters.
 		};
 	}
 }
 
-/**
- * @brief Client state is owned by Network.
- *
- * Construct exact derived types with Safe factories and keep Base, Network
- * and the leaf provider loaded until destruction with a compatible ABI.
- */
 STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Client);

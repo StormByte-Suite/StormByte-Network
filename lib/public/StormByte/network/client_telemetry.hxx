@@ -8,8 +8,8 @@
  * 1. GNU Lesser General Public License v3.0 (or later)
  *    You may redistribute and/or modify this file under the terms of the
  *    GNU Lesser General Public License as published by the Free Software
- *    Foundation, either version 3 of the License, or (at your option) any
- *    later version.
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
  *
  * 2. Commercial license
  *    Alternatively, this file may be used under the terms of a commercial
@@ -18,7 +18,9 @@
  *
  * Both licenses apply only to original StormByte-Network source in this
  * repository. They do not cover other StormByte modules or any third-party
- * material shipped with this repository, which remains under its own license.
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
  *
  * Neither license grants any patent rights. Any patent licenses required
  * to use this software or third-party components must be obtained separately
@@ -40,8 +42,9 @@
 
 #include <StormByte/network/telemetry.hxx>
 #include <StormByte/network/visibility.h>
+#include <StormByte/safe/atomic.hxx>
+#include <StormByte/size.hxx>
 
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 
@@ -81,19 +84,19 @@ namespace StormByte {
 				 * @brief Number of calls to Client::Connect.
 				 * @return Cumulative connection-attempt count.
 				 */
-				std::uint64_t ConnectionAttempts() const noexcept;
+				Size ConnectionAttempts() const noexcept;
 
 				/**
 				 * @brief Successful connections made by this Client.
 				 * @return Cumulative successful-connection count.
 				 */
-				std::uint64_t ConnectionsEstablished() const noexcept;
+				Size ConnectionsEstablished() const noexcept;
 
 				/**
 				 * @brief Failed connection attempts made by this Client.
 				 * @return Cumulative failed-connection count.
 				 */
-				std::uint64_t ConnectionFailures() const noexcept;
+				Size ConnectionFailures() const noexcept;
 
 				/**
 				 * @brief Whether this Client currently has an application connection.
@@ -105,25 +108,25 @@ namespace StormByte {
 				 * @brief Requests initiated through Client::Send.
 				 * @return Cumulative request-attempt count.
 				 */
-				std::uint64_t Requests() const noexcept;
+				Size Requests() const noexcept;
 
 				/**
 				 * @brief Requests that returned a decoded response packet.
 				 * @return Cumulative decoded-response count.
 				 */
-				std::uint64_t Responses() const noexcept;
+				Size Responses() const noexcept;
 
 				/**
 				 * @brief Requests for which Send returned no decoded response.
 				 * @return Cumulative count of requests without decoded responses.
 				 */
-				std::uint64_t RequestsWithoutResponse() const noexcept;
+				Size RequestsWithoutResponse() const noexcept;
 
 				/**
 				 * @brief Number of completed request-latency samples.
 				 * @return Cumulative completed round-trip sample count.
 				 */
-				std::uint64_t RequestLatencySamples() const noexcept;
+				Size RequestLatencySamples() const noexcept;
 
 				/**
 				 * @brief Mean complete Send round-trip, or zero without samples.
@@ -184,57 +187,17 @@ namespace StormByte {
 				 */
 				Sample MeasureRequest();
 
-				/**
-				 * @brief Cumulative Connect calls.
-				 */
-				std::atomic<std::uint64_t> m_connection_attempts{0};
-
-				/**
-				 * @brief Cumulative successful Connect calls.
-				 */
-				std::atomic<std::uint64_t> m_connections_established{0};
-
-				/**
-				 * @brief Cumulative failed Connect calls.
-				 */
-				std::atomic<std::uint64_t> m_connection_failures{0};
-
-				/**
-				 * @brief Current recorded application-connection state.
-				 */
-				std::atomic<bool> m_connected{false};
-
-				/**
-				 * @brief Cumulative Client::Send calls.
-				 */
-				std::atomic<std::uint64_t> m_requests{0};
-
-				/**
-				 * @brief Cumulative requests with decoded responses.
-				 */
-				std::atomic<std::uint64_t> m_responses{0};
-
-				/**
-				 * @brief Cumulative requests without decoded responses.
-				 */
-				std::atomic<std::uint64_t> m_requests_without_response{0};
-
-				/**
-				 * @brief Completed round-trip samples, with or without a response.
-				 */
-				std::atomic<std::uint64_t> m_latency_samples{0};
-
-				/**
-				 * @brief Sum of nonnegative recorded round-trip microseconds.
-				 */
-				std::atomic<std::uint64_t> m_latency_us{0};
+				Safe::Atomic<std::uint64_t> m_connection_attempts{0};			///< Cumulative Connect calls.
+				Safe::Atomic<std::uint64_t> m_connections_established{0};		///< Cumulative successful Connect calls.
+				Safe::Atomic<std::uint64_t> m_connection_failures{0};			///< Cumulative failed Connect calls.
+				Safe::Atomic<bool> m_connected{false};						///< Current recorded application-connection state.
+				Safe::Atomic<std::uint64_t> m_requests{0};						///< Cumulative Client::Send calls.
+				Safe::Atomic<std::uint64_t> m_responses{0};						///< Cumulative requests with decoded responses.
+				Safe::Atomic<std::uint64_t> m_requests_without_response{0};	///< Cumulative requests without decoded responses.
+				Safe::Atomic<std::uint64_t> m_latency_samples{0};				///< Completed round-trip samples, with or without a response.
+				Safe::Atomic<std::uint64_t> m_latency_us{0};					///< Sum of nonnegative recorded round-trip microseconds.
 		};
 	}
 }
 
-/**
- * @brief Client telemetry has Network-owned lifecycle operations.
- * @details Base and Network must remain loaded with a compatible ABI until
- * every shared handle is released.
- */
 STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::ClientTelemetry);

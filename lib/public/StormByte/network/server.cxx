@@ -45,31 +45,33 @@
 #include <StormByte/network/session.hxx>
 #include <StormByte/network/socket/server.hxx>
 #include <StormByte/network/worker_pool.hxx>
+#include <StormByte/safe/function.hxx>
 #include <StormByte/uuid.hxx>
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <filesystem>
+#include <mutex>
+#include <string>
+#include <utility>
+
 #ifdef UNIX
+#include <fcntl.h>
 #include <unistd.h>
 #else
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #endif
-#include <algorithm>
-#include <array>
-#include <atomic>
-#include <cctype>
-#include <deque>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <thread>
-#include <unordered_map>
-#include <utility>
-#include <vector>
 
 namespace {
 	std::uint8_t HexDigit(const char value) noexcept {
-		if (value >= '0' && value <= '9') return static_cast<std::uint8_t>(value - '0');
-		if (value >= 'a' && value <= 'f') return static_cast<std::uint8_t>(value - 'a' + 10);
-		if (value >= 'A' && value <= 'F') return static_cast<std::uint8_t>(value - 'A' + 10);
+		if (value >= '0' && value <= '9')
+			return static_cast<std::uint8_t>(value - '0');
+		if (value >= 'a' && value <= 'f')
+			return static_cast<std::uint8_t>(value - 'a' + 10);
+		if (value >= 'A' && value <= 'F')
+			return static_cast<std::uint8_t>(value - 'A' + 10);
 		return 0;
 	}
 
@@ -101,179 +103,162 @@ namespace {
 	}
 }
 
+using StormByte::Size;
+namespace Safe = StormByte::Safe;
 using namespace StormByte::Network;
 
-class Server::Implementation final {
+/**
+ * @class StormByte::Network::Detail::WakeupChannel
+ * @brief Network-owned native handles used to wake the accept loop.
+ */
+class StormByte::Network::Detail::WakeupChannel final {
 	public:
 		/**
-		 * @brief Construct an empty event-loop engine with its telemetry.
+		 * @brief Initialize invalid native handles.
 		 */
-		Implementation() = default;
-
-	private:
-		friend class Server;
+		WakeupChannel() noexcept;
 
 		/**
-		 * @brief Listening socket owned by this server engine.
+		 * @brief Release both native handles in Network.
 		 */
-		std::unique_ptr<Socket::Server> socket_server;
+		~WakeupChannel() noexcept;
+
 		/**
-		 * @brief Current listener lifecycle state.
+		 * @brief Prevent duplicated native handle ownership.
+		 * @param other Channel that cannot be copied.
 		 */
-		std::atomic<Connection::Status> status{Connection::Status::Disconnected};
+		WakeupChannel(const WakeupChannel& other) = delete;
+
 		/**
-		 * @brief Thread running the accept and event loop.
+		 * @brief Prevent moving native handles outside their owner.
+		 * @param other Channel that cannot be moved.
 		 */
-		std::thread accept_thread;
+		WakeupChannel(WakeupChannel&& other) = delete;
+
+		/**
+		 * @brief Prevent duplicated native handle ownership.
+		 * @param other Channel that cannot be copied.
+		 * @return This channel; operation is deleted.
+		 */
+		WakeupChannel& operator=(const WakeupChannel& other) = delete;
+
+		/**
+		 * @brief Prevent replacing native handle ownership.
+		 * @param other Channel that cannot be moved.
+		 * @return This channel; operation is deleted.
+		 */
+		WakeupChannel& operator=(WakeupChannel&& other) = delete;
+
 #ifdef WINDOWS
-		/**
-		 * @brief Read end of the event-loop wakeup socket.
-		 */
-		Connection::HandlerType wakeup_read{INVALID_SOCKET};
-		/**
-		 * @brief Write end of the event-loop wakeup socket.
-		 */
-		Connection::HandlerType wakeup_write{INVALID_SOCKET};
+		Connection::HandlerType read{INVALID_SOCKET};	///< Native wakeup read socket.
+		Connection::HandlerType write{INVALID_SOCKET};	///< Native wakeup write socket.
 #else
-		/**
-		 * @brief Read end of the event-loop wakeup pipe.
-		 */
-		Connection::HandlerType wakeup_read{-1};
-		/**
-		 * @brief Write end of the event-loop wakeup pipe.
-		 */
-		Connection::HandlerType wakeup_write{-1};
+		Connection::HandlerType read{-1};	///< Native wakeup read descriptor.
+		Connection::HandlerType write{-1};	///< Native wakeup write descriptor.
 #endif
-		/**
-		 * @brief Active parser sessions keyed by client UUID.
-		 */
-		std::unordered_map<std::string, std::shared_ptr<Detail::Session>> sessions;
-
-		/**
-		 * @brief Connections available to handlers, guarded by remote_file_mutex.
-		 */
-		std::unordered_map<std::string, std::shared_ptr<Connection::Client>> configurable_connections;
-		/**
-		 * @brief Bounded pool that executes application packet handlers.
-		 */
-		std::unique_ptr<Detail::WorkerPool> pool;
-		/**
-		 * @brief Responses posted by worker threads for the event loop.
-		 */
-		std::deque<Server::Completion> completions;
-		/**
-		 * @brief Address family used by the listener and private file planes.
-		 */
-		Connection::Protocol protocol{Connection::Protocol::IPv4};
-		/**
-		 * @brief Bind address retained for private file planes.
-		 */
-		StormByte::Safe::String bind_address;
-		/**
-		 * @brief Authorized remote-file mounts.
-		 */
-		std::vector<Server::MountedRemoteFile> remote_files;
-		/**
-		 * @brief Private data plane shared by each connected peer.
-		 */
-		std::unordered_map<std::string, std::shared_ptr<Detail::RemoteFile::Host>> remote_planes;
-		/**
-		 * @brief Registry for path reservations and remote-file capability tokens.
-		 */
-		std::shared_ptr<Detail::RemoteFile::MountRegistry> remote_file_registry;
-		/**
-		 * @brief Protects remote-file registrations and peer planes.
-		 */
-		std::mutex remote_file_mutex;
-		/**
-		 * @brief Protects worker completion queue access.
-		 */
-		std::mutex completion_mutex;
-		/**
-		 * @brief Commands posted by workers and application callbacks.
-		 */
-		std::deque<Server::Command> commands;
-		/**
-		 * @brief Protects event-loop command queue access.
-		 */
-		std::mutex command_mutex;
-		/**
-		 * @brief Aggregate counters and handler latency for this server.
-		 */
-		StormByte::Safe::Shared<ServerTelemetry> telemetry{StormByte::Safe::Heap::MakeShared<ServerTelemetry>()};
 };
+
+StormByte::Network::Detail::WakeupChannel::WakeupChannel() noexcept = default;
+
+StormByte::Network::Detail::WakeupChannel::~WakeupChannel() noexcept {
+#ifdef WINDOWS
+	if (read != INVALID_SOCKET)
+		::closesocket(read);
+	if (write != INVALID_SOCKET)
+		::closesocket(write);
+#else
+	if (read >= 0)
+		::close(read);
+	if (write >= 0)
+		::close(write);
+#endif
+}
 
 Server::Server(DeserializePacketFunction deserialize_packet_function, StormByte::Safe::Shared<Logger::Log> logger):
 	Endpoint(std::move(deserialize_packet_function), std::move(logger)),
-	m_engine(StormByte::Safe::Unique<Implementation>::MakePointer<Implementation>()) {}
+	m_telemetry(Safe::MakeShared<ServerTelemetry>()) {}
+
 Server::Server(Server&& other) noexcept:
-	Endpoint(std::move(other)), m_engine(std::move(other.m_engine)) {}
+	Endpoint(StopForMove(other)) {
+	MoveStoppedState(other);
+}
 
 Server::~Server() noexcept {
 	Disconnect();
 }
 
 Connection::Status Server::Status() const noexcept {
-	return m_engine ? m_engine->status.load(std::memory_order_acquire) : Connection::Status::Disconnected;
+	return m_status.load(Safe::MemoryOrder::Acquire);
 }
 
 StormByte::Safe::Shared<ServerTelemetry> Server::Telemetry() const noexcept {
-	return m_engine ? m_engine->telemetry : StormByte::Safe::Shared<ServerTelemetry>{};
+	return m_telemetry;
 }
 
 Server& Server::operator=(Server&& other) noexcept {
 	if (this != &other) {
 		Disconnect();
+		StopForMove(other);
 		Endpoint::operator=(std::move(other));
-		m_engine = std::move(other.m_engine);
+		MoveStoppedState(other);
 	}
 
 	return *this;
 }
 
+Server&& Server::StopForMove(Server& other) noexcept {
+	other.Disconnect();
+	return std::move(other);
+}
+
+void Server::MoveStoppedState(Server& other) noexcept {
+	m_protocol = other.m_protocol;
+	m_bind_address = std::move(other.m_bind_address);
+	m_remote_file_registry = std::move(other.m_remote_file_registry);
+	m_telemetry = std::move(other.m_telemetry);
+	m_status.store(Connection::Status::Disconnected, Safe::MemoryOrder::Release);
+}
+
 bool Server::Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) {
 	try {
-		if (!m_engine) {
-			m_engine = StormByte::Safe::Unique<Implementation>::MakePointer<Implementation>();
-		}
-		if (!m_engine->telemetry) m_engine->telemetry = StormByte::Safe::Heap::MakeShared<ServerTelemetry>();
-		if (m_engine->socket_server) {
+		if (m_socket_server || m_accept_thread.joinable() || m_pool) {
 			m_logger << Logger::Level::Error << "Server is already running." << std::endl;
 			return false;
 		}
-
-		if (!m_engine->remote_file_registry) {
-			m_engine->remote_file_registry = std::make_shared<Detail::RemoteFile::MountRegistry>();
-		}
-		m_engine->protocol = protocol;
-		m_engine->bind_address = address;
-		m_engine->socket_server = std::make_unique<Socket::Server>(protocol, m_logger);
-		if (!m_engine->socket_server->Listen(address, port)) {
+		if (!m_telemetry)
+			m_telemetry = Safe::MakeShared<ServerTelemetry>();
+		if (!m_remote_file_registry)
+			m_remote_file_registry = Safe::MakeShared<Detail::RemoteFile::MountRegistry>();
+		m_protocol = protocol;
+		m_bind_address = address;
+		m_socket_server = Safe::MakeUnique<Socket::Server>(protocol, m_logger);
+		if (!m_socket_server->Listen(address, port)) {
 			m_logger << Logger::Level::Error << "Failed to listen on " << std::string_view{address} << ":" << port
 					<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
-			m_engine->socket_server.reset();
+			m_socket_server.reset();
 			return false;
 		}
 
 		if (!CreateWakeup()) {
 			m_logger << Logger::Level::Error << "Failed to create server wakeup channel" << std::endl;
-			m_engine->socket_server->Disconnect();
-			m_engine->socket_server.reset();
+			m_socket_server->Disconnect();
+			m_socket_server.reset();
 			return false;
 		}
 
-		std::size_t worker_count = std::thread::hardware_concurrency();
-		worker_count = worker_count == 0 ? 4 : std::min(worker_count, static_cast<std::size_t>(8));
-		m_engine->pool = std::make_unique<Detail::WorkerPool>(worker_count, 64,
-			[this](std::string_view uuid, PacketPointer packet) {
-				if (!m_engine->telemetry) return ProcessClientPacket(uuid, std::move(packet));
-				m_engine->telemetry->RecordPacketDispatched();
-				auto sample = m_engine->telemetry->MeasureHandler();
+		const unsigned available_workers = Safe::Thread::hardware_concurrency();
+		const Size worker_count{available_workers == 0 ? 4u : std::min(available_workers, 8u)};
+		m_pool = Safe::MakeUnique<Detail::WorkerPool>(worker_count, Size{64},
+			Detail::WorkerCallbackFactory<PacketPointer(const Safe::String&, PacketPointer)>::Make([this](const Safe::String& uuid, PacketPointer packet) {
+				if (!m_telemetry)
+					return ProcessClientPacket(uuid, std::move(packet));
+				m_telemetry->RecordPacketDispatched();
+				auto sample = m_telemetry->MeasureHandler();
 				PacketPointer response = ProcessClientPacket(uuid, std::move(packet));
-				m_engine->telemetry->RecordHandlerResult(sample.Stop(), static_cast<bool>(response));
+				m_telemetry->RecordHandlerResult(sample.Stop(), static_cast<bool>(response));
 				return response;
-			},
-			[this](Detail::WorkerPool::Completion completion) {
+			}),
+			Detail::WorkerCallbackFactory<void(Detail::WorkerPool::Completion)>::Make([this](Detail::WorkerPool::Completion completion) {
 				CompletionReason reason = CompletionReason::Error;
 				switch (completion.reason) {
 					case Detail::WorkerPool::CompletionReason::Success:
@@ -284,83 +269,94 @@ bool Server::Connect(const Connection::Protocol& protocol, std::string_view addr
 						break;
 					case Detail::WorkerPool::CompletionReason::Error:
 						reason = CompletionReason::Error;
-						if (m_engine->telemetry) m_engine->telemetry->RecordHandlerError();
+						if (m_telemetry)
+							m_telemetry->RecordHandlerError();
 						break;
 				}
 
 				PostCompletion({ std::move(completion.uuid), std::move(completion.packet), reason });
-			});
-		m_engine->status.store(Connection::Status::Connected);
-		m_engine->accept_thread = std::thread(&Server::AcceptClients, this);
+			}));
+		m_status.store(Connection::Status::Connected, Safe::MemoryOrder::Release);
+		m_accept_thread = Safe::Thread(Detail::WorkerCallbackFactory<void()>::Make([this]() noexcept { AcceptClients(); }));
 		m_logger << Logger::Level::LowLevel << "Server is listening on " << std::string_view{address} << ":" << port
 				<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
 		return true;
-	} catch (const std::bad_alloc& bd) {
-		m_logger << Logger::Level::Error << "Failed to allocate memory for server socket: " << bd.what() << std::endl;
+	} catch (...) {
+		Disconnect();
+		m_logger << Logger::Level::Error << "Failed to start server" << std::endl;
 		return false;
 	}
 }
 
 void Server::Disconnect() noexcept {
-	if (!m_engine) return;
-
-	if (!m_engine->socket_server && !m_engine->accept_thread.joinable() && !m_engine->pool) {
-		RevokeAllRemoteFiles();
-		return;
-	}
-
-	if (m_engine->pool && m_engine->pool->IsWorkerThread()) {
+	if (m_pool && m_pool->IsWorkerThread()) {
 		PostCommand({ CommandType::Stop, {} });
 		return;
 	}
 
-	if (m_engine->socket_server) {
+	if (m_accept_thread.get_id() == Safe::this_thread::get_id()) {
+		m_status.store(Connection::Status::Disconnecting, Safe::MemoryOrder::Release);
+		return;
+	}
+
+	if (m_socket_server) {
 		m_logger << Logger::Level::LowLevel
 				<< "Stopping server and disconnecting all clients." << std::endl;
-		m_engine->status.store(Connection::Status::Disconnecting, std::memory_order_release);
+		m_status.store(Connection::Status::Disconnecting, Safe::MemoryOrder::Release);
 		SignalWakeup();
 	}
 
-	// The event loop owns all sessions. It performs cleanup after observing stop.
-	if (m_engine->accept_thread.joinable() && m_engine->accept_thread.get_id() != std::this_thread::get_id()) {
-		m_engine->accept_thread.join();
-	}
-
-	if (m_engine->pool) {
-		const bool from_worker = m_engine->pool->IsWorkerThread();
-		m_engine->pool->Stop();
-		if (!from_worker) {
-			m_engine->pool->Join();
-		}
+	if (m_accept_thread.joinable())
+		m_accept_thread.join();
+	if (m_pool) {
+		m_pool->Stop();
+		m_pool->Join();
+		m_pool.reset();
 	}
 	RevokeAllRemoteFiles();
+	if (m_socket_server) {
+		m_socket_server->Disconnect();
+		m_socket_server.reset();
+	}
+	CloseWakeup();
+	{
+		std::scoped_lock lock(m_completion_mutex);
+		m_completions.clear();
+	}
+	{
+		std::scoped_lock lock(m_command_mutex);
+		m_commands.clear();
+	}
+	m_status.store(Connection::Status::Disconnected, Safe::MemoryOrder::Release);
 }
 
 RemoteFileMount Server::MountRemoteFileReader(std::string_view client_uuid,
-	const std::filesystem::path& path, const std::uint16_t maximum_timeout_seconds) noexcept {
-	if (!m_engine || client_uuid.empty() || path.empty() || maximum_timeout_seconds < 3 || maximum_timeout_seconds > 3600
-		|| !Connection::IsConnected(m_engine->status.load(std::memory_order_acquire))) {
+	std::string_view path, const std::uint16_t maximum_timeout_seconds) noexcept {
+	if (client_uuid.empty() || path.empty() || maximum_timeout_seconds < 3 || maximum_timeout_seconds > 3600
+		|| !Connection::IsConnected(m_status.load(Safe::MemoryOrder::Acquire))) {
 		return RemoteFileMount::Failed();
 	}
 
 	try {
+		const std::filesystem::path local_path{path};
 		std::error_code file_error;
-		const bool exists = std::filesystem::exists(path, file_error);
+		const bool exists = std::filesystem::exists(local_path, file_error);
 		if (file_error) {
 			return RemoteFileMount::Failed();
 		}
 		if (!exists) {
 			return RemoteFileMount::Unavailable();
 		}
-		if (!std::filesystem::is_regular_file(path, file_error) || file_error) {
+		if (!std::filesystem::is_regular_file(local_path, file_error) || file_error) {
 			return RemoteFileMount::Failed();
 		}
 		std::error_code path_error;
-		const std::filesystem::path normalized = std::filesystem::weakly_canonical(path, path_error);
+		const std::filesystem::path normalized = std::filesystem::weakly_canonical(local_path, path_error);
 		if (path_error) {
 			return RemoteFileMount::Failed();
 		}
-		std::string path_key = normalized.generic_string();
+		const std::string normalized_path = normalized.generic_string();
+		std::string path_key = normalized_path;
 #ifdef WINDOWS
 		std::ranges::transform(path_key, path_key.begin(), [](const unsigned char character) {
 			return static_cast<char>(std::tolower(character));
@@ -370,49 +366,52 @@ RemoteFileMount Server::MountRemoteFileReader(std::string_view client_uuid,
 		if (std::ranges::all_of(token, [](const std::byte value) { return value == std::byte{0}; })) {
 			return RemoteFileMount::Failed();
 		}
-		std::shared_ptr<Detail::RemoteFile::Host> host;
+		Safe::Shared<Detail::RemoteFile::Host> host;
 		bool started_plane = false;
 		{
-			std::scoped_lock lock(m_engine->remote_file_mutex);
-			if (!Connection::IsConnected(m_engine->status.load(std::memory_order_acquire)) || !m_engine->remote_file_registry) {
+			std::scoped_lock lock(m_remote_file_mutex);
+			if (!Connection::IsConnected(m_status.load(Safe::MemoryOrder::Acquire)) || !m_remote_file_registry) {
 				return RemoteFileMount::Failed();
 			}
-			std::erase_if(m_engine->remote_files, [this](const MountedRemoteFile& mounted) {
-				return !m_engine->remote_file_registry->HasToken(mounted.token);
-			});
-			if (std::ranges::any_of(m_engine->remote_files, [&path_key](const MountedRemoteFile& mounted) {
-				return mounted.path_key == path_key && mounted.access == RemoteFileMount::Access::Write;
+			for (auto mounted = m_remote_files.begin(); mounted != m_remote_files.end();) {
+				if (!m_remote_file_registry->HasToken(mounted->token))
+					mounted = m_remote_files.erase(mounted);
+				else
+					++mounted;
+			}
+			if (std::ranges::any_of(m_remote_files, [&path_key](const MountedRemoteFile& mounted) {
+				return static_cast<std::string_view>(mounted.path_key) == path_key && mounted.access == RemoteFileMount::Access::Write;
 			})) {
 				return RemoteFileMount::FileBeingWritten();
 			}
-			if (m_engine->remote_files.size() >= MAX_REMOTE_FILE_CHANNELS) {
+			if (m_remote_files.size() >= MAX_REMOTE_FILE_CHANNELS) {
 				return RemoteFileMount::Failed();
 			}
-			auto plane_it = m_engine->remote_planes.find(std::string{client_uuid});
-			if (plane_it != m_engine->remote_planes.end()) {
-				host = plane_it->second;
+			const Safe::String uuid{client_uuid};
+			auto plane_it = m_remote_planes.find(uuid);
+			if (plane_it != m_remote_planes.end()) {
+				host = plane_it->second.host;
 				if (!host || host->Finished()) return RemoteFileMount::Failed();
 			} else {
-				const auto connection = m_engine->configurable_connections.find(std::string{client_uuid});
-				if (connection == m_engine->configurable_connections.end())
+				const auto connection = m_configurable_connections.find(uuid);
+				if (connection == m_configurable_connections.end())
 					return RemoteFileMount::Failed();
-				auto pipelines = connection->second->FilePipelines();
-				host = std::make_shared<Detail::RemoteFile::Host>(m_engine->protocol,
-					std::string{static_cast<std::string_view>(m_engine->bind_address)},
-					std::move(pipelines.first), std::move(pipelines.second), maximum_timeout_seconds, m_engine->remote_file_registry, m_logger);
+				Safe::Pair<Buffer::Pipeline, Buffer::Pipeline> pipelines = connection->second.connection->FilePipelines();
+				host = Safe::MakeShared<Detail::RemoteFile::Host>(m_protocol, m_bind_address,
+					std::move(pipelines.first), std::move(pipelines.second), maximum_timeout_seconds, m_remote_file_registry, m_logger);
 				if (!host->Start()) return RemoteFileMount::Failed();
-				m_engine->remote_planes.emplace(std::string{client_uuid}, host);
+				m_remote_planes.emplace(uuid, Detail::RemotePlaneRegistration{host});
 				started_plane = true;
 			}
-			if (!m_engine->remote_file_registry->AddMount(token, normalized, RemoteFileMount::Access::Read)) {
+			if (!m_remote_file_registry->AddMount(token, std::string_view{normalized_path}, RemoteFileMount::Access::Read)) {
 				return RemoteFileMount::Failed();
 			}
 			if (!host->RegisterToken(token)) {
-				(void)m_engine->remote_file_registry->ReleaseToken(token);
+				(void)m_remote_file_registry->ReleaseToken(token);
 				return RemoteFileMount::Failed();
 			}
 			try {
-				m_engine->remote_files.push_back({ host, path_key, RemoteFileMount::Access::Read, token });
+				m_remote_files.push_back({ host, Safe::String{std::string_view{path_key}}, RemoteFileMount::Access::Read, token });
 			} catch (...) {
 				host->UnregisterToken(token);
 				throw;
@@ -428,23 +427,25 @@ RemoteFileMount Server::MountRemoteFileReader(std::string_view client_uuid,
 }
 
 RemoteFileMount Server::MountRemoteFileWriter(std::string_view client_uuid,
-	const std::filesystem::path& path, const std::uint16_t maximum_timeout_seconds) noexcept {
-	if (!m_engine || client_uuid.empty() || path.empty() || maximum_timeout_seconds < 3 || maximum_timeout_seconds > 3600
-		|| !Connection::IsConnected(m_engine->status.load(std::memory_order_acquire))) {
+	std::string_view path, const std::uint16_t maximum_timeout_seconds) noexcept {
+	if (client_uuid.empty() || path.empty() || maximum_timeout_seconds < 3 || maximum_timeout_seconds > 3600
+		|| !Connection::IsConnected(m_status.load(Safe::MemoryOrder::Acquire))) {
 		return RemoteFileMount::Failed();
 	}
 
 	try {
+		const std::filesystem::path local_path{path};
 		std::error_code path_error;
-		std::filesystem::path normalized = std::filesystem::weakly_canonical(path, path_error);
+		std::filesystem::path normalized = std::filesystem::weakly_canonical(local_path, path_error);
 		if (path_error) {
 			path_error.clear();
-			normalized = std::filesystem::absolute(path, path_error).lexically_normal();
+			normalized = std::filesystem::absolute(local_path, path_error).lexically_normal();
 		}
 		if (path_error) {
 			return RemoteFileMount::Failed();
 		}
-		std::string writer_path = normalized.generic_string();
+		const std::string normalized_path = normalized.generic_string();
+		std::string writer_path = normalized_path;
 #ifdef WINDOWS
 		std::ranges::transform(writer_path, writer_path.begin(), [](const unsigned char character) {
 			return static_cast<char>(std::tolower(character));
@@ -455,51 +456,54 @@ RemoteFileMount Server::MountRemoteFileWriter(std::string_view client_uuid,
 		if (std::ranges::all_of(token, [](const std::byte value) { return value == std::byte{0}; })) {
 			return RemoteFileMount::Failed();
 		}
-		std::shared_ptr<Detail::RemoteFile::Host> host;
+		Safe::Shared<Detail::RemoteFile::Host> host;
 		bool started_plane = false;
 		{
-			std::scoped_lock lock(m_engine->remote_file_mutex);
-			if (!Connection::IsConnected(m_engine->status.load(std::memory_order_acquire)) || !m_engine->remote_file_registry) {
+			std::scoped_lock lock(m_remote_file_mutex);
+			if (!Connection::IsConnected(m_status.load(Safe::MemoryOrder::Acquire)) || !m_remote_file_registry) {
 				return RemoteFileMount::Failed();
 			}
-			std::erase_if(m_engine->remote_files, [this](const MountedRemoteFile& mounted) {
-				return !m_engine->remote_file_registry->HasToken(mounted.token);
+			for (auto mounted = m_remote_files.begin(); mounted != m_remote_files.end();) {
+				if (!m_remote_file_registry->HasToken(mounted->token))
+					mounted = m_remote_files.erase(mounted);
+				else
+					++mounted;
+			}
+			const auto conflict = std::ranges::find_if(m_remote_files, [&writer_path](const MountedRemoteFile& mounted) {
+				return static_cast<std::string_view>(mounted.path_key) == writer_path;
 			});
-			const auto conflict = std::ranges::find_if(m_engine->remote_files, [&writer_path](const MountedRemoteFile& mounted) {
-				return mounted.path_key == writer_path;
-			});
-			if (conflict != m_engine->remote_files.end()) {
+			if (conflict != m_remote_files.end()) {
 				return conflict->access == RemoteFileMount::Access::Read
 					? RemoteFileMount::FileBeingRead() : RemoteFileMount::FileBeingWritten();
 			}
-			if (m_engine->remote_files.size() >= MAX_REMOTE_FILE_CHANNELS) {
+			if (m_remote_files.size() >= MAX_REMOTE_FILE_CHANNELS) {
 				return RemoteFileMount::Failed();
 			}
-			auto plane_it = m_engine->remote_planes.find(std::string{client_uuid});
-			if (plane_it != m_engine->remote_planes.end()) {
-				host = plane_it->second;
+			const Safe::String uuid{client_uuid};
+			auto plane_it = m_remote_planes.find(uuid);
+			if (plane_it != m_remote_planes.end()) {
+				host = plane_it->second.host;
 				if (!host || host->Finished()) return RemoteFileMount::Failed();
 			} else {
-				const auto connection = m_engine->configurable_connections.find(std::string{client_uuid});
-				if (connection == m_engine->configurable_connections.end())
+				const auto connection = m_configurable_connections.find(uuid);
+				if (connection == m_configurable_connections.end())
 					return RemoteFileMount::Failed();
-				auto pipelines = connection->second->FilePipelines();
-				host = std::make_shared<Detail::RemoteFile::Host>(m_engine->protocol,
-					std::string{static_cast<std::string_view>(m_engine->bind_address)},
-					std::move(pipelines.first), std::move(pipelines.second), maximum_timeout_seconds, m_engine->remote_file_registry, m_logger);
+				Safe::Pair<Buffer::Pipeline, Buffer::Pipeline> pipelines = connection->second.connection->FilePipelines();
+				host = Safe::MakeShared<Detail::RemoteFile::Host>(m_protocol, m_bind_address,
+					std::move(pipelines.first), std::move(pipelines.second), maximum_timeout_seconds, m_remote_file_registry, m_logger);
 				if (!host->Start()) return RemoteFileMount::Failed();
-				m_engine->remote_planes.emplace(std::string{client_uuid}, host);
+				m_remote_planes.emplace(uuid, Detail::RemotePlaneRegistration{host});
 				started_plane = true;
 			}
-			if (!m_engine->remote_file_registry->AddMount(token, normalized, RemoteFileMount::Access::Write)) {
+			if (!m_remote_file_registry->AddMount(token, std::string_view{normalized_path}, RemoteFileMount::Access::Write)) {
 				return RemoteFileMount::Failed();
 			}
 			if (!host->RegisterToken(token)) {
-				(void)m_engine->remote_file_registry->ReleaseToken(token);
+				(void)m_remote_file_registry->ReleaseToken(token);
 				return RemoteFileMount::Failed();
 			}
 			try {
-				m_engine->remote_files.push_back({ host, writer_path, RemoteFileMount::Access::Write, token });
+				m_remote_files.push_back({ host, Safe::String{std::string_view{writer_path}}, RemoteFileMount::Access::Write, token });
 			} catch (...) {
 				host->UnregisterToken(token);
 				throw;
@@ -515,102 +519,105 @@ RemoteFileMount Server::MountRemoteFileWriter(std::string_view client_uuid,
 }
 
 void Server::RevokeAllRemoteFiles() noexcept {
-	std::unordered_map<std::string, std::shared_ptr<Detail::RemoteFile::Host>> revoked;
+	Safe::Map<Safe::String, Detail::RemotePlaneRegistration> revoked;
 	{
-		std::scoped_lock lock(m_engine->remote_file_mutex);
-		m_engine->remote_files.clear();
-		revoked.swap(m_engine->remote_planes);
+		std::scoped_lock lock(m_remote_file_mutex);
+		m_remote_files.clear();
+		revoked.swap(m_remote_planes);
 	}
-	for (const auto& [_, host]: revoked) {
-		if (host) host->Stop();
+	for (const auto& entry: revoked) {
+		if (entry.second.host)
+			entry.second.host->Stop();
 	}
 }
 
 bool Server::CreateWakeup() noexcept {
+	try {
+		m_wakeup = Safe::Unique<WakeupChannel>::MakePointer<WakeupChannel>();
 #ifdef UNIX
-	int handles[2];
-	if (::pipe(handles) != 0) {
-		return false;
-	}
+		int handles[2];
+		if (::pipe(handles) != 0) {
+			CloseWakeup();
+			return false;
+		}
 
-	m_engine->wakeup_read = handles[0];
-	m_engine->wakeup_write = handles[1];
-	return true;
+		m_wakeup->read = handles[0];
+		m_wakeup->write = handles[1];
+		const int flags = ::fcntl(m_wakeup->write, F_GETFL, 0);
+		if (flags < 0 || ::fcntl(m_wakeup->write, F_SETFL, flags | O_NONBLOCK) < 0) {
+			CloseWakeup();
+			return false;
+		}
+		return true;
 #else
-	m_engine->wakeup_read = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	m_engine->wakeup_write = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (m_engine->wakeup_read == INVALID_SOCKET || m_engine->wakeup_write == INVALID_SOCKET) {
-		CloseWakeup();
-		return false;
-	}
+		m_wakeup->read = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		m_wakeup->write = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		if (m_wakeup->read == INVALID_SOCKET || m_wakeup->write == INVALID_SOCKET) {
+			CloseWakeup();
+			return false;
+		}
 
-	sockaddr_in address{};
-	address.sin_family = AF_INET;
-	address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	address.sin_port = 0;
-	if (::bind(m_engine->wakeup_read, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {
-		CloseWakeup();
-		return false;
-	}
+		sockaddr_in address{};
+		address.sin_family = AF_INET;
+		address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		address.sin_port = 0;
+		if (::bind(m_wakeup->read, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {
+			CloseWakeup();
+			return false;
+		}
 
-	int address_size = sizeof(address);
-	if (::getsockname(m_engine->wakeup_read, reinterpret_cast<sockaddr*>(&address), &address_size) == SOCKET_ERROR ||
-		::connect(m_engine->wakeup_write, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {
-		CloseWakeup();
-		return false;
-	}
+		int address_size = sizeof(address);
+		if (::getsockname(m_wakeup->read, reinterpret_cast<sockaddr*>(&address), &address_size) == SOCKET_ERROR ||
+			::connect(m_wakeup->write, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {
+			CloseWakeup();
+			return false;
+		}
 
-	return true;
+		u_long nonblocking = 1;
+		if (::ioctlsocket(m_wakeup->write, FIONBIO, &nonblocking) == SOCKET_ERROR) {
+			CloseWakeup();
+			return false;
+		}
+		return true;
 #endif
+	} catch (...) {
+		CloseWakeup();
+		return false;
+	}
 }
 
 void Server::SignalWakeup() noexcept {
+	if (!m_wakeup)
+		return;
 #ifdef WINDOWS
-	if (m_engine->wakeup_write == INVALID_SOCKET) {
+	if (m_wakeup->write == INVALID_SOCKET) {
 		return;
 	}
 #else
-	if (m_engine->wakeup_write < 0) {
+	if (m_wakeup->write < 0) {
 		return;
 	}
 #endif
 	const char signal = 1;
 #ifdef UNIX
-	[[maybe_unused]] const ssize_t written = ::write(m_engine->wakeup_write, &signal, sizeof(signal));
+	[[maybe_unused]] const ssize_t written = ::write(m_wakeup->write, &signal, sizeof(signal));
 #else
-	(void)::send(m_engine->wakeup_write, &signal, sizeof(signal), 0);
+	(void)::send(m_wakeup->write, &signal, sizeof(signal), 0);
 #endif
 }
 
 void Server::CloseWakeup() noexcept {
-#ifdef WINDOWS
-	if (m_engine->wakeup_read != INVALID_SOCKET) {
-		closesocket(m_engine->wakeup_read);
-		m_engine->wakeup_read = INVALID_SOCKET;
-	}
-
-	if (m_engine->wakeup_write != INVALID_SOCKET) {
-		closesocket(m_engine->wakeup_write);
-		m_engine->wakeup_write = INVALID_SOCKET;
-	}
-#else
-	if (m_engine->wakeup_read >= 0) {
-		close(m_engine->wakeup_read);
-		m_engine->wakeup_read = -1;
-	}
-
-	if (m_engine->wakeup_write >= 0) {
-		close(m_engine->wakeup_write);
-		m_engine->wakeup_write = -1;
-	}
-#endif
+	m_wakeup.reset();
 }
 
 void Server::DisconnectClient(std::string_view uuid) noexcept {
-	if (!m_engine) return;
-
-	if (m_engine->accept_thread.get_id() != std::this_thread::get_id()) {
-		PostCommand({ CommandType::DisconnectClient, std::string{uuid} });
+	if (m_accept_thread.get_id() != Safe::this_thread::get_id()) {
+		try {
+			PostCommand({ CommandType::DisconnectClient, Safe::String{uuid} });
+		} catch (...) {
+			m_status.store(Connection::Status::Disconnecting, Safe::MemoryOrder::Release);
+			SignalWakeup();
+		}
 		return;
 	}
 
@@ -618,29 +625,37 @@ void Server::DisconnectClient(std::string_view uuid) noexcept {
 }
 
 void Server::DisconnectClientOnLoop(std::string_view uuid) noexcept {
-	auto session_it = m_engine->sessions.find(std::string{uuid});
-	if (session_it == m_engine->sessions.end()) {
+	auto session_it = std::ranges::find_if(m_sessions, [uuid](const auto& entry) {
+		return static_cast<std::string_view>(entry.first) == uuid;
+	});
+	if (session_it == m_sessions.end()) {
 		return;
 	}
 
-	auto session = session_it->second;
-	m_engine->sessions.erase(session_it);
+	auto session = session_it->second.session;
+	const std::string_view session_uuid = session->UUID();
+	m_sessions.erase(session_it);
 	{
-		std::scoped_lock lock(m_engine->remote_file_mutex);
-		m_engine->configurable_connections.erase(std::string{uuid});
+		std::scoped_lock lock(m_remote_file_mutex);
+		m_configurable_connections.erase(session->UUID());
 	}
-	if (m_engine->telemetry) m_engine->telemetry->RecordConnectionClosed();
+	if (m_telemetry)
+		m_telemetry->RecordConnectionClosed();
 	session->Close();
 	if (session->Client() && session->Client()->Socket()) {
 		session->Client()->Socket()->Disconnect();
-				m_logger << Logger::Level::LowLevel << "Disconnected client: " << uuid << std::endl;
+		m_logger << Logger::Level::LowLevel << "Disconnected client: " << session_uuid << std::endl;
 	}
-	OnClientDisconnected(uuid);
+	OnClientDisconnected(session_uuid);
 }
 
 void Server::DisconnectClientAfterReply(std::string_view uuid) noexcept {
-	if (m_engine)
-		PostCommand({CommandType::DisconnectAfterReply, std::string{uuid}});
+	try {
+		PostCommand({CommandType::DisconnectAfterReply, Safe::String{uuid}});
+	} catch (...) {
+		m_status.store(Connection::Status::Disconnecting, Safe::MemoryOrder::Release);
+		SignalWakeup();
+	}
 }
 
 bool Server::OnClientConnected(std::string_view) noexcept {
@@ -649,13 +664,12 @@ bool Server::OnClientConnected(std::string_view) noexcept {
 
 bool Server::ConfigureClientPipelines(std::string_view uuid, Buffer::Pipeline input, Buffer::Pipeline output) noexcept {
 	try {
-		if (!m_engine)
-			return false;
-		std::scoped_lock lock(m_engine->remote_file_mutex);
-		const auto connection = m_engine->configurable_connections.find(std::string{uuid});
-		return connection != m_engine->configurable_connections.end()
-			&& !m_engine->remote_planes.contains(std::string{uuid})
-			&& connection->second->ConfigurePipelines(std::move(input), std::move(output));
+		std::scoped_lock lock(m_remote_file_mutex);
+		const Safe::String key{uuid};
+		const auto connection = m_configurable_connections.find(key);
+		return connection != m_configurable_connections.end()
+			&& !m_remote_planes.contains(key)
+			&& connection->second.connection->ConfigurePipelines(std::move(input), std::move(output));
 	} catch (...) {
 		return false;
 	}
@@ -673,60 +687,69 @@ void Server::OnClientDisconnected(std::string_view) noexcept {
 }
 
 void Server::AcceptOneClient() noexcept {
-	auto expected_client = m_engine->socket_server->Accept();
-	if (!expected_client) {
-		if (Connection::IsConnected(m_engine->status.load())) {
-			m_logger << Logger::Level::LowLevel << expected_client.error()->what() << std::endl;
-		}
+	try {
+		auto expected_client = m_socket_server->Accept();
+		if (!expected_client) {
+			if (Connection::IsConnected(m_status.load()))
+				m_logger << Logger::Level::LowLevel << expected_client.error()->what() << std::endl;
 
-		return;
-	}
+			return;
+		}
 #ifdef WINDOWS
-	if (m_engine->sessions.size() >= static_cast<std::size_t>(FD_SETSIZE - 2)) {
-		m_logger << Logger::Level::Warning << "Windows select client limit reached; closing accepted client" << std::endl;
-		expected_client.value()->Disconnect();
-		return;
-	}
+		if (m_sessions.size() >= Size{FD_SETSIZE - 2}) {
+			m_logger << Logger::Level::Warning << "Windows select client limit reached; closing accepted client" << std::endl;
+			expected_client.value()->Disconnect();
+			return;
+		}
 #endif
-	const std::string client_uuid = expected_client.value()->UUID();
-	auto connection = CreateConnection(expected_client.value());
-	{
-		std::scoped_lock lock(m_engine->remote_file_mutex);
-		m_engine->configurable_connections.emplace(client_uuid, connection);
+		const Safe::String client_uuid = expected_client.value()->UUID();
+		auto connection = CreateConnection(expected_client.value());
+		{
+			std::scoped_lock lock(m_remote_file_mutex);
+			m_configurable_connections.emplace(client_uuid, Detail::ConfigurableConnection{connection});
+		}
+		const auto [position, inserted] = m_sessions.emplace(client_uuid,
+			Detail::SessionRegistration{Safe::MakeShared<Detail::Session>(client_uuid, std::move(connection))});
+		(void)position;
+		if (inserted && m_telemetry)
+			m_telemetry->RecordConnectionAccepted();
+		if (inserted && !OnClientConnected(client_uuid)) {
+			DisconnectClientOnLoop(client_uuid);
+			return;
+		}
+		m_logger << Logger::Level::LowLevel << "AcceptClients: accepted client uuid=" << std::string_view{client_uuid} << std::endl;
+	} catch (...) {
+		m_status.store(Connection::Status::Disconnecting, Safe::MemoryOrder::Release);
 	}
-	const auto [_, inserted] = m_engine->sessions.emplace(client_uuid,
-		std::make_shared<Detail::Session>(client_uuid, std::move(connection)));
-	if (inserted && m_engine->telemetry) m_engine->telemetry->RecordConnectionAccepted();
-	if (inserted && !OnClientConnected(client_uuid)) {
-		DisconnectClientOnLoop(client_uuid);
-		return;
-	}
-	m_logger << Logger::Level::LowLevel << "AcceptClients: accepted client uuid=" << std::string_view{client_uuid} << std::endl;
 }
 
 void Server::PostCompletion(Completion completion) noexcept {
-	{
-		std::scoped_lock lock(m_engine->completion_mutex);
-		m_engine->completions.push_back(std::move(completion));
+	try {
+		std::scoped_lock lock(m_completion_mutex);
+		m_completions.push_back(std::move(completion));
+	} catch (...) {
+		m_status.store(Connection::Status::Disconnecting, Safe::MemoryOrder::Release);
 	}
 
 	SignalWakeup();
 }
 
 void Server::PostCommand(Command command) noexcept {
-	{
-		std::scoped_lock lock(m_engine->command_mutex);
-		m_engine->commands.push_back(std::move(command));
+	try {
+		std::scoped_lock lock(m_command_mutex);
+		m_commands.push_back(std::move(command));
+	} catch (...) {
+		m_status.store(Connection::Status::Disconnecting, Safe::MemoryOrder::Release);
 	}
 
 	SignalWakeup();
 }
 
 void Server::DrainCommands() noexcept {
-	std::deque<Command> commands;
+	Safe::Deque<Command> commands;
 	{
-		std::scoped_lock lock(m_engine->command_mutex);
-		commands.swap(m_engine->commands);
+		std::scoped_lock lock(m_command_mutex);
+		commands.swap(m_commands);
 	}
 
 	for (const auto& command: commands) {
@@ -735,50 +758,44 @@ void Server::DrainCommands() noexcept {
 				DisconnectClientOnLoop(command.uuid);
 				break;
 			case CommandType::DisconnectAfterReply: {
-				const auto session = m_engine->sessions.find(command.uuid);
-				if (session != m_engine->sessions.end())
-					session->second->CloseAfterReply();
+				const auto session = m_sessions.find(command.uuid);
+				if (session != m_sessions.end())
+					session->second.session->CloseAfterReply();
 				break;
 			}
 			case CommandType::DisconnectAll:
 				{
-					std::vector<std::string> uuids;
-					uuids.reserve(m_engine->sessions.size());
-					for (const auto& [uuid, _]: m_engine->sessions) {
-						uuids.push_back(uuid);
-					}
-
-					for (const auto& uuid: uuids) {
-						DisconnectClientOnLoop(uuid);
+					while (!m_sessions.empty()) {
+						DisconnectClientOnLoop(m_sessions.begin()->first);
 					}
 				}
 
 				break;
 			case CommandType::Stop:
-				m_engine->status.store(Connection::Status::Disconnecting, std::memory_order_release);
+				m_status.store(Connection::Status::Disconnecting, Safe::MemoryOrder::Release);
 				break;
 		}
 	}
 }
 
 void Server::DrainCompletions() noexcept {
-	std::deque<Completion> completions;
+	Safe::Deque<Completion> completions;
 	{
-		std::scoped_lock lock(m_engine->completion_mutex);
-		completions.swap(m_engine->completions);
+		std::scoped_lock lock(m_completion_mutex);
+		completions.swap(m_completions);
 	}
 
-	for (auto& [_, session]: m_engine->sessions) {
-		session->SetTaskBlocked(false);
+	for (const auto& entry: m_sessions) {
+		entry.second.session->SetTaskBlocked(false);
 	}
 
 	for (auto& completion: completions) {
-		auto session_it = m_engine->sessions.find(completion.uuid);
-		if (session_it == m_engine->sessions.end()) {
+		auto session_it = m_sessions.find(completion.uuid);
+		if (session_it == m_sessions.end()) {
 			continue;
 		}
 
-		auto session = session_it->second;
+		auto session = session_it->second.session;
 		session->SetInFlight(false);
 		if (completion.reason != CompletionReason::Success || !completion.packet) {
 			DisconnectClient(completion.uuid);
@@ -794,144 +811,140 @@ void Server::DrainCompletions() noexcept {
 
 void Server::AcceptClients() noexcept {
 	m_logger << Logger::Level::LowLevel << "Started accept event loop" << std::endl;
-	Detail::EventLoop event_loop(*m_engine->socket_server, m_engine->wakeup_read, m_engine->status, m_logger);
-	event_loop.Run(
-		[this]() noexcept { AcceptOneClient(); },
-		[this]() {
-			Detail::EventLoop::SessionList sessions;
-			sessions.reserve(m_engine->sessions.size());
-			for (const auto& [_, session]: m_engine->sessions) {
-				sessions.push_back(session);
-			}
-
-			return sessions;
-		},
-		[this](const std::shared_ptr<Detail::Session>& session, bool readable, bool writable) noexcept {
-			if (!session) {
-				return;
-			}
-
-			ProcessSession(session, readable, writable);
-		},
-		[this]() {
-			Detail::EventLoop::PlaneList planes;
-			std::scoped_lock lock(m_engine->remote_file_mutex);
-			planes.reserve(m_engine->remote_planes.size());
-			for (const auto& [_, host]: m_engine->remote_planes) {
-				if (host && !host->Finished()) planes.push_back(host);
-			}
-			return planes;
-		},
-		[this](const std::shared_ptr<Detail::RemoteFile::Host>& host, bool readable, bool writable) noexcept {
-			ProcessRemotePlane(host, readable, writable);
-		},
-		[this]() noexcept {
-			DrainCommands();
-			DrainCompletions();
-			std::scoped_lock lock(m_engine->remote_file_mutex);
-			for (const auto& [_, host]: m_engine->remote_planes) {
-				if (host) host->SetTaskBlocked(false);
-			}
-		}
-
-	);
-	for (auto& [uuid, session]: m_engine->sessions) {
-		(void)uuid;
-		if (m_engine->telemetry) m_engine->telemetry->RecordConnectionClosed();
-		session->Close();
-		if (session->Client() && session->Client()->Socket()) {
-			session->Client()->Socket()->Disconnect();
-		}
-		OnClientDisconnected(uuid);
+	try {
+		Detail::EventLoop event_loop(*m_socket_server, m_wakeup->read, m_status, m_logger);
+		event_loop.Run(
+			Detail::WorkerCallbackFactory<void()>::Make([this]() noexcept { AcceptOneClient(); }),
+			Detail::WorkerCallbackFactory<Detail::EventLoop::SessionList()>::Make([this]() {
+				Detail::EventLoop::SessionList sessions;
+				sessions.reserve(m_sessions.size());
+				for (const auto& entry: m_sessions)
+					sessions.push_back(entry.second.session);
+				return sessions;
+			}),
+			Detail::WorkerCallbackFactory<void(const Safe::Shared<Detail::Session>&, bool, bool)>::Make(
+				[this](const Safe::Shared<Detail::Session>& session, bool readable, bool writable) noexcept {
+					ProcessSession(session, readable, writable);
+				}),
+			Detail::WorkerCallbackFactory<Detail::EventLoop::PlaneList()>::Make([this]() {
+				Detail::EventLoop::PlaneList planes;
+				std::scoped_lock lock(m_remote_file_mutex);
+				planes.reserve(m_remote_planes.size());
+				for (const auto& entry: m_remote_planes) {
+					if (entry.second.host && !entry.second.host->Finished())
+						planes.push_back(entry.second.host);
+				}
+				return planes;
+			}),
+			Detail::WorkerCallbackFactory<void(const Safe::Shared<Detail::RemoteFile::Host>&, bool, bool)>::Make(
+				[this](const Safe::Shared<Detail::RemoteFile::Host>& host, bool readable, bool writable) noexcept {
+					ProcessRemotePlane(host, readable, writable);
+				}),
+			Detail::WorkerCallbackFactory<void()>::Make([this]() noexcept {
+				DrainCommands();
+				DrainCompletions();
+				std::scoped_lock lock(m_remote_file_mutex);
+				for (const auto& entry: m_remote_planes) {
+					if (entry.second.host)
+						entry.second.host->SetTaskBlocked(false);
+				}
+			}));
+	} catch (...) {
+		m_logger << Logger::Level::Error << "Failed to run server event loop" << std::endl;
 	}
-
-	m_engine->sessions.clear();
+	m_status.store(Connection::Status::Disconnecting, Safe::MemoryOrder::Release);
+	if (m_pool)
+		m_pool->Stop();
+	while (!m_sessions.empty())
+		DisconnectClientOnLoop(m_sessions.begin()->first);
 	{
-		std::scoped_lock lock(m_engine->remote_file_mutex);
-		m_engine->configurable_connections.clear();
+		std::scoped_lock lock(m_remote_file_mutex);
+		m_configurable_connections.clear();
 	}
-	m_engine->socket_server->Disconnect();
-	m_engine->socket_server.reset();
-	CloseWakeup();
-	m_engine->status.store(Connection::Status::Disconnected, std::memory_order_release);
+	m_socket_server->Disconnect();
+	m_status.store(Connection::Status::Disconnected, Safe::MemoryOrder::Release);
 	m_logger << Logger::Level::LowLevel << "Stopped accept event loop" << std::endl;
 }
 
-void Server::ProcessSession(const std::shared_ptr<Detail::Session>& session, bool readable, bool writable) noexcept {
-	if (!session || session->Closed() || session->InFlight() || !session->Client() || !m_engine->pool) {
+void Server::ProcessSession(const Safe::Shared<Detail::Session>& session, bool readable, bool writable) noexcept {
+	if (!session || session->Closed() || session->InFlight() || !session->Client() || !m_pool) {
 		return;
 	}
 
-	if (writable && session->HasOutput()) {
-		auto flushed = session->FlushOutput();
-		if (!flushed) {
-			DisconnectClient(session->UUID());
+	try {
+		if (writable && session->HasOutput()) {
+			auto flushed = session->FlushOutput();
+			if (!flushed) {
+				DisconnectClient(session->UUID());
+				return;
+			}
+
+			if (!flushed.value())
+				return;
+		}
+		if (session->ClosingAfterReply()) {
+			if (!session->HasOutput())
+				DisconnectClient(session->UUID());
 			return;
 		}
 
-		if (!flushed.value()) {
+		if (!readable || session->InFlight())
+			return;
+
+		const Safe::String& client_uuid = session->UUID();
+		if (!session->HasPendingFrame()) {
+			auto expected_frames = session->ReadReady(session->Client()->InputPipeline(), m_logger);
+			if (!expected_frames) {
+				DisconnectClient(client_uuid);
+				return;
+			}
+
+			session->QueueFrames(std::move(expected_frames.value()));
+		}
+
+		if (!session->HasPendingFrame())
+			return;
+
+		if (!m_pool->HasCapacity()) {
+			if (m_telemetry)
+				m_telemetry->RecordWorkerQueueBackpressure();
+			session->SetTaskBlocked(true);
 			return;
 		}
-	}
-	if (session->ClosingAfterReply()) {
-		if (!session->HasOutput())
-			DisconnectClient(session->UUID());
-		return;
-	}
 
-	if (!readable || session->InFlight()) {
-		return;
-	}
-
-	const std::string client_uuid = session->UUID();
-	if (!session->HasPendingFrame()) {
-		auto expected_frames = session->ReadReady(session->Client()->InputPipeline(), m_logger);
-		if (!expected_frames) {
+		Transport::Frame frame = session->TakeFrame();
+		if (!AllowIncomingOpcode(client_uuid, frame.Opcode())
+			|| !frame.DecodeInput(session->Client()->InputPipeline(), m_logger)) {
+			DisconnectClient(client_uuid);
+			return;
+		}
+		PacketPointer packet = frame.ProcessPacket(m_deserialize_packet_function, m_logger);
+		if (!packet) {
 			DisconnectClient(client_uuid);
 			return;
 		}
 
-		session->QueueFrames(std::move(expected_frames.value()));
-	}
-
-	if (!session->HasPendingFrame()) {
-		return;
-	}
-
-	if (!m_engine->pool->HasCapacity()) {
-		if (m_engine->telemetry) m_engine->telemetry->RecordWorkerQueueBackpressure();
-		session->SetTaskBlocked(true);
-		return;
-	}
-
-	Transport::Frame frame = session->TakeFrame();
-	if (!AllowIncomingOpcode(client_uuid, frame.Opcode())
-		|| !frame.DecodeInput(session->Client()->InputPipeline(), m_logger)) {
-		DisconnectClient(client_uuid);
-		return;
-	}
-	PacketPointer packet = frame.ProcessPacket(m_deserialize_packet_function, m_logger);
-	if (!packet) {
-		DisconnectClient(client_uuid);
-		return;
-	}
-
-	session->SetInFlight(true);
-	if (!m_engine->pool->Submit({ client_uuid, std::move(packet), {} })) {
-		session->SetInFlight(false);
-		session->SetTaskBlocked(true);
+		session->SetInFlight(true);
+		if (!m_pool->Submit({ client_uuid, std::move(packet), {} })) {
+			session->SetInFlight(false);
+			session->SetTaskBlocked(true);
+		}
+	} catch (...) {
+		DisconnectClient(session->UUID());
 	}
 }
 
-void Server::ProcessRemotePlane(const std::shared_ptr<Detail::RemoteFile::Host>& host,
+void Server::ProcessRemotePlane(const Safe::Shared<Detail::RemoteFile::Host>& host,
 	const bool readable, const bool writable) noexcept {
-	if (!host || host->Finished()) return;
+	if (!host || host->Finished())
+		return;
 	if (host->Expired()) {
 		host->Stop();
 		return;
 	}
 	if (host->WaitingForAccept()) {
-		if (readable) (void)host->AcceptReady();
+		if (readable)
+			(void)host->AcceptReady();
 		return;
 	}
 	if (writable && host->HasOutput()) {
@@ -947,19 +960,30 @@ void Server::ProcessRemotePlane(const std::shared_ptr<Detail::RemoteFile::Host>&
 			return;
 		}
 	}
-	if (!host->ReadyForProcessing()) return;
-	if (!m_engine->pool || !m_engine->pool->HasCapacity()) {
+	if (!host->ReadyForProcessing())
+		return;
+	if (!m_pool || !m_pool->HasCapacity()) {
 		host->SetTaskBlocked(true);
 		return;
 	}
 	Detail::RemoteFile::Message request = host->TakeRequest();
-	if (request.request_id == 0) return;
-	auto queued_request = std::make_shared<Detail::RemoteFile::Message>(std::move(request));
-	if (!m_engine->pool->Submit({{}, nullptr, [this, host, queued_request]() {
-		const Detail::RemoteFile::Message response = host->ProcessRequest(*queued_request);
-		if (!host->QueueResponse(response)) host->Stop();
-		SignalWakeup();
-	}})) {
-		host->RequeueRequest(std::move(*queued_request));
+	if (request.request_id == 0)
+		return;
+	try {
+		auto queued_request = Safe::MakeShared<Detail::RemoteFile::Message>(std::move(request));
+		auto operation = Detail::WorkerCallbackFactory<void()>::Make([this, host, queued_request]() {
+			try {
+				const Detail::RemoteFile::Message response = host->ProcessRequest(*queued_request);
+				if (!host->QueueResponse(response))
+					host->Stop();
+			} catch (...) {
+				host->Stop();
+			}
+			SignalWakeup();
+		});
+		if (!m_pool->Submit({{}, nullptr, std::move(operation)}))
+			host->RequeueRequest(std::move(*queued_request));
+	} catch (...) {
+		host->Stop();
 	}
 }

@@ -44,21 +44,33 @@
 #include <iterator>
 
 namespace StormByte::Network::Detail {
-	using StormByte::BinaryData;
+	using StormByte::Safe::Binary;
 
-	Session::Session(std::string uuid, std::shared_ptr<Connection::Client> client) noexcept:
+	Session::Session(Safe::String uuid, Safe::Shared<Connection::Client> client) noexcept:
 	m_uuid(std::move(uuid)), m_client(std::move(client)) {}
 
 	Session::~Session() noexcept = default;
 
-	Session::OutputStream::OutputStream(Buffer::Consumer&& consumer) noexcept:
+	SessionOutputStream::SessionOutputStream() = default;
+
+	SessionOutputStream::SessionOutputStream(Buffer::Consumer&& consumer) noexcept:
 		source(std::move(consumer)) {}
 
-	const std::string& Session::UUID() const noexcept {
+	SessionOutputStream::SessionOutputStream(const SessionOutputStream& other) = default;
+
+	SessionOutputStream::SessionOutputStream(SessionOutputStream&& other) noexcept = default;
+
+	SessionOutputStream::~SessionOutputStream() noexcept = default;
+
+	SessionOutputStream& SessionOutputStream::operator=(const SessionOutputStream& other) = default;
+
+	SessionOutputStream& SessionOutputStream::operator=(SessionOutputStream&& other) noexcept = default;
+
+	const Safe::String& Session::UUID() const noexcept {
 		return m_uuid;
 	}
 
-	std::shared_ptr<Connection::Client>& Session::Client() noexcept {
+	Safe::Shared<Connection::Client>& Session::Client() noexcept {
 		return m_client;
 	}
 
@@ -139,8 +151,8 @@ namespace StormByte::Network::Detail {
 		++m_output_frame_count;
 		auto& stream = m_output_frames.back();
 		if (!stream.source.EoF()) {
-			StormByte::BinaryData chunk;
-			if (stream.source.Extract(64 * 1024, chunk) && !chunk.empty()) {
+			Binary chunk;
+			if (stream.source.Extract(StormByte::ByteSize{64 * 1024}, chunk) && !chunk.empty()) {
 				m_output_bytes += chunk.size();
 				stream.data = std::move(chunk);
 			}
@@ -160,7 +172,7 @@ namespace StormByte::Network::Detail {
 
 		bool would_block = false;
 		auto& frame = m_output_frames.front();
-		const std::span<const std::byte> remaining(frame.data.data() + frame.offset, frame.data.size() - frame.offset);
+		const std::span<const std::byte> remaining = frame.data.span().subspan(static_cast<std::size_t>(frame.offset));
 		auto written = m_client->Socket()->TryWrite(remaining, would_block);
 		if (!written) {
 			return Unexpected(written.error());
@@ -176,7 +188,7 @@ namespace StormByte::Network::Detail {
 			frame.data.clear();
 			frame.offset = 0;
 			if (frame.source.EoF()) {
-				m_output_frames.pop_front();
+				m_output_frames.erase(m_output_frames.begin());
 				--m_output_frame_count;
 			}
 		}
@@ -195,7 +207,7 @@ namespace StormByte::Network::Detail {
 		}
 
 		if (frame.source.EoF()) {
-			m_output_frames.pop_front();
+			m_output_frames.erase(m_output_frames.begin());
 			--m_output_frame_count;
 			return !m_output_frames.empty() && PrepareOutput();
 		}
@@ -205,7 +217,7 @@ namespace StormByte::Network::Detail {
 			return false;
 		}
 
-		StormByte::BinaryData chunk;
+		Binary chunk;
 		const StormByte::ByteSize available = frame.source.Available();
 		if (available == 0) {
 			return false;
@@ -222,7 +234,7 @@ namespace StormByte::Network::Detail {
 	}
 
 	StormByte::Expected<Session::FrameList, ConnectionError> Session::AppendReceived(
-		StormByte::BinaryData&& received, Buffer::Pipeline&,
+		Binary&& received, Buffer::Pipeline&,
 		StormByte::Safe::Shared<Logger::Log>) noexcept {
 		if (m_closed) {
 			return Unexpected<ConnectionError>("Session is closed");
@@ -233,7 +245,7 @@ namespace StormByte::Network::Detail {
 			return Unexpected<ConnectionError>("Session received no data");
 		}
 
-		m_input.insert(m_input.end(), std::make_move_iterator(received.begin()), std::make_move_iterator(received.end()));
+		m_input.append(std::move(received));
 		FrameList frames;
 		while (!m_closed) {
 			if (m_phase == ParsePhase::Header) {
@@ -255,17 +267,17 @@ namespace StormByte::Network::Detail {
 
 				m_opcode = *expected_opcode;
 				m_payload.clear();
-				m_payload.reserve(*expected_size);
-				m_bytes_needed = *expected_size;
+				m_payload.reserve(StormByte::ByteSize{*expected_size});
+				m_bytes_needed = StormByte::ByteSize{*expected_size};
 				m_phase = ParsePhase::Payload;
-				m_input.erase(m_input.begin(), m_input.begin() + FRAME_HEADER_SIZE);
+				m_input.erase(m_input.begin(), m_input.begin() + static_cast<std::size_t>(FRAME_HEADER_SIZE));
 			}
 
 			if (m_phase == ParsePhase::Payload) {
 				const StormByte::ByteSize available = std::min(m_bytes_needed, m_input.size());
 				if (available > 0) {
-					m_payload.insert(m_payload.end(), std::make_move_iterator(m_input.begin()), std::make_move_iterator(m_input.begin() + available));
-					m_input.erase(m_input.begin(), m_input.begin() + available);
+					m_payload.append(m_input.span().first(static_cast<std::size_t>(available)));
+					m_input.erase(m_input.begin(), m_input.begin() + static_cast<std::size_t>(available));
 					m_bytes_needed -= available;
 				}
 

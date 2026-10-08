@@ -74,14 +74,14 @@ Frame& Frame::operator=(Frame&& other) noexcept {
 
 Frame::Frame() noexcept = default;
 
-Frame::Frame(Packet::OpcodeType opcode, StormByte::BinaryData&& payload) noexcept:
+Frame::Frame(Packet::OpcodeType opcode, StormByte::Safe::Binary&& payload) noexcept:
 	m_opcode(opcode),
 	m_payload(std::move(payload)) {}
 
 Frame::Frame(const Packet& packet) noexcept {
 	FIFO packet_raw = packet.Serialize();
 	m_opcode = packet.Opcode();
-	packet_raw.Drop(sizeof(Packet::OpcodeType));
+	packet_raw.Drop(StormByte::ByteSize{sizeof(Packet::OpcodeType)});
 	if (packet_raw.Available() > StormByte::ByteSize{0})
 		packet_raw.Read(StormByte::ByteSize{0}, m_payload);
 }
@@ -101,13 +101,13 @@ bool Frame::DecodeInput(Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::L
 	return true;
 }
 
-Frame Frame::FromWire(Packet::OpcodeType opcode, StormByte::BinaryData&& payload) noexcept {
+Frame Frame::FromWire(Packet::OpcodeType opcode, StormByte::Safe::Binary&& payload) noexcept {
 	return Frame(opcode, std::move(payload));
 }
 
-Frame Frame::ProcessInput(std::shared_ptr<Socket::Client> client,
+Frame Frame::ProcessInput(StormByte::Safe::Shared<Socket::Client> client,
 	Pipeline&, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
-	ExpectedBuffer expected_opcode_buffer = client->Receive(sizeof(Packet::OpcodeType));
+	ExpectedBuffer expected_opcode_buffer = client->Receive(StormByte::ByteSize{sizeof(Packet::OpcodeType)});
 	if (!expected_opcode_buffer) {
 		logger << Logger::Level::Error << "Failed to read opcode from socket: "
 			<< expected_opcode_buffer.error()->what();
@@ -121,7 +121,7 @@ Frame Frame::ProcessInput(std::shared_ptr<Socket::Client> client,
 	}
 
 	const Packet::OpcodeType opcode = *expected_opcode;
-	ExpectedBuffer expected_size_buffer = client->Receive(sizeof(std::size_t));
+	ExpectedBuffer expected_size_buffer = client->Receive(StormByte::ByteSize{sizeof(std::size_t)});
 	if (!expected_size_buffer) {
 		logger << Logger::Level::Error << "Failed to read payload size from socket: "
 			<< expected_size_buffer.error()->what() << std::endl;
@@ -134,10 +134,10 @@ Frame Frame::ProcessInput(std::shared_ptr<Socket::Client> client,
 		return Frame();
 	}
 
-	const std::size_t payload_size = expected_payload_size.value();
-	StormByte::BinaryData payload;
-	if (payload_size > 0) {
-		payload.reserve(StormByte::ByteSize{payload_size});
+	const StormByte::ByteSize payload_size{expected_payload_size.value()};
+	StormByte::Safe::Binary payload;
+	if (payload_size > StormByte::ByteSize{0}) {
+		payload.reserve(payload_size);
 		auto into = client->ReceiveInto(payload_size, payload);
 		if (!into) {
 			logger << Logger::Level::Error << "Failed to read full frame from socket: "
@@ -163,8 +163,8 @@ PacketPointer Frame::ProcessPacket(const DeserializePacketFunction& packet_fn,
 
 Consumer Frame::ProcessOutput(Pipeline& pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 	Producer producer;
-	producer.Write(sizeof(Packet::OpcodeType), Serializable<Packet::OpcodeType>(m_opcode).Serialize());
-	StormByte::BinaryData payload = std::move(m_payload);
+	producer.Write(StormByte::ByteSize{sizeof(Packet::OpcodeType)}, Serializable<Packet::OpcodeType>(m_opcode).Serialize());
+	StormByte::Safe::Binary payload = std::move(m_payload);
 	if (m_opcode >= Packet::PROCESS_THRESHOLD) {
 		Producer payload_producer;
 		payload_producer.Write(std::move(payload));
@@ -175,7 +175,8 @@ Consumer Frame::ProcessOutput(Pipeline& pipeline, StormByte::Safe::Shared<Logger
 		processed_payload.ExtractUntilEoF(payload);
 	}
 
-	producer.Write(sizeof(std::size_t), Serializable<std::size_t>(payload.size()).Serialize());
+	producer.Write(StormByte::ByteSize{sizeof(std::size_t)},
+		Serializable<std::size_t>(static_cast<std::size_t>(payload.size())).Serialize());
 	if (!payload.empty())
 		producer.Write(std::move(payload));
 

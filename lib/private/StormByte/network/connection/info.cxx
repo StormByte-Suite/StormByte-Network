@@ -38,27 +38,37 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
+#include <StormByte/network/connection/handler.hxx>
 #include <StormByte/network/connection/info.hxx>
-#ifdef UNIX
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#else
+
+#include <cstring>
+#include <memory>
+#include <utility>
+
+#ifdef WINDOWS
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <iphlpapi.h>
+#else
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #endif
-#include <StormByte/network/connection/handler.hxx>
+
 using namespace StormByte::Network::Connection;
 using StormByte::Network::Exception;
-Info::Info(std::shared_ptr<sockaddr> sock_addr) noexcept:
-	m_sock_addr(sock_addr), m_mtu(DEFAULT_MTU), m_ip(), m_port(0) {
-	Initialize(sock_addr);
+
+Info::Info(StormByte::Safe::Shared<sockaddr> sock_addr) noexcept:
+	m_sock_addr(std::move(sock_addr)), m_sock_addr_size(0), m_mtu(DEFAULT_MTU), m_ip(), m_port(0) {
+	Initialize();
 }
 
+Info::Info(Info&& other) noexcept = default;
+
 Info::~Info() noexcept = default;
+
+Info& Info::operator=(Info&& other) noexcept = default;
 
 StormByte::Expected<Info, Exception> Info::FromHost(std::string_view hostname, const unsigned short& port, const Protocol& protocol) noexcept {
 	auto expected_sock_addr = Info::ResolveHostname(hostname, port, protocol);
@@ -67,54 +77,84 @@ StormByte::Expected<Info, Exception> Info::FromHost(std::string_view hostname, c
 	return Info(std::move(expected_sock_addr.value()));
 }
 
-StormByte::Expected<Info, Exception> Info::FromSockAddr(std::shared_ptr<sockaddr> sockaddr) noexcept {
-	if (!sockaddr)
-		return Unexpected<Exception>("Invalid socket address");
-	return Info(sockaddr);
+StormByte::Expected<Info, Exception> Info::FromSockAddr(StormByte::Safe::Shared<const sockaddr> sock_addr) noexcept {
+	return FromSockAddr(sock_addr.get());
 }
 
-StormByte::Expected<std::shared_ptr<sockaddr>, Exception> Info::ResolveHostname(std::string_view hostname, const unsigned short& port, const Protocol& protocol) noexcept {
+StormByte::Expected<Info, Exception> Info::FromSockAddr(const sockaddr* sock_addr) noexcept {
+	if (!sock_addr)
+		return Unexpected<Exception>("Invalid socket address");
+	std::size_t size;
+	if (sock_addr->sa_family == AF_INET)
+		size = sizeof(sockaddr_in);
+	else if (sock_addr->sa_family == AF_INET6)
+		size = sizeof(sockaddr_in6);
+	else
+		return Unexpected<Exception>("Unsupported socket address family");
+	auto storage = StormByte::Safe::MakeShared<sockaddr_storage>();
+	std::memcpy(storage.get(), sock_addr, size);
+	return Info(StormByte::Safe::ReinterpretPointerCast<sockaddr>(storage));
+}
+
+const StormByte::Safe::String& Info::IP() const noexcept {
+	return m_ip;
+}
+
+const unsigned short& Info::Port() const noexcept {
+	return m_port;
+}
+
+StormByte::Safe::Shared<const sockaddr> Info::SockAddr() const noexcept {
+	return m_sock_addr;
+}
+
+StormByte::ByteSize Info::SockAddrSize() const noexcept {
+	return m_sock_addr_size;
+}
+
+StormByte::Expected<StormByte::Safe::Shared<sockaddr>, Exception> Info::ResolveHostname(std::string_view hostname, const unsigned short& port, const Protocol& protocol) noexcept {
+	if (protocol != Protocol::IPv4 && protocol != Protocol::IPv6)
+		return Unexpected<Exception>("Unsupported socket address family");
+	if (hostname.find('\0') != std::string_view::npos)
+		return Unexpected<Exception>("Invalid host name");
 	struct addrinfo hints{}, *res = nullptr;
-	const std::string owned_hostname{hostname};
+	const StormByte::Safe::String owned_hostname{hostname};
 	hints.ai_family = ProtocolInt(protocol);
 	hints.ai_socktype = SOCK_STREAM;
+	(void)Handler::Instance();
 	int ret = getaddrinfo(owned_hostname.c_str(), nullptr, &hints, &res);
+	std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard(res, freeaddrinfo);
 	if (ret != 0 || !res)
 		return Unexpected<Exception>("Can't resolve host '{}': {}", hostname, Handler::Instance().LastError());
-	std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard(res, freeaddrinfo);
-	char ipstr[INET6_ADDRSTRLEN];
-	void* addr = nullptr;
-	if (res->ai_family == AF_INET) {
-		addr = &((struct sockaddr_in*)res->ai_addr)->sin_addr;
-	} else if (res->ai_family == AF_INET6) {
-		addr = &((struct sockaddr_in6*)res->ai_addr)->sin6_addr;
-	}
-
-	if (!addr)
+	if (!res->ai_addr || (res->ai_family != AF_INET && res->ai_family != AF_INET6))
 		return Unexpected<Exception>("Unable to determine resolved address");
-	inet_ntop(res->ai_family, addr, ipstr, sizeof(ipstr));
-	sockaddr_in resolved{};
-	resolved.sin_family = ProtocolInt(protocol);
-	resolved.sin_port = htons(port);
-	if (inet_pton(resolved.sin_family, ipstr, &resolved.sin_addr) <= 0) {
-		return Unexpected<Exception>("Invalid IP address '{}'", ipstr);
-	}
-
-	auto resolved_sock = std::make_unique<sockaddr_in>(resolved);
-	return std::shared_ptr<sockaddr>(reinterpret_cast<sockaddr*>(resolved_sock.release()));
+	const auto size = res->ai_family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
+	if (static_cast<std::size_t>(res->ai_addrlen) < size)
+		return Unexpected<Exception>("Incomplete resolved socket address");
+	auto storage = StormByte::Safe::MakeShared<sockaddr_storage>();
+	std::memcpy(storage.get(), res->ai_addr, size);
+	auto resolved = StormByte::Safe::ReinterpretPointerCast<sockaddr>(storage);
+	if (res->ai_family == AF_INET)
+		reinterpret_cast<sockaddr_in*>(resolved.get())->sin_port = htons(port);
+	else
+		reinterpret_cast<sockaddr_in6*>(resolved.get())->sin6_port = htons(port);
+	return resolved;
 }
 
-void Info::Initialize(std::shared_ptr<sockaddr> sock_addr) noexcept {
-	char ipstr[INET6_ADDRSTRLEN];
-	if (sock_addr->sa_family == AF_INET) {
-		inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(sock_addr.get())->sin_addr, ipstr, sizeof(ipstr));
-		m_ip = ipstr;
-		m_port = ntohs(reinterpret_cast<sockaddr_in*>(sock_addr.get())->sin_port);
+void Info::Initialize() noexcept {
+	char ipstr[INET6_ADDRSTRLEN]{};
+	if (m_sock_addr->sa_family == AF_INET) {
+		const auto* address = reinterpret_cast<const sockaddr_in*>(m_sock_addr.get());
+		if (inet_ntop(AF_INET, &address->sin_addr, ipstr, sizeof(ipstr)))
+			m_ip = std::string_view{ipstr};
+		m_port = ntohs(address->sin_port);
+		m_sock_addr_size = StormByte::ByteSize{sizeof(sockaddr_in)};
 	}
-
-	else if (sock_addr->sa_family == AF_INET6) {
-		inet_ntop(AF_INET6, &reinterpret_cast<sockaddr_in6*>(sock_addr.get())->sin6_addr, ipstr, sizeof(ipstr));
-		m_ip = ipstr;
-		m_port = ntohs(reinterpret_cast<sockaddr_in6*>(sock_addr.get())->sin6_port);
+	else if (m_sock_addr->sa_family == AF_INET6) {
+		const auto* address = reinterpret_cast<const sockaddr_in6*>(m_sock_addr.get());
+		if (inet_ntop(AF_INET6, &address->sin6_addr, ipstr, sizeof(ipstr)))
+			m_ip = std::string_view{ipstr};
+		m_port = ntohs(address->sin6_port);
+		m_sock_addr_size = StormByte::ByteSize{sizeof(sockaddr_in6)};
 	}
 }

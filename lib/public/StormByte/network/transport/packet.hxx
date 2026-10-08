@@ -42,6 +42,7 @@
 
 #include <StormByte/buffer/fifo.hxx>
 #include <StormByte/network/visibility.h>
+#include <StormByte/safe/binary.hxx>
 #include <StormByte/serializable.hxx>
 #include <StormByte/type_traits/safe.hxx>
 
@@ -127,10 +128,7 @@ namespace StormByte {
 					static constexpr unsigned short PROCESS_THRESHOLD = 10;
 
 				protected:
-					/**
-					 * @brief Packet opcode.
-					 */
-					OpcodeType m_opcode;
+					OpcodeType m_opcode;	///< Packet opcode.
 
 					/**
 					 * @brief Construct with an opcode.
@@ -143,17 +141,10 @@ namespace StormByte {
 					 * @brief Payload-only serialization (no opcode).
 					 * @return Payload bytes (may be empty).
 					 */
-					virtual StormByte::BinaryData DoSerialize() const noexcept = 0;
+					virtual StormByte::Safe::Binary DoSerialize() const noexcept = 0;
 			};
 		}
 	}
 }
 
-/**
- * @brief Declare conditional cross-module safety for polymorphic packets.
- *
- * Packet ownership crosses modules through Safe pointers. Derived payloads must
- * keep their allocator operations in their provider module, which must remain
- * available with a compatible ABI until all such packets are destroyed.
- */
 STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Transport::Packet);

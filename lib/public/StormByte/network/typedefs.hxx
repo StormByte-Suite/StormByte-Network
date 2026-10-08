@@ -40,8 +40,8 @@
 
 #pragma once
 
-#include <StormByte/buffer/fifo.hxx>
 #include <StormByte/buffer/consumer.hxx>
+#include <StormByte/buffer/fifo.hxx>
 #include <StormByte/expected.hxx>
 #include <StormByte/logger/log.hxx>
 #include <StormByte/network/connection/protocol.hxx>
@@ -56,7 +56,6 @@
 #include <winsock2.h>
 #endif
 
-#include <memory>
 #include <utility>
 
 /**
@@ -118,7 +117,7 @@ namespace StormByte {
 		/**
 		 * @brief Accepted client or connection error result.
 		 */
-		using ExpectedClient = StormByte::Expected<std::shared_ptr<Socket::Client>, ConnectionError>;
+		using ExpectedClient = StormByte::Expected<StormByte::Safe::Shared<Socket::Client>, ConnectionError>;
 
 		/**
 		 * @brief Wait-for-data result or closed connection error.
@@ -270,34 +269,12 @@ namespace StormByte {
 					delete static_cast<Callable*>(context);
 				}
 
-				/**
-				 * @brief Target owned and destroyed by caller trampolines.
-				 */
-				void* m_context = nullptr;
-
-				/**
-				 * @brief Caller-compiled invocation trampoline.
-				 */
-				InvokeFunction m_invoke = nullptr;
-
-				/**
-				 * @brief Caller-compiled clone trampoline.
-				 */
-				CloneFunction m_clone = nullptr;
-
-				/**
-				 * @brief Caller-compiled destruction trampoline.
-				 */
-				DestroyFunction m_destroy = nullptr;
+				void* m_context = nullptr;				///< Target owned and destroyed by caller trampolines.
+				InvokeFunction m_invoke = nullptr;	///< Caller-compiled invocation trampoline.
+				CloneFunction m_clone = nullptr;		///< Caller-compiled clone trampoline.
+				DestroyFunction m_destroy = nullptr;	///< Caller-compiled destruction trampoline.
 		};
 	}
 }
 
-/**
- * @brief Declare conditional cross-module safety for packet decoder callbacks.
- *
- * Callback contexts are cloned and destroyed in their provider module. The
- * provider module and a compatible ABI must remain available until all callback
- * copies are destroyed.
- */
 STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::DeserializePacketFunction);

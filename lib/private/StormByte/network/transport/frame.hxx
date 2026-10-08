@@ -44,122 +44,148 @@
 #include <StormByte/network/transport/packet.hxx>
 #include <StormByte/network/typedefs.hxx>
 
-namespace StormByte::Network::Socket {
-	class Client;	///< Forward declaration
-}
-
-namespace StormByte::Network::Detail {
-	class Session;	///< Forward declaration
-}
-
 /**
- * @brief Transport types of the Network module.
+ * @namespace StormByte
+ * @brief Root namespace of the StormByte suite.
  */
-namespace StormByte::Network::Transport {
+namespace StormByte {
 	/**
-	 * @class Frame
-	 * @brief On-wire unit: opcode + payload size + payload.
-	 *
-	 * Layout: Opcode (OpcodeType) + payload size (size_t) + payload.
-	 * Opcodes >= Packet::PROCESS_THRESHOLD run payload through pipelines.
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
 	 */
-	class STORMBYTE_NETWORK_PRIVATE Frame {
-		friend class StormByte::Network::Detail::Session;
-		public:
+	namespace Network {
+		/**
+		 * @namespace StormByte::Network::Detail
+		 * @brief Private implementation details of the Network module.
+		 */
+		namespace Detail {
 			/**
-			 * @brief Build a frame from a packet.
-			 * @param packet Source packet.
+			 * @class Session
+			 * @brief Forward declaration of the session implementation.
 			 */
-			Frame(const Packet& packet) noexcept;
-
+			class Session;
+		}
+		/**
+		 * @namespace StormByte::Network::Transport
+		 * @brief Transport namespace.
+		 */
+		namespace Transport {
 			/**
-			 * @brief Copy constructor.
+			 * @class Frame
+			 * @brief On-wire unit: opcode + payload size + payload.
+			 * @details Layout: Opcode (OpcodeType) + payload size (size_t) + payload.
+			 * Opcodes >= Packet::PROCESS_THRESHOLD run payload through pipelines.
 			 */
-			Frame(const Frame& other);
+			class STORMBYTE_NETWORK_PRIVATE Frame {
+				friend class StormByte::Network::Detail::Session;
+				public:
+					/**
+					 * @brief Construct an empty invalid frame.
+					 */
+					Frame() noexcept;
 
-			/**
-			 * @brief Move constructor.
-			 */
-			Frame(Frame&& other) noexcept;
+					/**
+					 * @brief Build a frame from a packet.
+					 * @param packet Source packet.
+					 */
+					Frame(const Packet& packet) noexcept;
 
-			/**
-			 * @brief Destructor.
-			 */
-			virtual ~Frame() noexcept;
+					/**
+					 * @brief Copy constructor.
+					 * @param other Source frame.
+					 */
+					Frame(const Frame& other);
 
-			/**
-			 * @brief Copy assignment.
-			 */
-			Frame& operator=(const Frame& other);
+					/**
+					 * @brief Move constructor.
+					 * @param other Source frame.
+					 */
+					Frame(Frame&& other) noexcept;
 
-			/**
-			 * @brief Move assignment.
-			 */
-			Frame& operator=(Frame&& other) noexcept;
+					/**
+					 * @brief Destructor.
+					 */
+					virtual ~Frame() noexcept;
 
-			/**
-			 * @brief Read one frame from the socket.
-			 * @param client Socket client.
-			 * @param in_pipeline Input pipeline.
-			 * @param logger Logger.
-			 * @return Frame (default-constructed on failure).
-			 */
-			static Frame ProcessInput(std::shared_ptr<Socket::Client> client, Buffer::Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+					/**
+					 * @brief Copy assignment.
+					 * @param other Source frame.
+					 * @return This frame.
+					 */
+					Frame& operator=(const Frame& other);
 
-			/**
-			 * @brief Deserialize payload into a Packet.
-			 * @param packet_fn Deserializer callback.
-			 * @param logger Logger.
-			 * @return Packet pointer, or nullptr on failure.
-			 */
-			PacketPointer ProcessPacket(const DeserializePacketFunction& packet_fn, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+					/**
+					 * @brief Move assignment.
+					 * @param other Source frame.
+					 * @return This frame.
+					 */
+					Frame& operator=(Frame&& other) noexcept;
 
-			/**
-			 * @brief Transform one raw frame after opcode policy and previous handlers.
-			 * @param pipeline Connection input pipeline in its current negotiated state.
-			 * @param logger Diagnostic logger.
-			 * @return False if a pipeline fails; the factory must not be invoked.
-			 */
-			bool DecodeInput(Buffer::Pipeline& pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+					/**
+					 * @brief Read one frame from the socket.
+					 * @param client Safe shared socket client.
+					 * @param in_pipeline Input pipeline.
+					 * @param logger Logger.
+					 * @return Frame (default-constructed on failure).
+					 */
+					static Frame ProcessInput(StormByte::Safe::Shared<Socket::Client> client,
+						Buffer::Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
-			/**
-			 * @brief Read the wire opcode before input transformation.
-			 * @return Application opcode.
-			 */
-			Packet::OpcodeType Opcode() const noexcept {
-				return m_opcode;
-			}
+					/**
+					 * @brief Deserialize payload into a Packet.
+					 * @param packet_fn Deserializer callback.
+					 * @param logger Logger.
+					 * @return Packet pointer, or an empty pointer on failure.
+					 */
+					PacketPointer ProcessPacket(const DeserializePacketFunction& packet_fn,
+						StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
-			/**
-			 * @brief Serialize this frame to a Consumer.
-			 * @param out_pipeline Output pipeline.
-			 * @param logger Logger.
-			 * @return Consumer of framed bytes.
-			 */
-			Buffer::Consumer ProcessOutput(Buffer::Pipeline& out_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+					/**
+					 * @brief Transform one raw frame after opcode policy and previous handlers.
+					 * @param pipeline Connection input pipeline in its current negotiated state.
+					 * @param logger Diagnostic logger.
+					 * @return False if a pipeline fails; the factory must not be invoked.
+					 */
+					bool DecodeInput(Buffer::Pipeline& pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
-		private:
-			Packet::OpcodeType m_opcode{0};	///< Opcode; zero for an invalid frame.
-			StormByte::BinaryData m_payload;		///< Payload bytes
+					/**
+					 * @brief Read the wire opcode before input transformation.
+					 * @return Application opcode.
+					 */
+					Packet::OpcodeType Opcode() const noexcept {
+						return m_opcode;
+					}
 
-			/**
-			 * @brief Retain raw wire fields without executing pipelines or factories.
-			 * @param opcode Frame opcode.
-			 * @param payload Raw payload bytes.
-			 * @return Raw frame; DecodeInput is deferred until opcode admission.
-			 */
-			static Frame FromWire(Packet::OpcodeType opcode, StormByte::BinaryData&& payload) noexcept;
+					/**
+					 * @brief Serialize this frame to a Consumer.
+					 * @param out_pipeline Output pipeline.
+					 * @param logger Logger.
+					 * @return Consumer of framed bytes.
+					 */
+					Buffer::Consumer ProcessOutput(Buffer::Pipeline& out_pipeline,
+						StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
-			/**
-			 * @brief Empty frame (error path).
-			 */
-			Frame() noexcept;
+				private:
+					Packet::OpcodeType m_opcode{0};		///< Opcode; zero for an invalid frame.
+					StormByte::Safe::Binary m_payload;	///< Base-owned payload bytes.
 
-			/**
-			 * @brief Construct from opcode and payload.
-			 * @param opcode Opcode.
-			 * @param payload Payload (moved).
-			 */
-			Frame(Packet::OpcodeType opcode, StormByte::BinaryData&& payload) noexcept;
-	};
+					/**
+					 * @brief Retain raw wire fields without executing pipelines or factories.
+					 * @param opcode Frame opcode.
+					 * @param payload Raw Base-owned payload bytes.
+					 * @return Raw frame; DecodeInput is deferred until opcode admission.
+					 */
+					static Frame FromWire(Packet::OpcodeType opcode, StormByte::Safe::Binary&& payload) noexcept;
+
+					/**
+					 * @brief Construct from opcode and payload.
+					 * @param opcode Opcode.
+					 * @param payload Base-owned payload (moved).
+					 */
+					Frame(Packet::OpcodeType opcode, StormByte::Safe::Binary&& payload) noexcept;
+			};
+		}
+	}
 }
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Transport::Frame);

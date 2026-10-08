@@ -40,16 +40,22 @@
 
 #pragma once
 
+#include <StormByte/network/detail/server_state.hxx>
 #include <StormByte/network/endpoint.hxx>
 #include <StormByte/network/remote_file_mount.hxx>
 #include <StormByte/network/server_telemetry.hxx>
+#include <StormByte/safe/atomic.hxx>
+#include <StormByte/safe/deque.hxx>
+#include <StormByte/safe/map.hxx>
+#include <StormByte/safe/mutex.hxx>
+#include <StormByte/safe/pair.hxx>
 #include <StormByte/safe/pointers.hxx>
+#include <StormByte/safe/string.hxx>
+#include <StormByte/safe/thread.hxx>
+#include <StormByte/safe/vector.hxx>
+#include <StormByte/size.hxx>
 
-#include <cstddef>
 #include <cstdint>
-#include <filesystem>
-#include <memory>
-#include <string>
 #include <string_view>
 
 /**
@@ -88,7 +94,7 @@ namespace StormByte {
 
 		/**
 		 * @namespace StormByte::Network::Detail
-		 * @brief Private implementation namespace of the Network module.
+		 * @brief Private implementation details of the Network module.
 		 */
 		namespace Detail {
 			/**
@@ -146,8 +152,9 @@ namespace StormByte {
 				Server(const Server& other) = delete;
 
 				/**
-				 * @brief Move constructor.
+				 * @brief Stop the source before transferring its inactive state.
 				 * @param other Server whose state is transferred.
+				 * @pre Neither server is moved from its event loop or a packet worker.
 				 */
 				Server(Server&& other) noexcept;
 
@@ -164,9 +171,10 @@ namespace StormByte {
 				Server& operator=(const Server& other) = delete;
 
 				/**
-				 * @brief Move assignment.
+				 * @brief Stop both servers before transferring inactive state.
 				 * @param other Server whose state is transferred.
 				 * @return Reference to this server.
+				 * @pre Neither server is moved from its event loop or a packet worker.
 				 */
 				Server& operator=(Server&& other) noexcept;
 
@@ -240,7 +248,7 @@ namespace StormByte {
 				 * @return Authorized descriptor, or Unavailable when mounting failed.
 				 */
 				RemoteFileMount MountRemoteFileReader(std::string_view client_uuid,
-					const std::filesystem::path& path, std::uint16_t maximum_timeout_seconds = 30) noexcept;
+					std::string_view path, std::uint16_t maximum_timeout_seconds = 30) noexcept;
 
 				/**
 				 * @brief Mount a server-owned file for exclusive writing after application authorization.
@@ -250,7 +258,7 @@ namespace StormByte {
 				 * @return Authorized descriptor, or Unavailable when mounting failed or another writer owns the path.
 				 */
 				RemoteFileMount MountRemoteFileWriter(std::string_view client_uuid,
-					const std::filesystem::path& path, std::uint16_t maximum_timeout_seconds = 30) noexcept;
+					std::string_view path, std::uint16_t maximum_timeout_seconds = 30) noexcept;
 
 				/**
 				 * @brief Disconnect a client by UUID.
@@ -294,126 +302,70 @@ namespace StormByte {
 				/**
 				 * @brief Result category returned by a packet worker.
 				 */
-				enum class CompletionReason: unsigned short {
-					/**
-					 * @brief Packet handling completed successfully.
-					 */
-					Success,
-
-					/**
-					 * @brief Packet handler returned no response packet.
-					 */
-					NullHandler,
-
-					/**
-					 * @brief Packet handling failed.
-					 */
-					Error
-				};
+				using CompletionReason = Detail::CompletionReason;
 
 				/**
-				 * @struct Completion
 				 * @brief Worker response queued for application on the event loop.
 				 */
-				struct Completion {
-					/**
-					 * @brief UUID of the client session that submitted the packet.
-					 */
-					std::string uuid;
-
-					/**
-					 * @brief Application response packet, if one was produced.
-					 */
-					PacketPointer packet;
-
-					/**
-					 * @brief Worker handler outcome.
-					 */
-					CompletionReason reason;
-				};
+				using Completion = Detail::Completion;
 
 				/**
-				 * @struct MountedRemoteFile
 				 * @brief Active file capability and its path reservation.
 				 */
-				struct MountedRemoteFile {
-					/**
-					 * @brief Peer data plane serving this mount.
-					 */
-					std::shared_ptr<Detail::RemoteFile::Host> host;
+				using MountedRemoteFile = Detail::MountedRemoteFile;
 
-					/**
-					 * @brief Canonical path key held by this reservation.
-					 */
-					std::string path_key;
-
-					/**
-					 * @brief Shared-reader or exclusive-writer access mode.
-					 */
-					RemoteFileMount::Access access;
-
-					/**
-					 * @brief Capability token released when the mount closes.
-					 */
-					RemoteFileMount::ChannelToken token;
-				};
-
-				/**
-				 * @brief Upper bound on active remote-file mounts.
-				 */
-				static constexpr std::size_t MAX_REMOTE_FILE_CHANNELS = 128;
+				static constexpr Size MAX_REMOTE_FILE_CHANNELS{128};	///< Active mount limit.
 
 				/**
 				 * @brief Event-loop action requested by a worker or callback.
 				 */
-				enum class CommandType: unsigned short {
-					/**
-					 * @brief Disconnect the specified client session.
-					 */
-					DisconnectClient,
-
-					/**
-					 * @brief Discard pending input and close after the current reply drains.
-					 */
-					DisconnectAfterReply,
-
-					/**
-					 * @brief Disconnect every client session.
-					 */
-					DisconnectAll,
-
-					/**
-					 * @brief Stop the event loop.
-					 */
-					Stop
-				};
+				using CommandType = Detail::CommandType;
 
 				/**
-				 * @struct Command
 				 * @brief Event-loop command and optional target client UUID.
 				 */
-				struct Command {
-					/**
-					 * @brief Command to apply on the event loop.
-					 */
-					CommandType type;
-
-					/**
-					 * @brief Target UUID for per-client commands.
-					 */
-					std::string uuid;
-				};
+				using Command = Detail::Command;
 
 				/**
-				 * @class Implementation
-				 * @brief Private listener, session, and event-loop state.
+				 * @brief Network-owned native wakeup handles, defined out-of-line.
 				 */
-				class Implementation;
+				using WakeupChannel = Detail::WakeupChannel;
+
+				Safe::Unique<Socket::Server> m_socket_server;					///< Listening socket.
+				Safe::Atomic<Connection::Status> m_status{Connection::Status::Disconnected};	///< Lifecycle state.
+				Safe::Thread m_accept_thread;									///< Joined accept execution.
+				Safe::Unique<WakeupChannel> m_wakeup;							///< Native wakeup channel.
+				Safe::Map<Safe::String, Detail::SessionRegistration> m_sessions;	///< Event-loop sessions.
+				Safe::Map<Safe::String, Detail::ConfigurableConnection> m_configurable_connections;	///< Handler connections.
+				Safe::Unique<Detail::WorkerPool> m_pool;							///< Bounded packet executor.
+				Safe::Deque<Completion> m_completions;							///< Worker response queue.
+				Connection::Protocol m_protocol{Connection::Protocol::IPv4};		///< Listener address family.
+				Safe::String m_bind_address;										///< File-plane bind address.
+				Safe::Vector<MountedRemoteFile> m_remote_files;					///< Authorized mounts.
+				Safe::Map<Safe::String, Detail::RemotePlaneRegistration> m_remote_planes;	///< Peer planes.
+				Safe::Shared<Detail::RemoteFile::MountRegistry> m_remote_file_registry;	///< Capability registry.
+				Safe::Mutex m_remote_file_mutex;									///< Guards mounts and connections.
+				Safe::Mutex m_completion_mutex;									///< Guards response queue.
+				Safe::Deque<Command> m_commands;									///< Event-loop command queue.
+				Safe::Mutex m_command_mutex;										///< Guards command queue.
+				Safe::Shared<ServerTelemetry> m_telemetry;						///< Aggregate live telemetry.
 
 				/**
-				 * @brief Base-owned private server engine.
+				 * @brief Stop a move source before the base endpoint is transferred.
+				 * @param other Source server, externally serialized against lifecycle calls.
+				 * @return Stopped source server.
+				 * @pre The caller is neither the source event loop nor a source worker.
 				 */
-				StormByte::Safe::Unique<Implementation> m_engine;
+				static Server&& StopForMove(Server& other) noexcept;
+
+				/**
+				 * @brief Transfer state after both servers have stopped their callbacks.
+				 * @param other Stopped source server.
+				 * @details Only persistent configuration, registry ownership and telemetry
+				 * are retained. Threads, sessions, native wakeups and callback queues stay
+				 * stopped and empty; a later Connect creates callbacks for this instance.
+				 */
+				void MoveStoppedState(Server& other) noexcept;
 
 				/**
 				 * @brief Accept-loop thread body.
@@ -447,7 +399,7 @@ namespace StormByte {
 				 * @param readable Whether the session socket is ready for reading.
 				 * @param writable Whether the session socket is ready for writing.
 				 */
-				void ProcessSession(const std::shared_ptr<Detail::Session>& session, bool readable, bool writable) noexcept;
+				void ProcessSession(const Safe::Shared<Detail::Session>& session, bool readable, bool writable) noexcept;
 
 				/**
 				 * @brief Enqueue a worker completion and wake the event loop.
@@ -488,7 +440,7 @@ namespace StormByte {
 				 * @param readable Whether the socket is ready for reading.
 				 * @param writable Whether the socket is ready for writing.
 				 */
-				void ProcessRemotePlane(const std::shared_ptr<Detail::RemoteFile::Host>& host,
+				void ProcessRemotePlane(const Safe::Shared<Detail::RemoteFile::Host>& host,
 					bool readable, bool writable) noexcept;
 
 				/**
@@ -502,10 +454,4 @@ namespace StormByte {
 	}
 }
 
-/**
- * @brief Server state is owned by Network.
- *
- * Derived providers must disconnect before destroying handler state and remain
- * loaded with Base and Network until destruction with a compatible ABI.
- */
 STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Server);

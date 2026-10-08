@@ -42,15 +42,24 @@
 
 #include <StormByte/exception.hxx>
 #include <StormByte/network/visibility.h>
+#include <StormByte/safe/string.hxx>
+#include <StormByte/type_traits/safe.hxx>
 
-#include <string>
+#include <format>
+#include <iterator>
 #include <string_view>
 #include <utility>
 
 /**
- * @brief Network module of the StormByte suite.
+ * @namespace StormByte
+ * @brief Root namespace of the StormByte suite.
  */
-namespace StormByte::Network {
+namespace StormByte {
+	/**
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
+	 */
+	namespace Network {
 	/**
 	 * @class Exception
 	 * @brief Base exception for the Network module.
@@ -61,15 +70,13 @@ namespace StormByte::Network {
 			 * @brief Copy plain exception text under `StormByte.Network`.
 			 * @param message Exception text; it is not a format string.
 			 */
-			explicit Exception(std::string_view message):
-				StormByte::Exception(StormByte::Exception::Path{"Network"}, "{}", message) {}
+			explicit Exception(std::string_view message);
 
 			/**
 			 * @brief Copy Base-owned text under `StormByte.Network`.
 			 * @param message Exception text.
 			 */
-			explicit Exception(const StormByte::Safe::String& message):
-				Exception(static_cast<std::string_view>(message)) {}
+			explicit Exception(const StormByte::Safe::String& message);
 
 			/**
 			 * @brief Format an exception under `StormByte.Network`.
@@ -83,9 +90,9 @@ namespace StormByte::Network {
 					std::forward<Args>(args)...) {}
 
 			/**
-				 * @brief Construct with a child path and a format string.
+			 * @brief Construct with a child path and a format string.
 			 * @tparam Args Format argument types.
-				 * @param child Path below `Network`.
+			 * @param child Path below `Network`.
 			 * @param fmt Format string.
 			 * @param args Format arguments.
 			 */
@@ -93,7 +100,7 @@ namespace StormByte::Network {
 			explicit Exception(StormByte::Exception::Path child, std::format_string<Args...> fmt,
 				Args&&... args):
 				StormByte::Exception(
-					StormByte::Exception::Path{std::string{"Network."}.append(child.text)},
+					StormByte::Exception::Path{JoinPath(child.text)},
 					fmt, std::forward<Args>(args)...) {}
 
 			/**
@@ -101,14 +108,61 @@ namespace StormByte::Network {
 			 * @param child Component path under Network.
 			 * @param message Exception text; it is not a format string.
 			 */
-			explicit Exception(StormByte::Exception::Path child, std::string_view message):
-				StormByte::Exception(
-					StormByte::Exception::Path{std::string{"Network."}.append(child.text)}, "{}", message) {}
+			explicit Exception(StormByte::Exception::Path child, std::string_view message);
+
+			/**
+			 * @brief Copy the Base-owned exception message inside Network.
+			 * @param other Source exception.
+			 */
+			Exception(const Exception& other);
+
+			/**
+			 * @brief Transfer the Base-owned exception message inside Network.
+			 * @param other Source exception.
+			 */
+			Exception(Exception&& other) noexcept;
 
 			/**
 			 * @brief Destructor. Defined in the Network library to anchor RTTI.
 			 */
 			~Exception() noexcept override;
+
+			/**
+			 * @brief Copy-assign the Base-owned exception message.
+			 * @param other Source exception.
+			 * @return This exception.
+			 */
+			Exception& operator=(const Exception& other);
+
+			/**
+			 * @brief Move-assign the Base-owned exception message.
+			 * @param other Source exception.
+			 * @return This exception.
+			 */
+			Exception& operator=(Exception&& other) noexcept;
+
+		protected:
+			/**
+			 * @brief Format a message directly into Base-owned text.
+			 * @tparam Args Format argument types.
+			 * @param fmt Format string.
+			 * @param args Format arguments.
+			 * @return Formatted text without caller-owned STL storage.
+			 */
+			template<typename... Args>
+			static StormByte::Safe::String FormatMessage(std::format_string<Args...> fmt, Args&&... args) {
+				StormByte::Safe::String result;
+				std::format_to(std::back_inserter(result), fmt, std::forward<Args>(args)...);
+				return result;
+			}
+
+		private:
+			/**
+			 * @brief Join a child component path using Base-owned text.
+			 * @param child Path below Network.
+			 * @return Complete Network component path.
+			 */
+			static StormByte::Safe::String JoinPath(std::string_view child);
 	};
 
 	/**
@@ -131,13 +185,42 @@ namespace StormByte::Network {
 			 */
 			template <typename... Args>
 			ConnectionError(std::format_string<Args...> fmt, Args&&... args):
-			Exception(StormByte::Exception::Path{"Connection"}, fmt, std::forward<Args>(args)...) {}
+				Exception(StormByte::Exception::Path{"Connection"}, fmt, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy the connection error inside Network.
+			 * @param other Source error.
+			 */
+			ConnectionError(const ConnectionError& other);
+
+			/**
+			 * @brief Move the connection error inside Network.
+			 * @param other Source error.
+			 */
+			ConnectionError(ConnectionError&& other) noexcept;
 
 			/**
 			 * @brief Destructor. Defined in the Network library to anchor RTTI.
 			 */
 			~ConnectionError() noexcept override;
 
+			/**
+			 * @brief Copy-assign the connection error.
+			 * @param other Source error.
+			 * @return This error.
+			 */
+			ConnectionError& operator=(const ConnectionError& other);
+
+			/**
+			 * @brief Move-assign the connection error.
+			 * @param other Source error.
+			 * @return This error.
+			 */
+			ConnectionError& operator=(ConnectionError&& other) noexcept;
+
+			/**
+			 * @brief Preserve the Network exception constructors.
+			 */
 			using Exception::Exception;
 	};
 
@@ -162,14 +245,43 @@ namespace StormByte::Network {
 			 */
 			template <typename... Args>
 			ConnectionClosed(std::format_string<Args...> fmt, Args&&... args):
-			Exception(StormByte::Exception::Path{"Connection"}, "Connection closed: {}",
-				std::format(fmt, std::forward<Args>(args)...)) {}
+				Exception(StormByte::Exception::Path{"Connection"}, "Connection closed: {}",
+					std::string_view{FormatMessage(fmt, std::forward<Args>(args)...)}) {}
+
+			/**
+			 * @brief Copy the closed-connection error inside Network.
+			 * @param other Source error.
+			 */
+			ConnectionClosed(const ConnectionClosed& other);
+
+			/**
+			 * @brief Move the closed-connection error inside Network.
+			 * @param other Source error.
+			 */
+			ConnectionClosed(ConnectionClosed&& other) noexcept;
 
 			/**
 			 * @brief Destructor. Defined in the Network library to anchor RTTI.
 			 */
 			~ConnectionClosed() noexcept override;
 
+			/**
+			 * @brief Copy-assign the closed-connection error.
+			 * @param other Source error.
+			 * @return This error.
+			 */
+			ConnectionClosed& operator=(const ConnectionClosed& other);
+
+			/**
+			 * @brief Move-assign the closed-connection error.
+			 * @param other Source error.
+			 * @return This error.
+			 */
+			ConnectionClosed& operator=(ConnectionClosed&& other) noexcept;
+
+			/**
+			 * @brief Preserve the Network exception constructors.
+			 */
 			using Exception::Exception;
 	};
 
@@ -194,13 +306,42 @@ namespace StormByte::Network {
 			 */
 			template <typename... Args>
 			PacketError(std::format_string<Args...> fmt, Args&&... args):
-			Exception(StormByte::Exception::Path{"Transport.Packet"}, fmt, std::forward<Args>(args)...) {}
+				Exception(StormByte::Exception::Path{"Transport.Packet"}, fmt, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy the packet error inside Network.
+			 * @param other Source error.
+			 */
+			PacketError(const PacketError& other);
+
+			/**
+			 * @brief Move the packet error inside Network.
+			 * @param other Source error.
+			 */
+			PacketError(PacketError&& other) noexcept;
 
 			/**
 			 * @brief Destructor. Defined in the Network library to anchor RTTI.
 			 */
 			~PacketError() noexcept override;
 
+			/**
+			 * @brief Copy-assign the packet error.
+			 * @param other Source error.
+			 * @return This error.
+			 */
+			PacketError& operator=(const PacketError& other);
+
+			/**
+			 * @brief Move-assign the packet error.
+			 * @param other Source error.
+			 * @return This error.
+			 */
+			PacketError& operator=(PacketError&& other) noexcept;
+
+			/**
+			 * @brief Preserve the Network exception constructors.
+			 */
 			using Exception::Exception;
 	};
 
@@ -225,13 +366,53 @@ namespace StormByte::Network {
 			 */
 			template <typename... Args>
 			FrameError(std::format_string<Args...> fmt, Args&&... args):
-			Exception(StormByte::Exception::Path{"Transport.Frame"}, fmt, std::forward<Args>(args)...) {}
+				Exception(StormByte::Exception::Path{"Transport.Frame"}, fmt, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy the frame error inside Network.
+			 * @param other Source error.
+			 */
+			FrameError(const FrameError& other);
+
+			/**
+			 * @brief Move the frame error inside Network.
+			 * @param other Source error.
+			 */
+			FrameError(FrameError&& other) noexcept;
 
 			/**
 			 * @brief Destructor. Defined in the Network library to anchor RTTI.
 			 */
 			~FrameError() noexcept override;
 
+			/**
+			 * @brief Copy-assign the frame error.
+			 * @param other Source error.
+			 * @return This error.
+			 */
+			FrameError& operator=(const FrameError& other);
+
+			/**
+			 * @brief Move-assign the frame error.
+			 * @param other Source error.
+			 * @return This error.
+			 */
+			FrameError& operator=(FrameError&& other) noexcept;
+
+			/**
+			 * @brief Preserve the Network exception constructors.
+			 */
 			using Exception::Exception;
 	};
+	}
 }
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Exception);
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::ConnectionError);
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::ConnectionClosed);
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::PacketError);
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::FrameError);

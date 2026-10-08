@@ -42,12 +42,67 @@
 
 using namespace StormByte::Network;
 
+Exception::Exception(std::string_view message):
+	StormByte::Exception(StormByte::Exception::Path{"Network"}, "{}", message) {}
+
+Exception::Exception(const StormByte::Safe::String& message):
+	Exception(static_cast<std::string_view>(message)) {}
+
+Exception::Exception(StormByte::Exception::Path child, std::string_view message):
+	StormByte::Exception(StormByte::Exception::Path{JoinPath(child.text)}, "{}", message) {}
+
+Exception::Exception(const Exception& other) = default;
+
+Exception::Exception(Exception&& other) noexcept = default;
+
 Exception::~Exception() noexcept = default;
+
+Exception& Exception::operator=(const Exception& other) = default;
+
+Exception& Exception::operator=(Exception&& other) noexcept = default;
+
+StormByte::Safe::String Exception::JoinPath(std::string_view child) {
+	StormByte::Safe::String result{"Network."};
+	result.append(child);
+	return result;
+}
+
+ConnectionError::ConnectionError(const ConnectionError& other) = default;
+
+ConnectionError::ConnectionError(ConnectionError&& other) noexcept = default;
 
 ConnectionError::~ConnectionError() noexcept = default;
 
+ConnectionError& ConnectionError::operator=(const ConnectionError& other) = default;
+
+ConnectionError& ConnectionError::operator=(ConnectionError&& other) noexcept = default;
+
+ConnectionClosed::ConnectionClosed(const ConnectionClosed& other) = default;
+
+ConnectionClosed::ConnectionClosed(ConnectionClosed&& other) noexcept = default;
+
 ConnectionClosed::~ConnectionClosed() noexcept = default;
+
+ConnectionClosed& ConnectionClosed::operator=(const ConnectionClosed& other) = default;
+
+ConnectionClosed& ConnectionClosed::operator=(ConnectionClosed&& other) noexcept = default;
+
+PacketError::PacketError(const PacketError& other) = default;
+
+PacketError::PacketError(PacketError&& other) noexcept = default;
 
 PacketError::~PacketError() noexcept = default;
 
+PacketError& PacketError::operator=(const PacketError& other) = default;
+
+PacketError& PacketError::operator=(PacketError&& other) noexcept = default;
+
+FrameError::FrameError(const FrameError& other) = default;
+
+FrameError::FrameError(FrameError&& other) noexcept = default;
+
 FrameError::~FrameError() noexcept = default;
+
+FrameError& FrameError::operator=(const FrameError& other) = default;
+
+FrameError& FrameError::operator=(FrameError&& other) noexcept = default;

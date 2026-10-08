@@ -1,6 +1,47 @@
+/*
+ * Copyright (C) 2024-2026 David C. Manuelda (StormBytePP)
+ *
+ * This file is part of StormByte-Network.
+ *
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
+ *
+ * StormByte-Network is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * version 3 along with StormByte-Network. If not, see
+ * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
+ */
+
 #pragma once
 
 #include <StormByte/network/visibility.h>
+#include <StormByte/safe/binary.hxx>
 #include <StormByte/serializable.hxx>
 
 #include <array>
@@ -121,33 +162,29 @@ namespace StormByte {
 
 				/**
 				 * @brief Copy a validated mount descriptor.
-				 * @par Parameters
-				 * The unnamed parameter is the descriptor to copy.
+				 * @param other Descriptor to copy.
 				 */
-				RemoteFileMount(const RemoteFileMount&);
+				RemoteFileMount(const RemoteFileMount& other);
 
 				/**
 				 * @brief Move a validated mount descriptor.
-				 * @par Parameters
-				 * The unnamed parameter is the descriptor to move.
+				 * @param other Descriptor to move; fixed-width fields remain valid.
 				 */
-				RemoteFileMount(RemoteFileMount&&) noexcept;
+				RemoteFileMount(RemoteFileMount&& other) noexcept;
 
 				/**
 				 * @brief Copy-assign a validated mount descriptor.
-				 * @par Parameters
-				 * The unnamed parameter is the descriptor to copy.
+				 * @param other Descriptor to copy.
 				 * @return This descriptor.
 				 */
-				RemoteFileMount& operator=(const RemoteFileMount&);
+				RemoteFileMount& operator=(const RemoteFileMount& other);
 
 				/**
 				 * @brief Move-assign a validated mount descriptor.
-				 * @par Parameters
-				 * The unnamed parameter is the descriptor to move.
+				 * @param other Descriptor to move; fixed-width fields remain valid.
 				 * @return This descriptor.
 				 */
-				RemoteFileMount& operator=(RemoteFileMount&&) noexcept;
+				RemoteFileMount& operator=(RemoteFileMount&& other) noexcept;
 
 				/**
 				 * @brief Out-of-line destructor anchors the non-trivial codec type.
@@ -196,30 +233,11 @@ namespace StormByte {
 				RemoteFileMount(Status status, ChannelToken token, std::uint16_t port,
 					std::uint16_t maximum_timeout_seconds, Access access) noexcept;
 
-				/**
-				 * @brief Mount request result.
-				 */
-				Status m_status;
-
-				/**
-				 * @brief Opaque channel capability.
-				 */
-				ChannelToken m_token;
-
-				/**
-				 * @brief Session data-plane port.
-				 */
-				std::uint16_t m_port;
-
-				/**
-				 * @brief Maximum peer idle interval in seconds.
-				 */
-				std::uint16_t m_maximum_timeout_seconds;
-
-				/**
-				 * @brief Permitted channel direction.
-				 */
-				Access m_access;
+				Status m_status;						///< Mount request result.
+				ChannelToken m_token;				///< Opaque channel capability.
+				std::uint16_t m_port;				///< Session data-plane port.
+				std::uint16_t m_maximum_timeout_seconds;	///< Maximum peer idle interval in seconds.
+				Access m_access;						///< Permitted channel direction.
 
 				/**
 				 * @brief Server may construct authorized mount descriptors.
@@ -253,9 +271,9 @@ namespace StormByte {
 			/**
 			 * @brief Encode a mount descriptor field-by-field.
 			 * @param data Descriptor to encode.
-			 * @return Encoded descriptor bytes or a serialization error.
+			 * @return Encoded descriptor bytes owned by Base.
 			 */
-			static STORMBYTE_NETWORK_PUBLIC BinaryData Write(const Network::RemoteFileMount& data) noexcept;
+			static STORMBYTE_NETWORK_PUBLIC Safe::Binary Write(const Network::RemoteFileMount& data) noexcept;
 
 			/**
 			 * @brief Decode and validate a complete mount descriptor.
@@ -268,8 +286,4 @@ namespace StormByte {
 	}
 }
 
-/**
- * @brief Mounts own only fixed-width value fields and use Network lifecycle operations.
- * Network must remain loaded and participants must use a compatible ABI.
- */
 STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::RemoteFileMount);

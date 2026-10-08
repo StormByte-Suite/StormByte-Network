@@ -1,6 +1,47 @@
+/*
+ * Copyright (C) 2024-2026 David C. Manuelda (StormBytePP)
+ *
+ * This file is part of StormByte-Network.
+ *
+ * StormByte-Network original source is dual-licensed:
+ *
+ * 1. GNU Lesser General Public License v3.0 (or later)
+ *    You may redistribute and/or modify this file under the terms of the
+ *    GNU Lesser General Public License as published by the Free Software
+ *    Foundation, either version 3 of the License, or (at your option)
+ *    any later version.
+ *
+ * 2. Commercial license
+ *    Alternatively, this file may be used under the terms of a commercial
+ *    license agreement with the copyright holder
+ *    (David C. Manuelda <StormByte@gmail.com>).
+ *
+ * Both licenses apply only to original StormByte-Network source in this
+ * repository. They do not cover other StormByte modules or any third-party
+ * material shipped with this repository (including everything under
+ * thirdparty/, and in particular the bundled StormByte Buffer tree), which
+ * remains under its own license.
+ *
+ * Neither license grants any patent rights. Any patent licenses required
+ * to use this software or third-party components must be obtained separately
+ * from the patent holders.
+ *
+ * StormByte-Network is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * version 3 along with StormByte-Network. If not, see
+ * <https://www.gnu.org/licenses/lgpl-3.0.html>.
+ *
+ * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
+ */
+
 #include <StormByte/network/remote_file.hxx>
 
 #include <StormByte/network/remote_file_protocol.hxx>
+#include <StormByte/safe/binary.hxx>
 
 #include <algorithm>
 #include <array>
@@ -11,7 +52,6 @@
 #include <fstream>
 #include <limits>
 #include <utility>
-#include <vector>
 
 #ifdef WINDOWS
 #include <iphlpapi.h>
@@ -57,7 +97,7 @@ namespace StormByte::Network {
 		}
 
 #ifdef WINDOWS
-		NetworkThroughput GetNetworkThroughput(const std::string& local_address) {
+		NetworkThroughput GetNetworkThroughput(const StormByte::Safe::String& local_address) {
 			NetworkThroughput result{fallback_network_bps, fallback_network_bps};
 			SOCKET_ADDRESS address{};
 			sockaddr_in address_v4{};
@@ -77,7 +117,7 @@ namespace StormByte::Network {
 			ULONG size = 0;
 			(void)GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, nullptr, nullptr, &size);
 			if (size == 0) return result;
-			std::vector<std::byte> storage(size);
+			StormByte::Safe::Binary storage(StormByte::ByteSize{size});
 			auto* adapter = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
 			if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, nullptr, adapter, &size) != NO_ERROR)
 				return result;
@@ -113,7 +153,7 @@ namespace StormByte::Network {
 			return false;
 		}
 
-		NetworkThroughput GetNetworkThroughput(const std::string& local_address) {
+		NetworkThroughput GetNetworkThroughput(const StormByte::Safe::String& local_address) {
 			NetworkThroughput result{fallback_network_bps, fallback_network_bps};
 			sockaddr_in address_v4{};
 			sockaddr_in6 address_v6{};
@@ -130,20 +170,20 @@ namespace StormByte::Network {
 
 			ifaddrs* interfaces = nullptr;
 			if (getifaddrs(&interfaces) != 0) return result;
-			std::string interface_name;
+			StormByte::Safe::String interface_name;
 			for (auto* interface = interfaces; interface; interface = interface->ifa_next) {
 				if (SameAddress(interface->ifa_addr, target)) {
-					interface_name = interface->ifa_name;
+					interface_name = std::string_view{interface->ifa_name};
 					break;
 				}
 			}
 #if defined(LINUX)
 			if (!interface_name.empty()) {
-				std::ifstream speed_file(std::filesystem::path{"/sys/class/net"} / interface_name / "speed");
+				std::ifstream speed_file(std::filesystem::path{"/sys/class/net"} / std::string_view{interface_name} / "speed");
 				std::uint64_t megabits = 0;
 				if (speed_file >> megabits && megabits > 0) {
 					const StormByte::ByteSize bps{megabits * 1000000ull};
-					result = {UsefulThroughput(bps), UsefulThroughput(bps)};
+					result = {UsefulThroughput(static_cast<std::uint64_t>(bps)), UsefulThroughput(static_cast<std::uint64_t>(bps))};
 				}
 			}
 #elif defined(MACOS)
@@ -153,7 +193,7 @@ namespace StormByte::Network {
 					const auto* data = static_cast<const struct if_data*>(interface->ifa_data);
 					if (data->ifi_baudrate != 0) {
 						const StormByte::ByteSize bps{data->ifi_baudrate};
-						result = {UsefulThroughput(bps), UsefulThroughput(bps)};
+						result = {UsefulThroughput(static_cast<std::uint64_t>(bps)), UsefulThroughput(static_cast<std::uint64_t>(bps))};
 					}
 					break;
 				}
@@ -163,15 +203,15 @@ namespace StormByte::Network {
 			return result;
 		}
 #else
-		NetworkThroughput GetNetworkThroughput(const std::string&) {
+		NetworkThroughput GetNetworkThroughput(const StormByte::Safe::String&) {
 			return {fallback_network_bps, fallback_network_bps};
 		}
 #endif
 
 		class RemoteNetworkDevice final: public Device {
 			public:
-				RemoteNetworkDevice(const std::string& local_address, NetworkThroughput throughput) noexcept:
-					Device(std::string_view{local_address}), m_throughput(throughput) {}
+				RemoteNetworkDevice(std::string_view local_address, NetworkThroughput throughput) noexcept:
+					Device(local_address), m_throughput(throughput) {}
 
 				NetworkThroughput Throughput() const noexcept override {
 					return m_throughput;
@@ -185,16 +225,21 @@ namespace StormByte::Network {
 				NetworkThroughput m_throughput;
 		};
 	}
+}
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::RemoteNetworkDevice);
+
+namespace StormByte::Network {
 
 	namespace Detail::RemoteFile {
-		StormByte::Safe::Shared<StormByte::System::Device> CreateNetworkDevice(const std::string& local_address) {
+		StormByte::Safe::Shared<StormByte::System::Device> CreateNetworkDevice(std::string_view local_address) {
 			return StormByte::Safe::Shared<StormByte::System::Device>::MakePointer<RemoteNetworkDevice>(
-				local_address, GetNetworkThroughput(local_address));
+				local_address, GetNetworkThroughput(StormByte::Safe::String{local_address}));
 		}
 	}
 
 	BufferedRemoteFileReader::BufferedRemoteFileReader(StormByte::Safe::String locator,
-		std::weak_ptr<DataPlane> plane, RemoteFileMount::ChannelToken token):
+		StormByte::Safe::Weak<DataPlane> plane, RemoteFileMount::ChannelToken token):
 		BufferedLocationReader(std::move(locator), Buffer::IO::Location::Remote,
 			StormByte::ByteSize{0}, StormByte::ByteSize{0}, std::chrono::milliseconds{0}, true),
 		m_plane(std::move(plane)), m_token(std::move(token)) {}
@@ -316,7 +361,7 @@ namespace StormByte::Network {
 	}
 
 	BufferedRemoteFileWriter::BufferedRemoteFileWriter(StormByte::Safe::String locator,
-		std::weak_ptr<DataPlane> plane, RemoteFileMount::ChannelToken token):
+		StormByte::Safe::Weak<DataPlane> plane, RemoteFileMount::ChannelToken token):
 		BufferedLocationWriter(std::move(locator), Buffer::IO::Location::Remote,
 			StormByte::ByteSize{0}, 0, std::chrono::milliseconds{0}, StormByte::ByteSize{0}, true),
 		m_plane(std::move(plane)), m_token(std::move(token)) {}
@@ -385,8 +430,7 @@ namespace StormByte::Network {
 			request.token = m_token;
 			request.offset = static_cast<std::uint64_t>(m_offset) + written;
 			request.value = count;
-			request.data.assign(data.begin() + static_cast<std::ptrdiff_t>(written),
-				data.begin() + static_cast<std::ptrdiff_t>(written + count));
+			request.data.assign(data.subspan(written, count));
 			auto response = plane->Exchange(std::move(request));
 			if (!response || response->status != RemoteStatus::Ok || response->value != count
 				|| response->offset != static_cast<std::uint64_t>(m_offset) + written
@@ -454,7 +498,9 @@ namespace StormByte::Network {
 			const_cast<BufferedRemoteFileWriter*>(this)->SetState(State::Fault);
 			return StormByte::ByteSize{0};
 		}
-		return StormByte::ByteSize{response->value};
+		const StormByte::ByteSize origin_size{response->value};
+		const StormByte::ByteSize logical_size = Tell();
+		return origin_size > logical_size ? origin_size : logical_size;
 	}
 
 	void BufferedRemoteFileWriter::MarkFailed() noexcept {

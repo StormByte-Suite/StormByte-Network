@@ -41,17 +41,27 @@
 #pragma once
 
 #include <StormByte/network/typedefs.hxx>
+#include <StormByte/safe/string.hxx>
 
 #ifdef WINDOWS
 #include <winsock2.h>
 #endif
 
-#include <string>
-
 /**
- * @brief Connection helpers of the Network module.
+ * @namespace StormByte
+ * @brief Root namespace of the StormByte suite.
  */
-namespace StormByte::Network::Connection {
+namespace StormByte {
+	/**
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
+	 */
+	namespace Network {
+		/**
+		 * @namespace StormByte::Network::Connection
+		 * @brief Connection namespace.
+		 */
+		namespace Connection {
 	/**
 	 * @class Handler
 	 * @brief Platform bootstrap and last-error helpers (singleton).
@@ -62,11 +72,13 @@ namespace StormByte::Network::Connection {
 		public:
 			/**
 			 * @brief Copy constructor (deleted).
+			 * @param other Handler that cannot be copied.
 			 */
 			Handler(const Handler& other) = delete;
 
 			/**
 			 * @brief Move constructor (deleted).
+			 * @param other Handler that cannot be moved.
 			 */
 			Handler(Handler&& other) noexcept = delete;
 
@@ -77,11 +89,15 @@ namespace StormByte::Network::Connection {
 
 			/**
 			 * @brief Copy assignment (deleted).
+			 * @param other Handler that cannot be copied.
+			 * @return Reference to this handler (operation is deleted).
 			 */
 			Handler& operator=(const Handler& other) = delete;
 
 			/**
 			 * @brief Move assignment (deleted).
+			 * @param other Handler that cannot be moved.
+			 * @return Reference to this handler (operation is deleted).
 			 */
 			Handler& operator=(Handler&& other) noexcept = delete;
 
@@ -95,7 +111,7 @@ namespace StormByte::Network::Connection {
 			 * @brief Last network error as text.
 			 * @return Description.
 			 */
-			std::string LastError() const noexcept;
+			StormByte::Safe::String LastError() const noexcept;
 
 			/**
 			 * @brief Raw last error (errno / WSAGetLastError).
@@ -108,7 +124,7 @@ namespace StormByte::Network::Connection {
 			 * @param errnum Error code.
 			 * @return Description, or numeric string on failure.
 			 */
-			std::string ErrnoToString(int errnum) const noexcept;
+			StormByte::Safe::String ErrnoToString(int errnum) const noexcept;
 
 		private:
 			bool m_initialized = false;	///< Initialization flag
@@ -121,4 +137,8 @@ namespace StormByte::Network::Connection {
 			 */
 			Handler() noexcept;
 	};
+		}
+	}
 }
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Connection::Handler);

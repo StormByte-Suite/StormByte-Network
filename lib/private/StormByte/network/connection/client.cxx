@@ -39,16 +39,47 @@
  */
 
 #include <StormByte/network/connection/client.hxx>
+#include <StormByte/safe/unique_lock.hxx>
+
+#include <utility>
+
 using namespace StormByte::Network::Connection;
-Client::Client(std::shared_ptr<Socket::Client> socket, Buffer::Pipeline in_pipeline, Buffer::Pipeline out_pipeline) noexcept:
-	m_socket(socket),
-	m_in_pipeline(in_pipeline),
-	m_out_pipeline(out_pipeline)
+
+Client::Client(StormByte::Safe::Shared<Network::Socket::Client> socket, Buffer::Pipeline in_pipeline, Buffer::Pipeline out_pipeline) noexcept:
+	m_socket(std::move(socket)),
+	m_in_pipeline(std::move(in_pipeline)),
+	m_out_pipeline(std::move(out_pipeline))
+{}
+
+Client::Client(Client&& other) noexcept:
+	m_socket(std::move(other.m_socket)),
+	m_in_pipeline(std::move(other.m_in_pipeline)),
+	m_out_pipeline(std::move(other.m_out_pipeline)),
+	m_file_input(std::move(other.m_file_input)),
+	m_file_output(std::move(other.m_file_output)),
+	m_configured(std::exchange(other.m_configured, false))
 {}
 
 Client::~Client() noexcept = default;
 
+Client& Client::operator=(Client&& other) noexcept {
+	if (this != &other) {
+		m_socket = std::move(other.m_socket);
+		m_in_pipeline = std::move(other.m_in_pipeline);
+		m_out_pipeline = std::move(other.m_out_pipeline);
+		m_file_input = std::move(other.m_file_input);
+		m_file_output = std::move(other.m_file_output);
+		m_configured = std::exchange(other.m_configured, false);
+	}
+	return *this;
+}
+
+Client::Pointer Client::Create(StormByte::Safe::Shared<Network::Socket::Client> socket, Buffer::Pipeline input, Buffer::Pipeline output) noexcept {
+	return StormByte::Safe::MakeShared<Client>(std::move(socket), std::move(input), std::move(output));
+}
+
 bool Client::ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output) {
+	StormByte::Safe::UniqueLock lock(m_configuration_mutex);
 	if (m_configured)
 		return false;
 	Buffer::Pipeline file_input(input);
@@ -61,13 +92,32 @@ bool Client::ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output)
 	return true;
 }
 
-std::pair<StormByte::Buffer::Pipeline, StormByte::Buffer::Pipeline> Client::FilePipelines() {
-	std::pair<StormByte::Buffer::Pipeline, StormByte::Buffer::Pipeline> result{m_file_input, m_file_output};
+StormByte::Safe::Pair<StormByte::Buffer::Pipeline, StormByte::Buffer::Pipeline> Client::FilePipelines() {
+	StormByte::Safe::UniqueLock lock(m_configuration_mutex);
+	StormByte::Safe::Pair<StormByte::Buffer::Pipeline, StormByte::Buffer::Pipeline> result{m_file_input, m_file_output};
 	m_configured = true;
 	return result;
 }
 
+StormByte::Buffer::Pipeline& Client::InputPipeline() noexcept {
+	return m_in_pipeline;
+}
+
+StormByte::Buffer::Pipeline& Client::OutputPipeline() noexcept {
+	return m_out_pipeline;
+}
+
+StormByte::Safe::Shared<StormByte::Network::Socket::Client>& Client::Socket() noexcept {
+	return m_socket;
+}
+
+StormByte::Network::Connection::Status Client::Status() const noexcept {
+	return m_socket ? m_socket->Status() : Connection::Status::Disconnected;
+}
+
 bool Client::Send(Transport::Frame&& frame, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
+	if (!m_socket)
+		return false;
 	ExpectedVoid result = m_socket->Send(frame.ProcessOutput(m_out_pipeline, logger));
 	if (!result) {
 		logger << Logger::Level::Error << "Failed to send frame to socket: " << result.error()->what();

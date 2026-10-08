@@ -42,6 +42,15 @@
 #include <StormByte/network/socket/socket.hxx>
 #include <StormByte/system/this_thread.hxx>
 #include <StormByte/uuid.hxx>
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cstring>
+#include <memory>
+#include <string>
+#include <utility>
+
 #ifdef UNIX
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -56,55 +65,49 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #endif
-#include <chrono>
-#include <format>
-#include <atomic>
-#include <array>
-#include <string>
 #ifdef LINUX
 #include <fstream>
-#include <string>
 #endif
 constexpr const int SOCKET_BUFFER_SIZE = 262144; // 256 KiB desired minimum
 constexpr const std::size_t MAX_SINGLE_IO = 4 * 1024 * 1024; // must match client.cxx
 using namespace StormByte::Network::Socket;
-Socket::Socket(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger) noexcept:
-m_protocol(protocol), m_status(Connection::Status::Disconnected),
-m_handle(-1), m_conn_info(nullptr), m_mtu(DEFAULT_MTU), m_logger(logger),
-m_UUID(StormByte::GenerateUUIDv4()) {
+Socket::Socket(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger):
+	m_protocol(protocol), m_status(Connection::Status::Disconnected),
+	m_handle(static_cast<Connection::HandlerType>(-1)), m_conn_info(nullptr), m_mtu(DEFAULT_MTU), m_logger(std::move(logger)),
+	m_UUID(StormByte::GenerateUUIDv4()) {
 	(void)StormByte::Network::Connection::Handler::Instance();
 }
 
 Socket::Socket(Socket&& other) noexcept:
 	m_protocol(other.m_protocol),
-	m_status(other.m_status.load(std::memory_order_relaxed)),
-	m_handle(std::move(other.m_handle)),
+	m_status(other.m_status.load(StormByte::Safe::MemoryOrder::Relaxed)),
+	m_handle(std::exchange(other.m_handle, static_cast<Connection::HandlerType>(-1))),
 	m_conn_info(std::move(other.m_conn_info)),
 	m_mtu(other.m_mtu),
 	m_logger(other.m_logger),
 	m_effective_send_buf(other.m_effective_send_buf),
 	m_effective_recv_buf(other.m_effective_recv_buf),
-	m_UUID(std::move(other.m_UUID))
-{
-	other.m_status.store(Connection::Status::Disconnected, std::memory_order_relaxed);
-	other.m_effective_send_buf = 0;
-	other.m_effective_recv_buf = 0;
+	m_UUID(std::move(other.m_UUID)) {
+	other.m_status.store(Connection::Status::Disconnected, StormByte::Safe::MemoryOrder::Relaxed);
+	other.m_effective_send_buf = StormByte::ByteSize{0};
+	other.m_effective_recv_buf = StormByte::ByteSize{0};
 }
 
 Socket& Socket::operator=(Socket&& other) noexcept {
 	if (this != &other) {
+		Disconnect();
 		m_protocol = other.m_protocol;
-		m_status.store(other.m_status.load(std::memory_order_relaxed), std::memory_order_relaxed);
-		m_handle = std::move(other.m_handle);
+		m_status.store(other.m_status.load(StormByte::Safe::MemoryOrder::Relaxed), StormByte::Safe::MemoryOrder::Relaxed);
+		m_handle = std::exchange(other.m_handle, static_cast<Connection::HandlerType>(-1));
 		m_conn_info = std::move(other.m_conn_info);
 		m_mtu = other.m_mtu;
 		m_logger = std::move(other.m_logger);
 		m_UUID = std::move(other.m_UUID);
 		m_effective_send_buf = other.m_effective_send_buf;
 		m_effective_recv_buf = other.m_effective_recv_buf;
-		other.m_status.store(Connection::Status::Disconnected, std::memory_order_relaxed);
-		other.m_effective_send_buf = 0;
-		other.m_effective_recv_buf = 0;
+		other.m_status.store(Connection::Status::Disconnected, StormByte::Safe::MemoryOrder::Relaxed);
+		other.m_effective_send_buf = StormByte::ByteSize{0};
+		other.m_effective_recv_buf = StormByte::ByteSize{0};
 	}
 
 	return *this;
@@ -115,45 +118,58 @@ Socket::~Socket() noexcept {
 }
 
 void Socket::Disconnect() noexcept {
-	// Only one thread performs the real close.
 	auto prev = m_status.exchange(Connection::Status::Disconnecting,
-								std::memory_order_acq_rel);
-	if (prev == Connection::Status::Disconnected ||
-		prev == Connection::Status::Disconnecting) {
+		StormByte::Safe::MemoryOrder::AcqRel);
+	if (prev == Connection::Status::Disconnecting) {
+		return;
+	}
+	if (prev == Connection::Status::Disconnected && !HasHandle()) {
+		m_status.store(Connection::Status::Disconnected, StormByte::Safe::MemoryOrder::Release);
 		return;
 	}
 
-	if (m_handle > 0) {
+	if (HasHandle()) {
 #ifdef UNIX
 		shutdown(m_handle, SHUT_RDWR);
-		StormByte::System::ThisThread::Sleep(std::chrono::milliseconds(100));
-		close(m_handle);
-		m_handle = -1;
 #else
 		shutdown(m_handle, SD_BOTH);
-		StormByte::System::ThisThread::Sleep(std::chrono::milliseconds(100));
-		closesocket(m_handle);
-		m_handle = INVALID_SOCKET;
 #endif
+		StormByte::System::ThisThread::Sleep(std::chrono::milliseconds(100));
 	}
 
-	m_status.store(Connection::Status::Disconnected, std::memory_order_release);
+	EnsureIsClosed();
+	m_conn_info.reset();
+	m_status.store(Connection::Status::Disconnected, StormByte::Safe::MemoryOrder::Release);
 	m_logger << Logger::Level::LowLevel << "Disconnected socket " << std::string_view{m_UUID} << std::endl;
 }
 
-std::string Socket::LocalAddress() const noexcept {
-#ifdef WINDOWS
-	if (m_handle == INVALID_SOCKET)
-		return {};
+void Socket::EnsureIsClosed() noexcept {
+	if (!HasHandle())
+		return;
+	const auto handle = std::exchange(m_handle, static_cast<Connection::HandlerType>(-1));
+#ifdef UNIX
+	::close(handle);
 #else
-	if (m_handle < 0)
-		return {};
+	::closesocket(handle);
 #endif
+}
+
+bool Socket::HasHandle() const noexcept {
+#ifdef WINDOWS
+	return m_handle != INVALID_SOCKET;
+#else
+	return m_handle >= 0;
+#endif
+}
+
+StormByte::Safe::String Socket::LocalAddress() const noexcept {
+	if (!HasHandle())
+		return {};
 	struct sockaddr_storage address{};
 #ifdef WINDOWS
-	int address_size = sizeof(address);
+	int address_size = static_cast<int>(sizeof(address));
 #else
-	socklen_t address_size = sizeof(address);
+	socklen_t address_size = static_cast<socklen_t>(sizeof(address));
 #endif
 	if (::getsockname(m_handle, reinterpret_cast<struct sockaddr*>(&address), &address_size) != 0)
 		return {};
@@ -170,11 +186,11 @@ std::string Socket::LocalAddress() const noexcept {
 	}
 	if (!inet_ntop(family, source, buffer.data(), buffer.size()))
 		return {};
-	return std::string{buffer.data()};
+	return StormByte::Safe::String{buffer.data()};
 }
 
 StormByte::Network::ExpectedReadResult Socket::WaitForData(const long long& usecs) noexcept {
-	if (!Connection::IsConnected(m_status.load(std::memory_order_acquire))) {
+	if (!Connection::IsConnected(m_status.load(StormByte::Safe::MemoryOrder::Acquire))) {
 		return Unexpected<ConnectionClosed>("Failed to wait for data: Invalid connection status");
 	}
 
@@ -211,7 +227,7 @@ StormByte::Network::ExpectedReadResult Socket::WaitForData(const long long& usec
 				<< "Wait for data on socket " << std::string_view{m_UUID} << ": " << reason
 				<< " after " << ms << " ms" << std::endl;
 	};
-	while (Connection::IsConnected(m_status.load(std::memory_order_acquire))) {
+	while (Connection::IsConnected(m_status.load(StormByte::Safe::MemoryOrder::Acquire))) {
 		log_progress_if_due();
 	#ifdef UNIX
 		// macOS / other POSIX: poll (máxima portabilidad)
@@ -246,7 +262,7 @@ StormByte::Network::ExpectedReadResult Socket::WaitForData(const long long& usec
 				| POLLRDHUP
 #endif
 				)) {
-				if (m_status.load(std::memory_order_acquire) != Connection::Status::Connected)
+				if (m_status.load(StormByte::Safe::MemoryOrder::Acquire) != Connection::Status::Connected)
 					return Connection::Read::Result::Closed;
 				if (pfd.revents & POLLIN) {
 					char tmp;
@@ -271,7 +287,7 @@ StormByte::Network::ExpectedReadResult Socket::WaitForData(const long long& usec
 				return Connection::Read::Result::ShutdownRequest;
 			}
 
-			if (m_status.load(std::memory_order_acquire) != Connection::Status::Connected)
+			if (m_status.load(StormByte::Safe::MemoryOrder::Acquire) != Connection::Status::Connected)
 				return Connection::Read::Result::Closed;
 			if (pfd.revents & (POLLIN | POLLPRI)) {
 				log_wait_done("data available");
@@ -323,7 +339,7 @@ StormByte::Network::ExpectedReadResult Socket::WaitForData(const long long& usec
 		} else {
 			if (!FD_ISSET(m_handle, &read_fds))
 				return Unexpected<ConnectionClosed>("Unknown select event while waiting for data");
-			if (m_status.load(std::memory_order_acquire) != Connection::Status::Connected)
+			if (m_status.load(StormByte::Safe::MemoryOrder::Acquire) != Connection::Status::Connected)
 				return Connection::Read::Result::Closed;
 			char tmp;
 			const int bytes_read = recv(m_handle, &tmp, 1, MSG_PEEK);
@@ -359,15 +375,15 @@ Socket::CreateSocket() noexcept {
 #else
 	if (handle == -1) {
 #endif
-		m_status.store(Connection::Status::Disconnected, std::memory_order_release);
-		return Unexpected<ConnectionError>(Connection::Handler::Instance().LastError());
+		m_status.store(Connection::Status::Disconnected, StormByte::Safe::MemoryOrder::Release);
+		return Unexpected<ConnectionError>("{}", Connection::Handler::Instance().LastError());
 	}
 
 	return handle;
 }
 
-void Socket::InitializeAfterConnect() noexcept {
-	m_status.store(Connection::Status::Connecting, std::memory_order_release);
+void Socket::InitializeAfterConnect() {
+	m_status.store(Connection::Status::Connecting, StormByte::Safe::MemoryOrder::Release);
 	m_mtu = GetMTU();
 	SetNonBlocking();
 	int desired_buf = SOCKET_BUFFER_SIZE;
@@ -471,28 +487,28 @@ void Socket::InitializeAfterConnect() noexcept {
 	if (getsockopt(m_handle, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&effective), &optlen) == 0) {
 		m_logger << Logger::Level::LowLevel << "Effective SO_SNDBUF: " << Logger::humanreadable_bytes
 				<< effective << Logger::nohumanreadable << std::endl;
-		m_effective_send_buf = effective;
+		m_effective_send_buf = StormByte::ByteSize{effective};
 	}
 
 	optlen = sizeof(effective);
 	if (getsockopt(m_handle, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<char*>(&effective), &optlen) == 0) {
 		m_logger << Logger::Level::LowLevel << "Effective SO_RCVBUF: " << Logger::humanreadable_bytes
 				<< effective << Logger::nohumanreadable << std::endl;
-		m_effective_recv_buf = effective;
+		m_effective_recv_buf = StormByte::ByteSize{effective};
 	}
 #else
 	socklen_t optlen = sizeof(effective);
 	if (getsockopt(m_handle, SOL_SOCKET, SO_SNDBUF, &effective, &optlen) == 0) {
 		m_logger << Logger::Level::LowLevel << "Effective SO_SNDBUF: " << Logger::humanreadable_bytes
 				<< effective << Logger::nohumanreadable << std::endl;
-		m_effective_send_buf = effective;
+		m_effective_send_buf = StormByte::ByteSize{effective};
 	}
 
 	optlen = sizeof(effective);
 	if (getsockopt(m_handle, SOL_SOCKET, SO_RCVBUF, &effective, &optlen) == 0) {
 		m_logger << Logger::Level::LowLevel << "Effective SO_RCVBUF: " << Logger::humanreadable_bytes
 				<< effective << Logger::nohumanreadable << std::endl;
-		m_effective_recv_buf = effective;
+		m_effective_recv_buf = StormByte::ByteSize{effective};
 	}
 #endif
 	{
@@ -519,25 +535,26 @@ void Socket::InitializeAfterConnect() noexcept {
 				<< std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
 	}
 
-	m_status.store(Connection::Status::Connected, std::memory_order_release);
+	m_status.store(Connection::Status::Connected, StormByte::Safe::MemoryOrder::Release);
 }
+
 #ifdef UNIX
-int Socket::GetMTU() const noexcept {
-	if (!m_conn_info || m_handle <= 0)
+StormByte::ByteSize Socket::GetMTU() const noexcept {
+	if (!m_conn_info || !HasHandle())
 		return DEFAULT_MTU;
 #ifdef LINUX
 	int mtu = 0;
 	socklen_t optlen = sizeof(mtu);
 	if (getsockopt(m_handle, IPPROTO_IP, IP_MTU, &mtu, &optlen) >= 0 && mtu > 0)
-		return mtu;
+		return StormByte::ByteSize{mtu};
 #endif
 	// macOS / otros UNIX: devolvemos el valor por defecto
 	// (el stack de macOS gestiona el PMTU de forma transparente)
 	return DEFAULT_MTU;
 }
 #else
-int Socket::GetMTU() const noexcept {
-	if (!m_conn_info || !m_handle)
+StormByte::ByteSize Socket::GetMTU() const noexcept {
+	if (!m_conn_info || !HasHandle())
 		return DEFAULT_MTU;
 	ULONG out_buf_len = 0;
 	GetAdaptersAddresses(AF_UNSPEC, 0, NULL, NULL, &out_buf_len);
@@ -552,10 +569,12 @@ int Socket::GetMTU() const noexcept {
 	while (adapter) {
 		for (PIP_ADAPTER_UNICAST_ADDRESS unicast = adapter->FirstUnicastAddress;
 			unicast != nullptr; unicast = unicast->Next) {
-			if (unicast->Address.lpSockaddr->sa_family == m_conn_info->SockAddr()->sa_family &&
+			if (unicast->Address.lpSockaddr &&
+				static_cast<std::size_t>(unicast->Address.iSockaddrLength) >= static_cast<std::size_t>(m_conn_info->SockAddrSize()) &&
+				unicast->Address.lpSockaddr->sa_family == m_conn_info->SockAddr()->sa_family &&
 				std::memcmp(unicast->Address.lpSockaddr, m_conn_info->SockAddr().get(),
-					sizeof(sockaddr)) == 0) {
-				return static_cast<int>(adapter->Mtu);
+					static_cast<std::size_t>(m_conn_info->SockAddrSize())) == 0) {
+				return StormByte::ByteSize{adapter->Mtu};
 			}
 		}
 
@@ -565,6 +584,7 @@ int Socket::GetMTU() const noexcept {
 	return DEFAULT_MTU;
 }
 #endif
+
 void Socket::SetNonBlocking() noexcept {
 #ifdef WINDOWS
 	u_long mode = 1;

@@ -43,183 +43,245 @@
 #include <StormByte/buffer/consumer.hxx>
 #include <StormByte/network/socket/socket.hxx>
 #include <StormByte/network/typedefs.hxx>
+#include <StormByte/safe/binary.hxx>
+#include <StormByte/safe/pointers.hxx>
 
 #include <span>
 #include <string_view>
 
 /**
- * @brief Socket wrappers of the Network module.
+ * @namespace StormByte
+ * @brief Root namespace of the StormByte suite.
  */
-namespace StormByte::Network::Detail {
-	class Session;
-}
-
-namespace StormByte::Network::Detail::RemoteFile {
-	class Host;
-}
-
-namespace StormByte::Network::Socket {
+namespace StormByte {
 	/**
-	 * @class Client
-	 * @brief Connected client socket (connect, send, receive, peek).
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
 	 */
-	class STORMBYTE_NETWORK_PRIVATE Client final: public Socket {
-		public:
+	namespace Network {
+		/**
+		 * @namespace StormByte::Network::Detail
+		 * @brief Private implementation details of the Network module.
+		 */
+		namespace Detail {
 			/**
-			 * @brief Construct with protocol and logger.
-			 * @param protocol Address family.
-			 * @param logger Logger.
+			 * @class Session
+			 * @brief Forward declaration of the session implementation.
 			 */
-			Client(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+			class Session;
 
 			/**
-			 * @brief Copy constructor (deleted).
+			 * @namespace StormByte::Network::Detail::RemoteFile
+			 * @brief Private remote-file implementation details.
 			 */
-			Client(const Client& other) = delete;
+			namespace RemoteFile {
+				/**
+				 * @class Host
+				 * @brief Forward declaration of the remote-file host.
+				 */
+				class Host;
+			}
+		}
 
+		/**
+		 * @namespace StormByte::Network::Socket
+		 * @brief Socket namespace.
+		 */
+		namespace Socket {
 			/**
-			 * @brief Move constructor.
+			 * @class Client
+			 * @brief Connected client socket (connect, send, receive, peek).
+				 * @details Safe owners and lifecycle operations are provided by Network.
+				 * Keep Network, Base and the logger provider loaded until release.
+				 * Serialize I/O, moves and lifecycle calls externally.
 			 */
-			Client(Client&& other) noexcept = default;
+			class STORMBYTE_NETWORK_PRIVATE Client final: public Socket {
+				public:
+					/**
+					 * @brief Shared client handle allocated and destroyed through Network.
+					 */
+					using Pointer = StormByte::Safe::Shared<Client>;
 
-			/**
-			 * @brief Destructor.
-			 */
-			~Client() noexcept override;
+					/**
+					 * @brief Allocate a client through the Network provider.
+					 * @param protocol Address family.
+					 * @param logger Shared diagnostic logger.
+						 * @return Shared client handle, or empty when allocation fails.
+					 */
+					static Pointer Create(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
 
-			/**
-			 * @brief Copy assignment (deleted).
-			 */
-			Client& operator=(const Client& other) = delete;
+					/**
+					 * @brief Construct with protocol and logger.
+					 * @param protocol Address family.
+					 * @param logger Logger.
+					 */
+					Client(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger);
 
-			/**
-			 * @brief Move assignment.
-			 */
-			Client& operator=(Client&& other) noexcept = default;
+					/**
+					 * @brief Copy constructor (deleted).
+					 * @param other Client that cannot be copied.
+					 */
+					Client(const Client& other) = delete;
 
-			/**
-			 * @brief Connect to host:port.
-			 * @param hostname Host name.
-			 * @param port Port.
-			 * @return Empty Expected on success.
-			 */
-			ExpectedVoid Connect(std::string_view hostname, const unsigned short& port) noexcept;
+					/**
+					 * @brief Move constructor.
+					 * @param other Client whose socket ownership is transferred.
+					 */
+					Client(Client&& other) noexcept;
 
-			/**
-			 * @brief Receive up to @p size bytes (no timeout).
-			 * @param size Max bytes.
-			 * @return Buffer or error.
-			 */
-			ExpectedBuffer Receive(const std::size_t& size = 0) noexcept;
+					/**
+					 * @brief Destructor.
+					 */
+					~Client() noexcept override;
 
-			/**
-			 * @brief Receive with timeout.
-			 * @param size Max bytes.
-			 * @param timeout_seconds 0 = wait forever between chunks.
-			 * @return Buffer or error.
-			 */
-			ExpectedBuffer Receive(const std::size_t& size, const unsigned short& timeout_seconds) noexcept;
+					/**
+					 * @brief Copy assignment (deleted).
+					 * @param other Client that cannot be copied.
+					 * @return This client (operation is deleted).
+					 */
+					Client& operator=(const Client& other) = delete;
 
-			/**
-			 * @brief Receive exactly into @p out (append).
-			 * @param size Required byte count.
-			 * @param out Destination.
-			 * @param timeout_seconds Timeout between chunks (0 = forever).
-			 * @return Empty Expected on success.
-			 */
-			ExpectedVoid ReceiveInto(const std::size_t& size, StormByte::BinaryData& out, const unsigned short& timeout_seconds = 0) noexcept;
+					/**
+					 * @brief Move assignment.
+					 * @param other Client whose socket ownership is transferred.
+					 * @return This client.
+					 */
+					Client& operator=(Client&& other) noexcept;
 
-			/**
-			 * @brief Peek without consuming (MSG_PEEK).
-			 * @param size Bytes to peek.
-			 * @return Buffer or error.
-			 */
-			ExpectedBuffer Peek(const std::size_t& size) const noexcept;
+					/**
+					 * @brief Connect to host:port.
+					 * @param hostname Host name.
+					 * @param port Port.
+					 * @return Empty Expected on success.
+					 */
+					ExpectedVoid Connect(std::string_view hostname, const unsigned short& port) noexcept;
 
-			/**
-			 * @brief Send a FIFO buffer.
-			 * @param buffer Data.
-			 * @return Empty Expected on success.
-			 */
-			ExpectedVoid Send(const Buffer::FIFO& buffer) noexcept;
+					/**
+					 * @brief Receive up to @p size bytes (no timeout).
+					 * @param size Max bytes.
+					 * @return Buffer or error.
+					 */
+					ExpectedBuffer Receive(const StormByte::ByteSize& size = StormByte::ByteSize{0}) noexcept;
 
-			/**
-			 * @brief Send a byte span.
-			 * @param data Data.
-			 * @return Empty Expected on success.
-			 */
-			ExpectedVoid Send(std::span<const std::byte> data) noexcept;
+					/**
+					 * @brief Receive with timeout.
+					 * @param size Max bytes.
+					 * @param timeout_seconds 0 = wait forever between chunks.
+					 * @return Buffer or error.
+					 */
+					ExpectedBuffer Receive(const StormByte::ByteSize& size, const unsigned short& timeout_seconds) noexcept;
 
-			/**
-			 * @brief Send from a Consumer until EoF.
-			 * @param data Consumer.
-			 * @return Empty Expected on success.
-			 */
-			ExpectedVoid Send(Buffer::Consumer data) noexcept;
+					/**
+					 * @brief Receive exactly into @p out (append).
+					 * @param size Required byte count.
+					 * @param out Destination.
+					 * @param timeout_seconds Timeout between chunks (0 = forever).
+					 * @return Empty Expected on success.
+					 */
+					ExpectedVoid ReceiveInto(const StormByte::ByteSize& size, StormByte::Safe::Binary& out, const unsigned short& timeout_seconds = 0) noexcept;
 
-			/**
-			 * @brief Whether the peer requested shutdown.
-			 * @return true if so.
-			 */
-			bool HasShutdownRequest() noexcept;
+					/**
+					 * @brief Peek without consuming (MSG_PEEK).
+					 * @param size Bytes to peek.
+					 * @return Buffer or error.
+					 */
+					ExpectedBuffer Peek(const StormByte::ByteSize& size) const noexcept;
 
-			/**
-			 * @brief Lightweight connectivity check; may mark Disconnected.
-			 * @return true if still up.
-			 */
-			bool Ping() noexcept;
+					/**
+					 * @brief Send a FIFO buffer.
+					 * @param buffer Data.
+					 * @return Empty Expected on success.
+					 */
+					ExpectedVoid Send(const Buffer::FIFO& buffer) noexcept;
 
-		private:
-			friend class StormByte::Network::Detail::Session;
-			friend class StormByte::Network::Detail::RemoteFile::Host;
+					/**
+					 * @brief Send a byte span.
+					 * @param data Data.
+					 * @return Empty Expected on success.
+					 */
+					ExpectedVoid Send(std::span<const std::byte> data) noexcept;
 
-			/**
-			 * @brief Attempt one non-blocking write without waiting.
-			 * @param data Source bytes.
-			 * @param would_block Set when the socket needs POLLOUT/select.
-			 * @return Bytes written or hard error.
-			 */
-			Expected<std::size_t, ConnectionError> TryWrite(
-				std::span<const std::byte> data, bool& would_block) noexcept;
+					/**
+					 * @brief Send Base-owned bytes through a synchronous borrowed span.
+					 * @param data Source bytes; ownership is retained by the caller.
+					 * @return Empty Expected on success, or a connection error.
+					 */
+					ExpectedVoid Send(const StormByte::Safe::Binary& data) noexcept;
 
-			/**
-			 * @brief Attempt one non-blocking read without waiting.
-			 * @param would_block Set when the socket needs POLLIN/select.
-			 * @return Bytes read or hard error.
-			 */
-			Expected<StormByte::BinaryData, ConnectionError> TryRead(bool& would_block) noexcept;
+					/**
+					 * @brief Send from a Consumer until EoF.
+					 * @param data Consumer.
+					 * @return Empty Expected on success.
+					 */
+					ExpectedVoid Send(Buffer::Consumer data) noexcept;
 
-			/**
-			 * @brief Single recv with flags.
-			 * @param size Max bytes.
-			 * @param flags recv flags.
-			 * @return Buffer or error.
-			 */
-			ExpectedBuffer ReadOnce(const std::size_t& size, int flags) noexcept;
+					/**
+					 * @brief Whether the peer requested shutdown.
+					 * @return true if so.
+					 */
+					bool HasShutdownRequest() noexcept;
 
-			/**
-			 * @brief Non-blocking read helper.
-			 * @param buffer Destination FIFO.
-			 * @return Read result.
-			 */
-			Connection::Read::Result ReadNonBlocking(Buffer::FIFO& buffer) noexcept;
+					/**
+					 * @brief Lightweight connectivity check; may mark Disconnected.
+					 * @return true if still up.
+					 */
+					bool Ping() noexcept;
 
-			/**
-			 * @brief Shared receive loop.
-			 * @param max_size Cap.
-			 * @param out Append target.
-			 * @param timeout_seconds Inter-chunk timeout.
-			 * @param require_exact Peer close early is error when true.
-			 * @return Empty Expected on success.
-			 */
-			ExpectedVoid ReceiveLoop(const std::size_t& max_size, StormByte::BinaryData& out, const unsigned short& timeout_seconds, bool require_exact) noexcept;
+				private:
+					friend class StormByte::Network::Detail::Session;
+					friend class StormByte::Network::Detail::RemoteFile::Host;
 
-			/**
-			 * @brief Low-level write.
-			 * @param data Source span.
-			 * @param size Bytes to write.
-			 * @return Empty Expected on success.
-			 */
-			ExpectedVoid Write(std::span<const std::byte> data, const std::size_t& size) noexcept;
-	};
+					/**
+					 * @brief Attempt one non-blocking write without waiting.
+					 * @param data Source bytes.
+					 * @param would_block Set when the socket needs POLLOUT/select.
+					 * @return Bytes written or hard error.
+					 */
+					Expected<StormByte::ByteSize, ConnectionError> TryWrite(
+						std::span<const std::byte> data, bool& would_block) noexcept;
+
+					/**
+					 * @brief Attempt one non-blocking read without waiting.
+					 * @param would_block Set when the socket needs POLLIN/select.
+					 * @return Bytes read or hard error.
+					 */
+					Expected<StormByte::Safe::Binary, ConnectionError> TryRead(bool& would_block) noexcept;
+
+					/**
+					 * @brief Single recv with flags.
+					 * @param size Max bytes.
+					 * @param flags recv flags.
+					 * @return Buffer or error.
+					 */
+					ExpectedBuffer ReadOnce(const StormByte::ByteSize& size, int flags) noexcept;
+
+					/**
+					 * @brief Non-blocking read helper.
+					 * @param buffer Destination FIFO.
+					 * @return Read result.
+					 */
+					Connection::Read::Result ReadNonBlocking(Buffer::FIFO& buffer) noexcept;
+
+					/**
+					 * @brief Shared receive loop.
+					 * @param max_size Cap.
+					 * @param out Append target.
+					 * @param timeout_seconds Inter-chunk timeout.
+					 * @param require_exact Peer close early is error when true.
+					 * @return Empty Expected on success.
+					 */
+					ExpectedVoid ReceiveLoop(const StormByte::ByteSize& max_size, StormByte::Safe::Binary& out, const unsigned short& timeout_seconds, bool require_exact) noexcept;
+
+					/**
+					 * @brief Low-level write.
+					 * @param data Source span.
+					 * @param size Bytes to write.
+					 * @return Empty Expected on success.
+					 */
+					ExpectedVoid Write(std::span<const std::byte> data, const StormByte::ByteSize& size) noexcept;
+			};
+		}
+	}
 }
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::Socket::Client);

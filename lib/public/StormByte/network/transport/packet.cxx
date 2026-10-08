@@ -40,7 +40,7 @@
 
 #include <StormByte/network/transport/packet.hxx>
 #include <StormByte/serializable.hxx>
-using StormByte::BinaryData;
+
 using StormByte::Buffer::FIFO;
 using namespace StormByte::Network::Transport;
 
@@ -57,10 +57,9 @@ Packet::~Packet() noexcept = default;
 FIFO Packet::Serialize() const noexcept {
 	FIFO result;
 	result.Write(Serializable<OpcodeType>(m_opcode).Serialize());
-	BinaryData payload = DoSerialize();
-	if (!payload.empty()) {
+	StormByte::Safe::Binary payload = DoSerialize();
+	if (!payload.empty())
 		result.Write(std::move(payload));
-	}
 
 	return result;
 }
