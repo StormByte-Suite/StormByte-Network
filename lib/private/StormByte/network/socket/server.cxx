@@ -104,7 +104,7 @@ ExpectedVoid Socket::Server::Listen(std::string_view hostname, const unsigned sh
 			if (setsockopt(m_handle, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
 					reinterpret_cast<const char*>(&exclusive), static_cast<int>(sizeof(exclusive))) == SOCKET_ERROR) {
 				return fail(Unexpected<ConnectionError>("Failed to set SO_EXCLUSIVEADDRUSE: {} (error code: {})",
-					Connection::Handler::Instance().LastError(),
+					std::string_view{Connection::Handler::Instance().LastError()},
 					Connection::Handler::Instance().LastErrorCode()));
 			}
 		}
@@ -113,7 +113,7 @@ ExpectedVoid Socket::Server::Listen(std::string_view hostname, const unsigned sh
 		if (setsockopt(m_handle, SOL_SOCKET, SO_REUSEADDR,
 				reinterpret_cast<const char*>(&opt), static_cast<socklen_t>(sizeof(opt))) < 0) {
 			return fail(Unexpected<ConnectionError>("Failed to set socket options: {} (error code: {})",
-				Connection::Handler::Instance().LastError(),
+				std::string_view{Connection::Handler::Instance().LastError()},
 				Connection::Handler::Instance().LastErrorCode()));
 		}
 #endif
@@ -129,14 +129,14 @@ ExpectedVoid Socket::Server::Listen(std::string_view hostname, const unsigned sh
 #endif
 		if (bind_result == -1) {
 			return fail(Unexpected<ConnectionError>("Failed to bind socket: {} (error code: {})",
-				Connection::Handler::Instance().LastError(),
+				std::string_view{Connection::Handler::Instance().LastError()},
 				Connection::Handler::Instance().LastErrorCode()));
 		}
 
 		auto listen_result = ::listen(m_handle, SOMAXCONN);
 		if (listen_result == -1) {
 			return fail(Unexpected<ConnectionError>("Failed to listen on socket: {} (error code: {})",
-				Connection::Handler::Instance().LastError(),
+				std::string_view{Connection::Handler::Instance().LastError()},
 				Connection::Handler::Instance().LastErrorCode()));
 		}
 
@@ -148,7 +148,7 @@ ExpectedVoid Socket::Server::Listen(std::string_view hostname, const unsigned sh
 #endif
 		if (::getsockname(m_handle, reinterpret_cast<struct sockaddr*>(&bound_address), &bound_address_size) == -1) {
 			return fail(Unexpected<ConnectionError>("Failed to query bound socket port: {} (error code: {})",
-				Connection::Handler::Instance().LastError(),
+				std::string_view{Connection::Handler::Instance().LastError()},
 				Connection::Handler::Instance().LastErrorCode()));
 		}
 

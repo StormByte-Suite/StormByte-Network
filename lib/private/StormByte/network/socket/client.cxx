@@ -161,7 +161,7 @@ ExpectedVoid Socket::Client::Connect(std::string_view hostname, const unsigned s
 			static_cast<socklen_t>(m_conn_info->SockAddrSize())) == -1) {
 #endif
 			m_logger << Logger::Level::Error << "Failed to connect: " << std::string_view{Connection::Handler::Instance().LastError()} << std::endl;
-			return fail(Unexpected<ConnectionError>("{}", Connection::Handler::Instance().LastError()));
+			return fail(Unexpected<ConnectionError>("{}", std::string_view{Connection::Handler::Instance().LastError()}));
 		}
 
 		InitializeAfterConnect();
@@ -228,7 +228,7 @@ ExpectedVoid Socket::Client::Send(std::span<const std::byte> data) noexcept {
 					<< " errno: " << sys_errno << " (" << std::string_view{Connection::Handler::Instance().ErrnoToString(sys_errno)} << ")" << std::endl;
 			return Unexpected<ConnectionError>(
 				"Failed to write: {} (error code: {})",
-				Connection::Handler::Instance().LastError(),
+				std::string_view{Connection::Handler::Instance().LastError()},
 				Connection::Handler::Instance().LastErrorCode());
 		}
 
@@ -347,7 +347,7 @@ ExpectedBuffer Socket::Client::ReadOnce(const ByteSize& size, int flags) noexcep
 			return Unexpected<ConnectionError>("Read would block: no data available");
 		}
 #endif
-		return Unexpected<ConnectionError>("Read failed: {}", Connection::Handler::Instance().LastError());
+		return Unexpected<ConnectionError>("Read failed: {}", std::string_view{Connection::Handler::Instance().LastError()});
 	}
 }
 
@@ -451,7 +451,7 @@ ExpectedVoid Socket::Client::ReceiveLoop(const ByteSize& max_size, Safe::Binary&
 			continue;
 		}
 
-		return Unexpected<ConnectionError>("Receive failed: {}", Connection::Handler::Instance().LastError());
+		return Unexpected<ConnectionError>("Receive failed: {}", std::string_view{Connection::Handler::Instance().LastError()});
 	}
 
 	m_logger << Logger::Level::LowLevel << "Total data received: "
@@ -530,7 +530,7 @@ ExpectedVoid Socket::Client::Write(std::span<const std::byte> data, const ByteSi
 					<< " errno: " << sys_errno << " (" << std::string_view{Connection::Handler::Instance().ErrnoToString(sys_errno)} << ")" << std::endl;
 			return Unexpected<ConnectionError>(
 				"Write failed: {} (error code: {})",
-				Connection::Handler::Instance().LastError(),
+				std::string_view{Connection::Handler::Instance().LastError()},
 				Connection::Handler::Instance().LastErrorCode());
 		}
 
@@ -573,7 +573,7 @@ StormByte::Expected<ByteSize, ConnectionError> Socket::Client::TryWrite(
 		return ByteSize{0};
 	}
 
-	return Unexpected<ConnectionError>("Failed to write: {}", Connection::Handler::Instance().LastError());
+	return Unexpected<ConnectionError>("Failed to write: {}", std::string_view{Connection::Handler::Instance().LastError()});
 }
 
 StormByte::Expected<Safe::Binary, ConnectionError> Socket::Client::TryRead(bool& would_block) noexcept {
@@ -614,7 +614,7 @@ StormByte::Expected<Safe::Binary, ConnectionError> Socket::Client::TryRead(bool&
 		return data;
 	}
 
-	return Unexpected<ConnectionError>("Failed to read: {}", Connection::Handler::Instance().LastError());
+	return Unexpected<ConnectionError>("Failed to read: {}", std::string_view{Connection::Handler::Instance().LastError()});
 }
 
 bool Socket::Client::Ping() noexcept {

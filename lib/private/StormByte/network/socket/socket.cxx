@@ -376,7 +376,7 @@ Socket::CreateSocket() noexcept {
 	if (handle == -1) {
 #endif
 		m_status.store(Connection::Status::Disconnected, StormByte::Safe::MemoryOrder::Release);
-		return Unexpected<ConnectionError>("{}", Connection::Handler::Instance().LastError());
+		return Unexpected<ConnectionError>("{}", std::string_view{Connection::Handler::Instance().LastError()});
 	}
 
 	return handle;
