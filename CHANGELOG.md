@@ -18,7 +18,7 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.0...HEAD
 
-## [2.0.0] - 2026-10-08
+## [2.0.0] - 2026-10-10
 
 ### Added
 
