@@ -16,6 +16,10 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ## [Unreleased]
 
+### Fixed
+
+- `HandshakeTest` includes `<sys/time.h>` before using `timeval`. musl does not declare that type through `<sys/socket.h>`.
+
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.1...HEAD
 
 ## [2.0.1] - 2026-10-13
