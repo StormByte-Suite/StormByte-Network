@@ -107,6 +107,7 @@ jobs:
             -DWITH_STORMBYTE=BUNDLED
             -DBUILD_SHARED_LIBS=ON
             -DCMAKE_CXX_FLAGS=-stdlib=${{ matrix.stdlib }}
+            -DCMAKE_CXX_STANDARD_LIBRARIES=-stdlib=${{ matrix.stdlib }}
           run-tests: false
           install: true
           install-location: package
