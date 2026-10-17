@@ -3,25 +3,35 @@
 # include() this file once, after project() and before any targets or install().
 # -DENABLE_PGO=ON keeps this build directory as a normal build. It is the one
 # cmake --install ships, and the project's install() rules are unchanged:
-#   1. Build an instrumented tree in <build>/pgo-instr, with tests.
-#   2. Run ctest in <build>/pgo-instr/test (override with PGO_TEST_DIR).
-#   3. Compile this directory without tests, using that profile.
-# This directory cannot rebuild itself from inside cmake --build (the generator
-# already holds it). It is configured with the profile from the start, and the
-# library waits until training has finished.
-# Every target in this tree waits on `pgo`, not only libraries and executables.
-# Training configures the same source checkout again, and BuildMaster resets
-# then reapplies third-party patches there. A custom target that builds at the
-# same time applies those patches a second time, or is reset mid-compile.
+#   1. When this file is included, and before it returns, build an instrumented
+#      tree in <build>/pgo-instr (static dependencies included) and run ctest.
+#   2. Only then does the rest of this configure run. It compiles without tests,
+#      using the profile training just wrote.
+# This directory cannot rebuild itself from inside cmake --build, so training
+# is not a ninja target. It happens at configure time, before thirdparty is
+# added. The parent CMakeLists must include this file before add_subdirectory
+# of thirdparty, lib or test. A later cmake run trains again, then configures
+# this directory against the new profile.
+# Flags go into CMAKE_C_FLAGS, CMAKE_CXX_FLAGS and the exe/shared/module linker
+# flags. BuildMaster copies those into every nested static library. Directory
+# compile options never reach that cmake, so the .a used to be built with
+# neither -fprofile-generate nor -fprofile-use. The instrumented tree gets the
+# generate flags. This directory gets the use flags only after training, so
+# Clang can open a real profdata and no empty seed is required. Profile flags
+# are stripped before they are forwarded. A flag that differs on one side
+# makes GCC miss the .gcda and makes Clang discard the counters.
+# Training and this configure touch the same third-party checkouts in
+# sequence, not in parallel. BuildMaster resets and reapplies patches on each
+# configure.
 #
 # The instrumented tree forces the cache option named by PGO_TEST_OPTION
 # (default ENABLE_TEST) ON. This directory forces it OFF.
 # Both trees get the same cache. Every project option (WITH_GPL, ENABLE_LTO,
-# BUILD_SHARED_LIBS, ...) is forwarded, and so are the C/C++ and linker flags.
-# A flag that exists only on one side makes GCC miss the .gcda file and makes
-# Clang discard the profile. The instrumented configure prints each forwarded
-# variable. A value that points into this build directory is not forwarded and
-# is printed as skipped: the child must not write into the parent tree.
+# BUILD_SHARED_LIBS, ...) is forwarded. C and C++ flags are forwarded only
+# after profile tokens are removed, so the instrumented tree cannot inherit
+# -fprofile-use. The instrumented configure prints each forwarded variable.
+# A value that points into this build directory is not forwarded and is
+# printed as skipped: the child must not write into the parent tree.
 # PGO_FORWARD_CACHE is an extra allow-list for a name the filter would drop.
 #
 # Copy this file into another project and include it the same way.
@@ -150,59 +160,126 @@ function(_pgo_link_clang_profile_runtime)
 	add_link_options("SHELL:/LIBPATH:\"${_dir}\"" "${_lib}")
 endfunction()
 
+# Drop profile tokens so a reconfigure does not forward -fprofile-use into the
+# instrumented tree, and so CMAKE_*_FLAGS is not skipped for pointing at this
+# build directory. The use flags contain the build path.
+function(_pgo_strip_profile_flags value out)
+	set(_s " ${value} ")
+	foreach(_pat IN ITEMS
+		"-fprofile-generate=[^ ]+"
+		"-fprofile-use=[^ ]+"
+		"-fprofile-correction"
+		"-fprofile-update=[^ ]+"
+		"-fprofile-prefix-path=[^ ]+"
+		"-Wno-error=missing-profile"
+		"-Wno-profile-instr-unprofiled"
+		"-Wno-profile-instr-out-of-date"
+		"/clang:-fprofile-generate=[^ ]+"
+		"/clang:-fprofile-use=[^ ]+"
+		"/clang:-Wno-profile-instr-unprofiled"
+		"/clang:-Wno-profile-instr-out-of-date"
+		"/LTCG:PGINSTRUMENT"
+		"/LTCG:PGOPTIMIZE"
+		"/GL"
+		"/LIBPATH:\"[^\"]*/clang/[^\"]*\""
+		"[^ ]*clang_rt\\.profile[^ ]*"
+	)
+		string(REGEX REPLACE "(^| )${_pat}( |$)" " " _s "${_s}")
+		string(REGEX REPLACE " +" " " _s "${_s}")
+	endforeach()
+	string(STRIP "${_s}" _s)
+	set(${out} "${_s}" PARENT_SCOPE)
+endfunction()
+
+# Write one stage's flags into the variables BuildMaster forwards. A macro, not a
+# function: the include runs in the top-level directory, and a function's
+# PARENT_SCOPE would write above that directory. The normal variable must match
+# the cache, or it hides the flags from this directory's own compilations.
+macro(_pgo_apply_stage_flags stage)
+	set(_compile "")
+	set(_link "")
+	if("${stage}" STREQUAL "generate")
+		if(_pgo_kind STREQUAL "GNU")
+			list(APPEND _compile
+				"-fprofile-generate=${PGO_PROFILE_DIR}"
+				"-fprofile-update=atomic"
+				"-fprofile-prefix-path=${CMAKE_BINARY_DIR}")
+			list(APPEND _link "-fprofile-generate=${PGO_PROFILE_DIR}")
+		elseif(_pgo_kind STREQUAL "CLANG")
+			list(APPEND _compile "-fprofile-generate=${PGO_PROFILE_DIR}")
+			list(APPEND _link "-fprofile-generate=${PGO_PROFILE_DIR}")
+		elseif(_pgo_kind STREQUAL "CLANG_CL")
+			# lld-link is the linker, not clang-cl. A /clang: flag is an input file
+			# to lld-link. Instrumentation stays in the objects; the link only needs
+			# the runtime, added below for targets in this tree.
+			list(APPEND _compile "/clang:-fprofile-generate=${PGO_PROFILE_DIR}")
+			_pgo_link_clang_profile_runtime()
+		else()
+			list(APPEND _compile "/GL")
+			list(APPEND _link "/LTCG:PGINSTRUMENT")
+		endif()
+	else()
+		if(_pgo_kind STREQUAL "GNU")
+			list(APPEND _compile
+				"-fprofile-use=${PGO_PROFILE_DIR}"
+				"-fprofile-correction"
+				"-fprofile-prefix-path=${CMAKE_BINARY_DIR}"
+				"-Wno-error=missing-profile")
+			list(APPEND _link "-fprofile-use=${PGO_PROFILE_DIR}")
+		elseif(_pgo_kind STREQUAL "CLANG")
+			list(APPEND _compile
+				"-fprofile-use=${PGO_PROFILE_DIR}/default.profdata"
+				"-Wno-profile-instr-unprofiled"
+				"-Wno-profile-instr-out-of-date")
+			list(APPEND _link "-fprofile-use=${PGO_PROFILE_DIR}/default.profdata")
+		elseif(_pgo_kind STREQUAL "CLANG_CL")
+			list(APPEND _compile
+				"/clang:-fprofile-use=${PGO_PROFILE_DIR}/default.profdata"
+				"/clang:-Wno-profile-instr-unprofiled"
+				"/clang:-Wno-profile-instr-out-of-date")
+		else()
+			list(APPEND _compile "/GL")
+			list(APPEND _link "/LTCG:PGOPTIMIZE")
+		endif()
+	endif()
+
+	foreach(var IN ITEMS CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+		_pgo_strip_profile_flags("${${var}}" _base)
+		set(_joined "${_base}")
+		foreach(flag IN LISTS _compile)
+			string(APPEND _joined " ${flag}")
+		endforeach()
+		string(STRIP "${_joined}" _joined)
+		set(${var} "${_joined}" CACHE STRING "" FORCE)
+		set(${var} "${_joined}")
+	endforeach()
+	foreach(var IN ITEMS CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS)
+		_pgo_strip_profile_flags("${${var}}" _base)
+		set(_joined "${_base}")
+		foreach(flag IN LISTS _link)
+			string(APPEND _joined " ${flag}")
+		endforeach()
+		string(STRIP "${_joined}" _joined)
+		set(${var} "${_joined}" CACHE STRING "" FORCE)
+		set(${var} "${_joined}")
+	endforeach()
+	unset(_compile)
+	unset(_link)
+	unset(_base)
+	unset(_joined)
+	unset(var)
+	unset(flag)
+endmacro()
+
 if(PGO_STAGE STREQUAL "generate")
 	set(${PGO_TEST_OPTION} ON CACHE BOOL "Forced ON by the PGO training build" FORCE)
-	if(_pgo_kind STREQUAL "GNU")
-		add_compile_options(
-			"SHELL:-fprofile-generate=${PGO_PROFILE_DIR}"
-			"SHELL:-fprofile-update=atomic"
-			"SHELL:-fprofile-prefix-path=${CMAKE_BINARY_DIR}"
-		)
-		add_link_options("SHELL:-fprofile-generate=${PGO_PROFILE_DIR}")
-	elseif(_pgo_kind STREQUAL "CLANG")
-		add_compile_options("SHELL:-fprofile-generate=${PGO_PROFILE_DIR}")
-		add_link_options("SHELL:-fprofile-generate=${PGO_PROFILE_DIR}")
-	elseif(_pgo_kind STREQUAL "CLANG_CL")
-		# lld-link is the linker, not clang-cl. A /clang: flag is an input file
-		# to lld-link ("could not open '/clang:-fprofile-generate=...'").
-		# Instrumentation is already in the objects; the link only needs the runtime.
-		add_compile_options("SHELL:/clang:-fprofile-generate=${PGO_PROFILE_DIR}")
-		_pgo_link_clang_profile_runtime()
-	else()
-		add_compile_options(/GL)
-		add_link_options(/LTCG:PGINSTRUMENT)
-	endif()
-	message(STATUS "ENABLE_PGO: instrumented build, profile ${PGO_PROFILE_DIR}")
+	_pgo_apply_stage_flags(generate)
+	message(STATUS "ENABLE_PGO: instrumented build, profile ${PGO_PROFILE_DIR} (this tree and static dependencies)")
 	return()
 endif()
 
 set(${PGO_TEST_OPTION} OFF CACHE BOOL "Disabled in the PGO optimized build" FORCE)
-if(_pgo_kind STREQUAL "GNU")
-	add_compile_options(
-		"SHELL:-fprofile-use=${PGO_PROFILE_DIR}"
-		"SHELL:-fprofile-correction"
-		"SHELL:-fprofile-prefix-path=${CMAKE_BINARY_DIR}"
-		"SHELL:-Wno-error=missing-profile"
-	)
-	add_link_options("SHELL:-fprofile-use=${PGO_PROFILE_DIR}")
-elseif(_pgo_kind STREQUAL "CLANG")
-	add_compile_options(
-		"SHELL:-fprofile-use=${PGO_PROFILE_DIR}/default.profdata"
-		"SHELL:-Wno-profile-instr-unprofiled"
-		"SHELL:-Wno-profile-instr-out-of-date"
-	)
-	add_link_options("SHELL:-fprofile-use=${PGO_PROFILE_DIR}/default.profdata")
-elseif(_pgo_kind STREQUAL "CLANG_CL")
-	add_compile_options(
-		"SHELL:/clang:-fprofile-use=${PGO_PROFILE_DIR}/default.profdata"
-		"SHELL:/clang:-Wno-profile-instr-unprofiled"
-		"SHELL:/clang:-Wno-profile-instr-out-of-date"
-	)
-else()
-	add_compile_options(/GL)
-	add_link_options(/LTCG:PGOPTIMIZE)
-endif()
-message(STATUS "ENABLE_PGO: this directory uses the profile. Training runs in ${PGO_INSTR_DIR}")
+message(STATUS "ENABLE_PGO: training in ${PGO_INSTR_DIR} before this directory configures")
 
 # Drop cmake_install.cmake files an earlier ENABLE_PGO wrote into the source tree.
 function(_pgo_remove_stray_install_scripts dir)
@@ -212,31 +289,6 @@ function(_pgo_remove_stray_install_scripts dir)
 			file(REMOVE "${sub}/cmake_install.cmake")
 		endif()
 		_pgo_remove_stray_install_scripts("${sub}")
-	endforeach()
-endfunction()
-
-function(_pgo_depend_on_training dir)
-	get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
-	foreach(target IN LISTS targets)
-		if(target STREQUAL "pgo")
-			continue()
-		endif()
-		# IMPORTED (binary backend) rejects add_dependencies. Alias targets are
-		# not buildable. Everything else, including custom targets that compile
-		# a third-party, must not run while training rewrites the shared sources.
-		get_property(_pgo_imported TARGET "${target}" PROPERTY IMPORTED)
-		if(_pgo_imported)
-			continue()
-		endif()
-		get_property(_pgo_alias TARGET "${target}" PROPERTY ALIASED_TARGET)
-		if(_pgo_alias)
-			continue()
-		endif()
-		add_dependencies("${target}" pgo)
-	endforeach()
-	get_property(subs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
-	foreach(sub IN LISTS subs)
-		_pgo_depend_on_training("${sub}")
 	endforeach()
 endfunction()
 
@@ -385,6 +437,12 @@ function(pgo_attach_training)
 		endif()
 		if(NOT _pgo_skip)
 			get_property(_val CACHE "${name}" PROPERTY VALUE)
+			if(name STREQUAL "CMAKE_C_FLAGS" OR name STREQUAL "CMAKE_CXX_FLAGS"
+				OR name STREQUAL "CMAKE_EXE_LINKER_FLAGS"
+				OR name STREQUAL "CMAKE_SHARED_LINKER_FLAGS"
+				OR name STREQUAL "CMAKE_MODULE_LINKER_FLAGS")
+				_pgo_strip_profile_flags("${_val}" _val)
+			endif()
 			string(FIND "${_val}" "${CMAKE_BINARY_DIR}" _pgo_at)
 			if(NOT _pgo_at EQUAL -1 AND NOT name IN_LIST PGO_FORWARD_CACHE)
 				string(APPEND FORWARD "message(STATUS \"ENABLE_PGO: skipped ${name} (points at this build directory)\")\n")
@@ -532,22 +590,23 @@ endif()
 ]=] _pgo_script @ONLY)
 	file(WRITE "${CMAKE_BINARY_DIR}/pgo-run.cmake" "${_pgo_script}")
 
-	if(CMAKE_CONFIGURATION_TYPES)
-		add_custom_target(pgo
-			COMMAND ${CMAKE_COMMAND} -DCONFIG=$<CONFIG> -P "${CMAKE_BINARY_DIR}/pgo-run.cmake"
-			COMMENT "ENABLE_PGO: instrument, ctest, then this directory uses the profile"
-			USES_TERMINAL
-			VERBATIM
-		)
-	else()
-		add_custom_target(pgo
-			COMMAND ${CMAKE_COMMAND} -DCONFIG=${CMAKE_BUILD_TYPE} -P "${CMAKE_BINARY_DIR}/pgo-run.cmake"
-			COMMENT "ENABLE_PGO: instrument, ctest, then this directory uses the profile"
-			USES_TERMINAL
-			VERBATIM
-		)
+	set(_pgo_config "${CMAKE_BUILD_TYPE}")
+	if(_pgo_config STREQUAL "")
+		set(_pgo_config "Release")
 	endif()
-	_pgo_depend_on_training("${CMAKE_SOURCE_DIR}")
+	message(STATUS "ENABLE_PGO: instrument, ctest, then this directory configures against the profile")
+	execute_process(
+		COMMAND ${CMAKE_COMMAND} -DCONFIG=${_pgo_config} -P "${CMAKE_BINARY_DIR}/pgo-run.cmake"
+		RESULT_VARIABLE _pgo_rc
+	)
+	if(NOT _pgo_rc EQUAL 0)
+		message(FATAL_ERROR "ENABLE_PGO: training failed (${_pgo_rc})")
+	endif()
 endfunction()
 
-cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL pgo_attach_training)
+# Training is finished. The profile file exists. Flags applied here are what
+# BuildMaster bakes into static dependencies, and what this directory compiles
+# with. thirdparty is added by the caller after this file returns.
+pgo_attach_training()
+_pgo_apply_stage_flags(use)
+message(STATUS "ENABLE_PGO: profile ready in ${PGO_PROFILE_DIR}. This directory and its static dependencies use it")
