@@ -9,6 +9,10 @@
 # This directory cannot rebuild itself from inside cmake --build (the generator
 # already holds it). It is configured with the profile from the start, and the
 # library waits until training has finished.
+# Every target in this tree waits on `pgo`, not only libraries and executables.
+# Training configures the same source checkout again, and BuildMaster resets
+# then reapplies third-party patches there. A custom target that builds at the
+# same time applies those patches a second time, or is reset mid-compile.
 #
 # The instrumented tree forces the cache option named by PGO_TEST_OPTION
 # (default ENABLE_TEST) ON. This directory forces it OFF.
@@ -217,10 +221,18 @@ function(_pgo_depend_on_training dir)
 		if(target STREQUAL "pgo")
 			continue()
 		endif()
-		get_property(type TARGET "${target}" PROPERTY TYPE)
-		if(type MATCHES "STATIC_LIBRARY|SHARED_LIBRARY|MODULE_LIBRARY|OBJECT_LIBRARY|EXECUTABLE")
-			add_dependencies("${target}" pgo)
+		# IMPORTED (binary backend) rejects add_dependencies. Alias targets are
+		# not buildable. Everything else, including custom targets that compile
+		# a third-party, must not run while training rewrites the shared sources.
+		get_property(_pgo_imported TARGET "${target}" PROPERTY IMPORTED)
+		if(_pgo_imported)
+			continue()
 		endif()
+		get_property(_pgo_alias TARGET "${target}" PROPERTY ALIASED_TARGET)
+		if(_pgo_alias)
+			continue()
+		endif()
+		add_dependencies("${target}" pgo)
 	endforeach()
 	get_property(subs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
 	foreach(sub IN LISTS subs)
