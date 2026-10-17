@@ -139,7 +139,7 @@ int test_empty_message() {
 
 int test_format_arguments() {
 	const Network::ConnectionError error{"peer {}: code {}, retry {}", std::string_view{"alpha"}, 42, true};
-	ASSERT_EQUAL(std::string_view{"StormByte.Network.Connection: peer alpha: code 42, retry 1"}, std::string_view{error.what()});
+	ASSERT_EQUAL(std::string_view{"StormByte.Network.Connection: peer alpha: code 42, retry true"}, std::string_view{error.what()});
 	RETURN_TEST(0);
 }
 

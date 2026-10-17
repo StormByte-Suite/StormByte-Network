@@ -202,13 +202,13 @@ namespace NetworkExceptionTest {
 			}
 
 			/**
-			 * @brief Check forwarding of literal `{}` tokens. A number uses `std::to_string`.
+			 * @brief Check forwarding of literal `{}` tokens. A number is decimal. A bool is `true` or `false`.
 			 * @return Zero on success, otherwise one.
 			 */
 			static int FormatArguments() {
 				std::string_view peer{"alpha"};
 				const Error error{"peer {}: code {}, retry {}", peer, 42, true};
-				RETURN_TEST(Message(error, "peer alpha: code 42, retry 1"));
+				RETURN_TEST(Message(error, "peer alpha: code 42, retry true"));
 			}
 
 			/**
