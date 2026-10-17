@@ -262,13 +262,32 @@ macro(_pgo_apply_stage_flags stage)
 	foreach(var IN ITEMS CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS)
 		_pgo_strip_profile_flags("${${var}}" _base)
 		set(_joined "${_base}")
-		foreach(flag IN LISTS _link)
-			string(APPEND _joined " ${flag}")
-		endforeach()
+		# MSVC profile flags must not live in these cache variables. BuildMaster
+		# forwards them, a nested project() inherits them, and that project's
+		# compiler test links cmTC_*.exe. /LTCG:PGOPTIMIZE then dies with
+		# LNK1266: that binary was never instrumented, so it has no .pgd.
+		# A bare /LTCG is enough for the /GL objects in that test. The profile
+		# mode is add_link_options, which only this project's targets see.
+		# /GL stays in the compile flags, so a static dependency is still LTCG
+		# and is optimized by the link that owns the .pgd.
+		if(_pgo_kind STREQUAL "MSVC")
+			if(NOT "${_joined}" MATCHES "(^| )/LTCG($| )")
+				string(APPEND _joined " /LTCG")
+			endif()
+		else()
+			foreach(flag IN LISTS _link)
+				string(APPEND _joined " ${flag}")
+			endforeach()
+		endif()
 		string(STRIP "${_joined}" _joined)
 		set(${var} "${_joined}" CACHE STRING "" FORCE)
 		set(${var} "${_joined}")
 	endforeach()
+	if(_pgo_kind STREQUAL "MSVC")
+		foreach(flag IN LISTS _link)
+			add_link_options("${flag}")
+		endforeach()
+	endif()
 	unset(_compile)
 	unset(_link)
 	unset(_base)
