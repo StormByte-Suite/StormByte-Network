@@ -36,6 +36,7 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ### Fixed
 
+- `-stdlib=libc++` and `-stdlib=libstdc++` do not count as custom C++ flags. If either is the only extra flag, Release still gets `-O2` and the CPU baseline.
 - MSVC PGO no longer puts `/LTCG:PGINSTRUMENT` or `/LTCG:PGOPTIMIZE` in `CMAKE_EXE_LINKER_FLAGS`. Those flags are `add_link_options` on this project. A nested `project()` inherits the cache and its compiler test links `cmTC_*.exe`, which was never instrumented, so `/LTCG:PGOPTIMIZE` aborted with LNK1266 (`cmTC_*.pgd` missing). The cache keeps a bare `/LTCG` so those `/GL` objects still link. A static dependency stays LTCG and is optimized by the link that owns the `.pgd`.
 - `HandshakeTest` includes `<sys/time.h>` before using `timeval`. musl does not declare that type through `<sys/socket.h>`.
 
