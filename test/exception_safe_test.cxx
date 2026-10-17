@@ -57,7 +57,7 @@ namespace {
 		/**
 		 * @brief Borrowed component path accepted by the public constructors.
 		 */
-		using Path = StormByte::Exception::Path;
+		using Path = Network::Exception::Path;
 	};
 }
 
@@ -112,10 +112,10 @@ int test_move_self_assignment() {
 int test_child_paths() {
 	const Network::Exception empty{ExceptionPaths::Path{}, std::string_view{"empty"}};
 	const Network::Exception nested{ExceptionPaths::Path{"Transport.Packet"}, std::string_view{"{literal}"}};
-	const Network::Exception formatted{ExceptionPaths::Path{"Peer"}, "status {:04x}", 42};
-	ASSERT_EQUAL(std::string_view{"StormByte.Network.: empty"}, std::string_view{empty.what()});
+	const Network::Exception formatted{ExceptionPaths::Path{"Peer"}, "status {}", 42};
+	ASSERT_EQUAL(std::string_view{"StormByte.Network: empty"}, std::string_view{empty.what()});
 	ASSERT_EQUAL(std::string_view{"StormByte.Network.Transport.Packet: {literal}"}, std::string_view{nested.what()});
-	ASSERT_EQUAL(std::string_view{"StormByte.Network.Peer: status 002a"}, std::string_view{formatted.what()});
+	ASSERT_EQUAL(std::string_view{"StormByte.Network.Peer: status 42"}, std::string_view{formatted.what()});
 	Safe::String path{"Owned.Child"};
 	const Network::Exception owned{ExceptionPaths::Path{std::string_view{path}}, std::string_view{"retained"}};
 	path.clear();
@@ -151,8 +151,8 @@ int test_empty_message() {
 }
 
 int test_format_arguments() {
-	const Network::Exception error{"peer {}: code {:04x}, retry {}", std::string_view{"alpha"}, 42, true};
-	ASSERT_EQUAL(std::string_view{"StormByte.Network: peer alpha: code 002a, retry true"}, std::string_view{error.what()});
+	const Network::Exception error{"peer {}: code {}, retry {}", std::string_view{"alpha"}, 42, true};
+	ASSERT_EQUAL(std::string_view{"StormByte.Network: peer alpha: code 42, retry 1"}, std::string_view{error.what()});
 	RETURN_TEST(0);
 }
 

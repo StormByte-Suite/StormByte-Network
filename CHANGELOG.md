@@ -9,18 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 StormByte Network is the C++26 networking layer of the StormByte suite.
 
-It depends on [StormByte Base 2.0.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.0.0), [StormByte Buffer 2.0.1](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.1), [StormByte Logger 2.0.0](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.0), and [StormByte System 2.0.0](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.0).
+It depends on [StormByte Base](https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0) 2.1.0, [StormByte Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2) 2.0.2, [StormByte Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2) 2.0.2, and [StormByte System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2) 2.0.2. Each is its own archive. This repository is not Base, Buffer, Config, Crypto, Database, Logger, Multimedia or System.
 
 Inherit `Client` or `Server`, define packets, and attach Buffer pipelines.
 IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public API.
 
 ## [Unreleased]
 
+[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.2...HEAD
+
+## [2.0.2] - 2026-10-17
+
+### Added
+
+- `ENABLE_PGO` and `ENABLE_LTO`. Profile-guided optimization trains in `pgo-instr` and installs this build. Link-time optimization follows `ENABLE_LTO` (default ON) for every build type. Both apply to Network. Base, Buffer, Logger and System are not rebuilt.
+- Release archives include `THIRD-PARTY`. No third-party object code is compiled into this shared library. Base, Buffer, Logger and System are linked at run time and keep their own notices. `COPYING.*` is copied into the zip when it is present.
+- macOS CI and the release archive are Apple Clang only. The file is `macos-arm64`, with no standard-library suffix. Linux still ships `libstdc++` and `libc++`. Windows has no runtime suffix.
+
+### Changed
+
+- Requires [StormByte Base](https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0) 2.1.0, [StormByte Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2) 2.0.2, [StormByte Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2) 2.0.2 and [StormByte System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2) 2.0.2. Each is a release archive (`stormbyte_component_url`) linked with `BACKEND=binary`. Base is declared here: Buffer no longer carries it as a submodule. The archive matches this OS and C++ runtime. Doxygen reads headers from `${BUILDMASTER_INSTALL_INCLUDEDIR}` after those archives unpack. BuildMaster is >= 2.1.0.
+- **Breaking**: Network exceptions replace literal `{}` with `Safe::String::ReplaceToken`. They no longer call `std::format`, so a specifier such as `{:04x}` is not a token. A number uses `std::to_string` (`true` becomes `1`). An empty extra path is `StormByte.Network`, not `StormByte.Network.`.
+- Client and server telemetry text uses `ReplaceToken` instead of `std::format`.
+- Release builds no longer pass `/fp:fast`. `OPTIMIZATION_FLAGS_{LINUX,MAC,WINDOWS}` append `-O2` / `/O2` and the CPU baseline only when the caller did not already set flags.
+- Bumped the project version to 2.0.2.
+
 ### Fixed
 
 - `HandshakeTest` includes `<sys/time.h>` before using `timeval`. musl does not declare that type through `<sys/socket.h>`.
 
-[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.1...HEAD
+[2.0.2]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.1...2.0.2
 
 ## [2.0.1] - 2026-10-13
 

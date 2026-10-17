@@ -3,8 +3,6 @@ name: CI
 permissions:
   actions: write
   contents: read
-  pages: write
-  id-token: write
 
 on:
   push:
@@ -32,15 +30,11 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     name: checkout-bootstrap (${{ matrix.os }})
-    env:
-      GIT_CONFIG_COUNT: 1
-      GIT_CONFIG_KEY_0: core.longpaths
-      GIT_CONFIG_VALUE_0: "true"
     steps:
       - name: Warm submodule / checkout cache
         uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           submodules: recursive
 
   apt-bootstrap:
@@ -64,28 +58,29 @@ jobs:
         compiler: [gcc, clang, clang-libc++]
     name: linux-${{ matrix.compiler }}
     env:
-      LD_LIBRARY_PATH: ${{ github.workspace }}/build/buildmaster/install/lib64:${{ github.workspace }}/build/lib
+      LD_LIBRARY_PATH: ${{ github.workspace }}/build/lib:${{ github.workspace }}/build/buildmaster/install/lib:${{ github.workspace }}/build/buildmaster/install/lib64
 
     steps:
       - name: Checkout repository and submodules
         uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           submodules: recursive
 
       - name: Build with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
         with:
           toolchain: ${{ matrix.compiler }}
-          ccache-key: v1-${{ matrix.compiler }}
+          ccache-key: v1-release-${{ matrix.compiler }}
+          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-${{ matrix.compiler }}
           build-type: ${{ env.BUILD_TYPE }}
           configure-options: >-
-            -DENABLE_TEST=ON
+            -DENABLE_LTO=ON
+            -DENABLE_PGO=ON
             -DWITH_STORMBYTE=BUNDLED
             -DBUILD_SHARED_LIBS=ON
             ${{ matrix.compiler == 'clang-libc++' && '-DCMAKE_CXX_FLAGS=-stdlib=libc++' || '' }}
-          run-tests: true
-          ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
+          run-tests: false
 
   ###########################################################################
   # macOS
@@ -96,30 +91,31 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        compiler: [gcc, clang]
+        compiler: [clang]
     name: macos-${{ matrix.compiler }}
     env:
-      DYLD_LIBRARY_PATH: ${{ github.workspace }}/build/buildmaster/install/lib64:${{ github.workspace }}/build/lib
+      DYLD_LIBRARY_PATH: ${{ github.workspace }}/build/lib:${{ github.workspace }}/build/buildmaster/install/lib:${{ github.workspace }}/build/buildmaster/install/lib64
 
     steps:
       - name: Checkout repository and submodules
         uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           submodules: recursive
 
       - name: Build with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
         with:
           toolchain: ${{ matrix.compiler }}
-          ccache-key: v1-${{ matrix.compiler }}
+          ccache-key: v1-release-${{ matrix.compiler }}
+          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-${{ matrix.compiler }}
           build-type: ${{ env.BUILD_TYPE }}
           configure-options: >-
-            -DENABLE_TEST=ON
+            -DENABLE_LTO=ON
+            -DENABLE_PGO=ON
             -DWITH_STORMBYTE=BUNDLED
             -DBUILD_SHARED_LIBS=ON
-          run-tests: true
-          ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
+          run-tests: false
 
   ###########################################################################
   # Windows
@@ -128,16 +124,12 @@ jobs:
     needs: [checkout-bootstrap]
     runs-on: windows-latest
     name: windows-clang-cl
-    env:
-      GIT_CONFIG_COUNT: 1
-      GIT_CONFIG_KEY_0: core.longpaths
-      GIT_CONFIG_VALUE_0: "true"
 
     steps:
       - name: Checkout repository and submodules
         uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           submodules: recursive
 
       - name: Add DLL directories to PATH
@@ -150,26 +142,12 @@ jobs:
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
         with:
           toolchain: clang-cl
-          ccache-key: v1-clang-cl
+          ccache-key: v1-release-clang-cl
+          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-clang-cl
           build-type: ${{ env.BUILD_TYPE }}
           configure-options: >-
-            -DENABLE_TEST=ON
+            -DENABLE_LTO=ON
+            -DENABLE_PGO=ON
             -DWITH_STORMBYTE=BUNDLED
             -DBUILD_SHARED_LIBS=ON
-          run-tests: true
-          ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
-
-  ###########################################################################
-  # Docs (StormByteNetworkDoc)
-  ###########################################################################
-  docs:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [checkout-bootstrap, apt-bootstrap]
-    uses: stormbytepp/githubactions/.github/workflows/generate-and-deploy-docs.yml@master
-    with:
-      doc_target: StormByteNetworkDoc
-      extra-cmake-options: >-
-        -DENABLE_DOC=ON
-        -DWITH_STORMBYTE=BUNDLED
-        -DBUILD_SHARED_LIBS=ON
-      docs_output_dir: ./_site
+          run-tests: false

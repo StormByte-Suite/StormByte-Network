@@ -17,6 +17,7 @@ option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 
 include(cmake/optimizations.cmake)
 include(cmake/asan.cmake)
+include(cmake/pgo.cmake)
 cmake_policy(SET CMP0079 NEW)
 
 include(cmake/load_buildmaster.cmake)

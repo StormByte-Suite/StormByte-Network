@@ -62,7 +62,7 @@ namespace NetworkExceptionTest {
 		/**
 		 * @brief Borrowed child path accepted by inherited exception constructors.
 		 */
-		using Path = StormByte::Exception::Path;
+		using Path = StormByte::Network::Exception::Path;
 
 		/**
 		 * @brief Prevent construction of the tag-access helper.
@@ -202,13 +202,13 @@ namespace NetworkExceptionTest {
 			}
 
 			/**
-			 * @brief Check forwarding, format specifications and escaped braces.
+			 * @brief Check forwarding of literal `{}` tokens. A number uses `std::to_string`.
 			 * @return Zero on success, otherwise one.
 			 */
 			static int FormatArguments() {
 				std::string_view peer{"alpha"};
-				const Error error{"peer {}: code {:04x}, retry {}, {{literal}}", peer, 42, true};
-				RETURN_TEST(Message(error, "peer alpha: code 002a, retry true, {literal}"));
+				const Error error{"peer {}: code {}, retry {}", peer, 42, true};
+				RETURN_TEST(Message(error, "peer alpha: code 42, retry 1"));
 			}
 
 			/**
@@ -223,7 +223,7 @@ namespace NetworkExceptionTest {
 				path.clear();
 				ASSERT_EQUAL(std::string_view{"StormByte.Network.Custom.Child: {literal}"}, std::string_view{plain.what()});
 				ASSERT_EQUAL(std::string_view{"StormByte.Network.Custom.Child: code 7"}, std::string_view{formatted.what()});
-				ASSERT_EQUAL(std::string_view{"StormByte.Network.: empty"}, std::string_view{empty.what()});
+				ASSERT_EQUAL(std::string_view{"StormByte.Network: empty"}, std::string_view{empty.what()});
 				RETURN_TEST(0);
 			}
 

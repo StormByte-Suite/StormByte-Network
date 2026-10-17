@@ -43,10 +43,7 @@
 #include <StormByte/exception.hxx>
 #include <StormByte/network/visibility.h>
 #include <StormByte/safe/string.hxx>
-#include <StormByte/type_traits/safe.hxx>
 
-#include <format>
-#include <iterator>
 #include <string_view>
 #include <utility>
 
@@ -62,127 +59,146 @@ namespace StormByte {
 	namespace Network {
 	/**
 	 * @class Exception
-	 * @brief Base exception for the Network module.
+	 * @brief Root exception for Network. `what()` is `StormByte.Network: message`.
+	 *
+	 * This type applies the `Network` segment. A further segment is an @ref Path
+	 * (`Connection`, `Transport.Packet`, `Transport.Frame`). The body does not
+	 * include the path. Literal `{}` are replaced by @ref StormByte::Safe::String::ReplaceToken.
+	 * This does not call `std::format`. The destructor is defined in this module.
+	 *
+	 * The message constructor takes `string_view`. A literal, a C string,
+	 * `std::string` and `Safe::String` reach it through their existing
+	 * conversions. `Safe::String` converts implicitly.
+	 *
+	 * @see ConnectionError, ConnectionClosed, PacketError, FrameError
 	 */
 	class STORMBYTE_NETWORK_PUBLIC Exception: public StormByte::Exception {
 		public:
 			/**
-			 * @brief Copy plain exception text under `StormByte.Network`.
-			 * @param message Exception text; it is not a format string.
+			 * @struct Path
+			 * @brief Additional path segments nested below `StormByte.Network`.
+			 */
+			struct Path {
+				std::string_view segments; ///< Additional dotted path segments.
+
+				/**
+				 * @brief Wraps additional path segments.
+				 * @param segments Dotted segments appended below `Network`. Empty adds none.
+				 */
+				explicit constexpr Path(std::string_view segments = {}) noexcept: segments(segments) {}
+			};
+
+			/**
+			 * @brief Replace literal `{}` under `StormByte.Network`.
+			 * @tparam Args Views, numbers, or types that convert to `std::string`. A number uses `std::to_string`.
+			 * @param pattern Body with literal `{}` tokens. Not a `std::format` string.
+			 * @param args Replacements. One per token, in order.
+			 */
+			template <typename... Args>
+				requires (sizeof...(Args) >= 1)
+			explicit Exception(std::string_view pattern, Args&&... args)
+				: StormByte::Exception(StormByte::Exception::Path{"Network"}, pattern, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy a borrowed plain message under `StormByte.Network` in the provider.
+			 * @param message Exception text. Copied during the call and never retained.
 			 */
 			explicit Exception(std::string_view message);
 
 			/**
-			 * @brief Format an exception under `StormByte.Network`.
-			 * @tparam Args Format argument types.
-			 * @param fmt Format string.
-			 * @param args Format arguments.
+			 * @brief Replace literal `{}` under an additional Network path.
+			 * @tparam Args Views, numbers, or types that convert to `std::string`. A number uses `std::to_string`.
+			 * @param path Additional segments nested below `StormByte.Network`.
+			 * @param pattern Body with literal `{}` tokens. Not a `std::format` string.
+			 * @param args Replacements. One per token, in order.
 			 */
 			template <typename... Args>
-			requires (sizeof...(Args) > 0)
-			explicit Exception(std::format_string<Args...> fmt, Args&&... args):
-				StormByte::Exception(StormByte::Exception::Path{"Network"}, fmt,
-					std::forward<Args>(args)...) {}
+				requires (sizeof...(Args) >= 1)
+			explicit Exception(Path path, std::string_view pattern, Args&&... args)
+				: Exception(path, static_cast<std::string_view>(StormByte::Safe::String::ReplaceToken(pattern, std::forward<Args>(args)...))) {}
 
 			/**
-			 * @brief Construct with a child path and a format string.
-			 * @tparam Args Format argument types.
-			 * @param child Path below `Network`.
-			 * @param fmt Format string.
-			 * @param args Format arguments.
+			 * @brief Copy a borrowed plain message under an additional Network path.
+			 * @param path Additional segments nested below `StormByte.Network`.
+			 * @param message Exception text. Not a format string.
 			 */
-			template <typename... Args>
-			requires (sizeof...(Args) > 0)
-			explicit Exception(StormByte::Exception::Path child, std::format_string<Args...> fmt,
-				Args&&... args):
-				StormByte::Exception(
-					StormByte::Exception::Path{JoinPath(child.text)},
-					fmt, std::forward<Args>(args)...) {}
+			explicit Exception(Path path, std::string_view message);
 
 			/**
-			 * @brief Copy plain text under a Network child component.
-			 * @param child Component path under Network.
-			 * @param message Exception text; it is not a format string.
-			 */
-			explicit Exception(StormByte::Exception::Path child, std::string_view message);
-
-			/**
-			 * @brief Copy the Base-owned exception message inside Network.
-			 * @param other Source exception.
+			 * @brief Copy Base-owned message storage through its provider.
+			 * @param other Exception to copy.
 			 */
 			Exception(const Exception& other);
 
 			/**
-			 * @brief Transfer the Base-owned exception message inside Network.
-			 * @param other Source exception.
+			 * @brief Transfer Base-owned message storage without allocating.
+			 * @param other Exception to move from.
 			 */
 			Exception(Exception&& other) noexcept;
 
 			/**
-			 * @brief Destructor. Defined in the Network library to anchor RTTI.
-			 */
-			~Exception() noexcept override;
-
-			/**
-			 * @brief Copy-assign the Base-owned exception message.
-			 * @param other Source exception.
+			 * @brief Copy Base-owned message storage through its provider.
+			 * @param other Exception to copy.
 			 * @return This exception.
 			 */
 			Exception& operator=(const Exception& other);
 
 			/**
-			 * @brief Move-assign the Base-owned exception message.
-			 * @param other Source exception.
+			 * @brief Transfer Base-owned message storage without allocating.
+			 * @param other Exception to move from.
 			 * @return This exception.
 			 */
 			Exception& operator=(Exception&& other) noexcept;
 
-		protected:
 			/**
-			 * @brief Format a message directly into Base-owned text.
-			 * @tparam Args Format argument types.
-			 * @param fmt Format string.
-			 * @param args Format arguments.
-			 * @return Formatted text without caller-owned STL storage.
+			 * @brief Destroy the exception. Defined in this module so `catch` matches across a DLL.
 			 */
-			template<typename... Args>
-			static StormByte::Safe::String FormatMessage(std::format_string<Args...> fmt, Args&&... args) {
-				StormByte::Safe::String result;
-				std::format_to(std::back_inserter(result), fmt, std::forward<Args>(args)...);
-				return result;
-			}
-
-		private:
-			/**
-			 * @brief Join a child component path using Base-owned text.
-			 * @param child Path below Network.
-			 * @return Complete Network component path.
-			 */
-			static StormByte::Safe::String JoinPath(std::string_view child);
+			~Exception() noexcept override;
 	};
 
 	/**
 	 * @class ConnectionError
-	 * @brief Connection or socket operation failed.
+	 * @brief Connection or socket operation failed. `what()` is `StormByte.Network.Connection: message`.
 	 */
 	class STORMBYTE_NETWORK_PUBLIC ConnectionError: public Exception {
 		public:
 			/**
-			 * @brief Copy plain connection-error text.
-			 * @param message Exception text; it is not a format string.
-			 */
-			explicit ConnectionError(std::string_view message): Exception(StormByte::Exception::Path{"Connection"}, message) {}
-
-			/**
-			 * @brief Construct from a format string.
-			 * @tparam Args Format argument types.
-			 * @param fmt Format string.
-			 * @param args Format arguments.
+			 * @brief Replace literal `{}` under `StormByte.Network.Connection`.
+			 * @tparam Args Views, numbers, or types that convert to `std::string`. A number uses `std::to_string`.
+			 * @param pattern Body with literal `{}` tokens. Not a `std::format` string.
+			 * @param args Replacements. One per token, in order.
 			 */
 			template <typename... Args>
-			requires (sizeof...(Args) > 0)
-			ConnectionError(std::format_string<Args...> fmt, Args&&... args):
-				Exception(StormByte::Exception::Path{"Connection"}, fmt, std::forward<Args>(args)...) {}
+				requires (sizeof...(Args) >= 1)
+			explicit ConnectionError(std::string_view pattern, Args&&... args)
+				: Exception(Path{"Connection"}, pattern, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy a borrowed plain message under `StormByte.Network.Connection`.
+			 * @param message Exception text. Copied during the call and never retained.
+			 */
+			explicit ConnectionError(std::string_view message)
+				: Exception(Path{"Connection"}, message) {}
+
+			/**
+			 * @brief Replace literal `{}` under an additional Network path.
+			 * @tparam Args Views, numbers, or types that convert to `std::string`. A number uses `std::to_string`.
+			 * @param path Additional segments nested below `StormByte.Network`.
+			 * @param pattern Body with literal `{}` tokens. Not a `std::format` string.
+			 * @param args Replacements. One per token, in order.
+			 */
+			template <typename... Args>
+				requires (sizeof...(Args) >= 1)
+			explicit ConnectionError(Path path, std::string_view pattern, Args&&... args)
+				: Exception(path, pattern, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy a borrowed plain message under an additional Network path.
+			 * @param path Additional segments nested below `StormByte.Network`.
+			 * @param message Exception text. Not a format string.
+			 */
+			explicit ConnectionError(Path path, std::string_view message)
+				: Exception(path, message) {}
 
 			/**
 			 * @brief Copy the connection error inside Network.
@@ -214,37 +230,55 @@ namespace StormByte {
 			 * @return This error.
 			 */
 			ConnectionError& operator=(ConnectionError&& other) noexcept;
-
-			/**
-			 * @brief Preserve the Network exception constructors.
-			 */
-			using Exception::Exception;
 	};
 
 	/**
 	 * @class ConnectionClosed
 	 * @brief Peer closed while waiting or transferring.
+	 *
+	 * The message constructors prefix `Connection closed: ` under `StormByte.Network.Connection`.
+	 * A @ref Path constructor does not add that prefix.
 	 */
 	class STORMBYTE_NETWORK_PUBLIC ConnectionClosed final: public Exception {
 		public:
 			/**
-			 * @brief Copy plain connection-closed text.
-			 * @param message Exception text; it is not a format string.
-			 */
-			explicit ConnectionClosed(std::string_view message):
-				Exception(StormByte::Exception::Path{"Connection"}, "Connection closed: {}", message) {}
-
-			/**
-			 * @brief Construct from a format string.
-			 * @tparam Args Format argument types.
-			 * @param fmt Format string.
-			 * @param args Format arguments.
+			 * @brief Replace literal `{}`, then prefix `Connection closed: `.
+			 * @tparam Args Views, numbers, or types that convert to `std::string`. A number uses `std::to_string`.
+			 * @param pattern Body with literal `{}` tokens. Not a `std::format` string.
+			 * @param args Replacements. One per token, in order.
 			 */
 			template <typename... Args>
-			requires (sizeof...(Args) > 0)
-			ConnectionClosed(std::format_string<Args...> fmt, Args&&... args):
-				Exception(StormByte::Exception::Path{"Connection"}, "Connection closed: {}",
-					std::string_view{FormatMessage(fmt, std::forward<Args>(args)...)}) {}
+				requires (sizeof...(Args) >= 1)
+			explicit ConnectionClosed(std::string_view pattern, Args&&... args)
+				: Exception(Path{"Connection"}, "Connection closed: {}",
+					static_cast<std::string_view>(StormByte::Safe::String::ReplaceToken(pattern, std::forward<Args>(args)...))) {}
+
+			/**
+			 * @brief Prefix a borrowed message with `Connection closed: `.
+			 * @param message Exception text. Not a format string.
+			 */
+			explicit ConnectionClosed(std::string_view message)
+				: Exception(Path{"Connection"}, "Connection closed: {}", message) {}
+
+			/**
+			 * @brief Replace literal `{}` under an additional Network path. No closed prefix.
+			 * @tparam Args Views, numbers, or types that convert to `std::string`. A number uses `std::to_string`.
+			 * @param path Additional segments nested below `StormByte.Network`.
+			 * @param pattern Body with literal `{}` tokens. Not a `std::format` string.
+			 * @param args Replacements. One per token, in order.
+			 */
+			template <typename... Args>
+				requires (sizeof...(Args) >= 1)
+			explicit ConnectionClosed(Path path, std::string_view pattern, Args&&... args)
+				: Exception(path, pattern, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy a borrowed plain message under an additional Network path. No closed prefix.
+			 * @param path Additional segments nested below `StormByte.Network`.
+			 * @param message Exception text. Not a format string.
+			 */
+			explicit ConnectionClosed(Path path, std::string_view message)
+				: Exception(path, message) {}
 
 			/**
 			 * @brief Copy the closed-connection error inside Network.
@@ -276,36 +310,51 @@ namespace StormByte {
 			 * @return This error.
 			 */
 			ConnectionClosed& operator=(ConnectionClosed&& other) noexcept;
-
-			/**
-			 * @brief Preserve the Network exception constructors.
-			 */
-			using Exception::Exception;
 	};
 
 	/**
 	 * @class PacketError
-	 * @brief Transport packet error.
+	 * @brief Transport packet error. `what()` is `StormByte.Network.Transport.Packet: message`.
 	 */
 	class STORMBYTE_NETWORK_PUBLIC PacketError final: public Exception {
 		public:
 			/**
-			 * @brief Copy plain packet-error text.
-			 * @param message Exception text; it is not a format string.
-			 */
-			explicit PacketError(std::string_view message):
-				Exception(StormByte::Exception::Path{"Transport.Packet"}, message) {}
-
-			/**
-			 * @brief Construct from a format string.
-			 * @tparam Args Format argument types.
-			 * @param fmt Format string.
-			 * @param args Format arguments.
+			 * @brief Replace literal `{}` under `StormByte.Network.Transport.Packet`.
+			 * @tparam Args Views, numbers, or types that convert to `std::string`. A number uses `std::to_string`.
+			 * @param pattern Body with literal `{}` tokens. Not a `std::format` string.
+			 * @param args Replacements. One per token, in order.
 			 */
 			template <typename... Args>
-			requires (sizeof...(Args) > 0)
-			PacketError(std::format_string<Args...> fmt, Args&&... args):
-				Exception(StormByte::Exception::Path{"Transport.Packet"}, fmt, std::forward<Args>(args)...) {}
+				requires (sizeof...(Args) >= 1)
+			explicit PacketError(std::string_view pattern, Args&&... args)
+				: Exception(Path{"Transport.Packet"}, pattern, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy a borrowed plain message under `StormByte.Network.Transport.Packet`.
+			 * @param message Exception text. Copied during the call and never retained.
+			 */
+			explicit PacketError(std::string_view message)
+				: Exception(Path{"Transport.Packet"}, message) {}
+
+			/**
+			 * @brief Replace literal `{}` under an additional Network path.
+			 * @tparam Args Views, numbers, or types that convert to `std::string`. A number uses `std::to_string`.
+			 * @param path Additional segments nested below `StormByte.Network`.
+			 * @param pattern Body with literal `{}` tokens. Not a `std::format` string.
+			 * @param args Replacements. One per token, in order.
+			 */
+			template <typename... Args>
+				requires (sizeof...(Args) >= 1)
+			explicit PacketError(Path path, std::string_view pattern, Args&&... args)
+				: Exception(path, pattern, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy a borrowed plain message under an additional Network path.
+			 * @param path Additional segments nested below `StormByte.Network`.
+			 * @param message Exception text. Not a format string.
+			 */
+			explicit PacketError(Path path, std::string_view message)
+				: Exception(path, message) {}
 
 			/**
 			 * @brief Copy the packet error inside Network.
@@ -337,36 +386,51 @@ namespace StormByte {
 			 * @return This error.
 			 */
 			PacketError& operator=(PacketError&& other) noexcept;
-
-			/**
-			 * @brief Preserve the Network exception constructors.
-			 */
-			using Exception::Exception;
 	};
 
 	/**
 	 * @class FrameError
-	 * @brief Transport frame error.
+	 * @brief Transport frame error. `what()` is `StormByte.Network.Transport.Frame: message`.
 	 */
 	class STORMBYTE_NETWORK_PUBLIC FrameError final: public Exception {
 		public:
 			/**
-			 * @brief Copy plain frame-error text.
-			 * @param message Exception text; it is not a format string.
-			 */
-			explicit FrameError(std::string_view message):
-				Exception(StormByte::Exception::Path{"Transport.Frame"}, message) {}
-
-			/**
-			 * @brief Construct from a format string.
-			 * @tparam Args Format argument types.
-			 * @param fmt Format string.
-			 * @param args Format arguments.
+			 * @brief Replace literal `{}` under `StormByte.Network.Transport.Frame`.
+			 * @tparam Args Views, numbers, or types that convert to `std::string`. A number uses `std::to_string`.
+			 * @param pattern Body with literal `{}` tokens. Not a `std::format` string.
+			 * @param args Replacements. One per token, in order.
 			 */
 			template <typename... Args>
-			requires (sizeof...(Args) > 0)
-			FrameError(std::format_string<Args...> fmt, Args&&... args):
-				Exception(StormByte::Exception::Path{"Transport.Frame"}, fmt, std::forward<Args>(args)...) {}
+				requires (sizeof...(Args) >= 1)
+			explicit FrameError(std::string_view pattern, Args&&... args)
+				: Exception(Path{"Transport.Frame"}, pattern, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy a borrowed plain message under `StormByte.Network.Transport.Frame`.
+			 * @param message Exception text. Copied during the call and never retained.
+			 */
+			explicit FrameError(std::string_view message)
+				: Exception(Path{"Transport.Frame"}, message) {}
+
+			/**
+			 * @brief Replace literal `{}` under an additional Network path.
+			 * @tparam Args Views, numbers, or types that convert to `std::string`. A number uses `std::to_string`.
+			 * @param path Additional segments nested below `StormByte.Network`.
+			 * @param pattern Body with literal `{}` tokens. Not a `std::format` string.
+			 * @param args Replacements. One per token, in order.
+			 */
+			template <typename... Args>
+				requires (sizeof...(Args) >= 1)
+			explicit FrameError(Path path, std::string_view pattern, Args&&... args)
+				: Exception(path, pattern, std::forward<Args>(args)...) {}
+
+			/**
+			 * @brief Copy a borrowed plain message under an additional Network path.
+			 * @param path Additional segments nested below `StormByte.Network`.
+			 * @param message Exception text. Not a format string.
+			 */
+			explicit FrameError(Path path, std::string_view message)
+				: Exception(path, message) {}
 
 			/**
 			 * @brief Copy the frame error inside Network.
@@ -398,11 +462,6 @@ namespace StormByte {
 			 * @return This error.
 			 */
 			FrameError& operator=(FrameError&& other) noexcept;
-
-			/**
-			 * @brief Preserve the Network exception constructors.
-			 */
-			using Exception::Exception;
 	};
 	}
 }

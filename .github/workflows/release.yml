@@ -1,0 +1,312 @@
+name: Release
+
+# Manual only. In the Actions tab, pick a tag. master (or any branch)
+# fails before the build. The zips replace the assets of that tag's release,
+# which does not have to be the latest. A retag of the same name is replaced.
+#
+# Same jobs as ci.yml. Each build also installs and zips the prefix.
+# One job attaches those zips. Docs are deployed on their own, only for this tag.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  BUILD_TYPE: Release
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "::error::Selected ref is '${{ github.ref_name }}'. Run this workflow on a tag, not on master."
+            exit 1
+          fi
+          echo "Release tag: ${{ github.ref_name }}"
+
+  ###########################################################################
+  # Bootstraps (warm shared caches; other jobs still check out on their runner)
+  # Submodule cache is OS-scoped by Actions — one warm job per OS.
+  ###########################################################################
+  checkout-bootstrap:
+    needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    name: checkout-bootstrap (${{ matrix.os }})
+    steps:
+      - name: Warm submodule / checkout cache
+        uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+  apt-bootstrap:
+    needs: guard
+    runs-on: ubuntu-latest
+    name: apt-bootstrap
+    steps:
+      - name: Warm APT lists cache
+        uses: stormbytepp/githubactions/.github/actions/update-apt-cached@master
+        with:
+          cache-key: apt-lists
+
+  ###########################################################################
+  # Linux
+  # Name: <component>-<tag>-<os>-<arch>-<stdlib>.zip
+  # libstdc++ and libc++ are both in the filename. Windows has one ABI and no suffix.
+  ###########################################################################
+  build-linux:
+    needs: [checkout-bootstrap, apt-bootstrap]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: clang
+            stdlib: libstdc++
+            asset: linux-x64-libstdc++
+          - compiler: clang-libc++
+            stdlib: libc++
+            asset: linux-x64-libc++
+    name: linux-${{ matrix.stdlib }}
+    env:
+      LD_LIBRARY_PATH: ${{ github.workspace }}/build/lib:${{ github.workspace }}/build/buildmaster/install/lib:${{ github.workspace }}/build/buildmaster/install/lib64
+
+    steps:
+      - name: Checkout repository and submodules
+        uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Build with toolchain
+        uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
+        with:
+          toolchain: ${{ matrix.compiler }}
+          ccache-key: v1-release-${{ matrix.compiler }}
+          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-${{ matrix.compiler }}
+          build-type: ${{ env.BUILD_TYPE }}
+          configure-options: >-
+            -DENABLE_LTO=ON
+            -DENABLE_PGO=ON
+            -DWITH_STORMBYTE=BUNDLED
+            -DBUILD_SHARED_LIBS=ON
+            -DCMAKE_CXX_FLAGS=-stdlib=${{ matrix.stdlib }}
+          run-tests: false
+          install: true
+          install-location: package
+
+      - name: Zip the install prefix
+        id: zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="${{ github.event.repository.name }}-${{ github.ref_name }}-${{ matrix.asset }}.zip"
+          for notice in LICENSE COPYING.* THIRD-PARTY; do
+            if [[ -f "${notice}" ]]; then
+              cp "${notice}" package/
+            fi
+          done
+          (
+            cd package
+            cmake -E tar cf "../${name}" --format=zip -- .
+          )
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "Packed ${name}"
+          cmake -E tar tf "${name}"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zip.outputs.name }}
+          path: ${{ steps.zip.outputs.name }}
+          if-no-files-found: error
+
+  ###########################################################################
+  # macOS
+  # Apple Clang only. One archive, no standard-library suffix.
+  ###########################################################################
+  build-macos:
+    needs: [checkout-bootstrap]
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: clang
+            asset: macos-arm64
+    name: macos
+    env:
+      DYLD_LIBRARY_PATH: ${{ github.workspace }}/build/lib:${{ github.workspace }}/build/buildmaster/install/lib:${{ github.workspace }}/build/buildmaster/install/lib64
+
+    steps:
+      - name: Checkout repository and submodules
+        uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Build with toolchain
+        uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
+        with:
+          toolchain: ${{ matrix.compiler }}
+          ccache-key: v1-release-${{ matrix.compiler }}
+          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-${{ matrix.compiler }}
+          build-type: ${{ env.BUILD_TYPE }}
+          configure-options: >-
+            -DENABLE_LTO=ON
+            -DENABLE_PGO=ON
+            -DWITH_STORMBYTE=BUNDLED
+            -DBUILD_SHARED_LIBS=ON
+          run-tests: false
+          install: true
+          install-location: package
+
+      - name: Zip the install prefix
+        id: zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="${{ github.event.repository.name }}-${{ github.ref_name }}-${{ matrix.asset }}.zip"
+          for notice in LICENSE COPYING.* THIRD-PARTY; do
+            if [[ -f "${notice}" ]]; then
+              cp "${notice}" package/
+            fi
+          done
+          (
+            cd package
+            cmake -E tar cf "../${name}" --format=zip -- .
+          )
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "Packed ${name}"
+          cmake -E tar tf "${name}"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zip.outputs.name }}
+          path: ${{ steps.zip.outputs.name }}
+          if-no-files-found: error
+
+  ###########################################################################
+  # Windows
+  ###########################################################################
+  build-windows:
+    needs: [checkout-bootstrap]
+    runs-on: windows-latest
+    name: windows-clang-cl
+
+    steps:
+      - name: Checkout repository and submodules
+        uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Add DLL directories to PATH
+        shell: pwsh
+        run: |
+          echo "${{ github.workspace }}\build\lib" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "${{ github.workspace }}\build\buildmaster\install\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build with toolchain
+        uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
+        with:
+          toolchain: clang-cl
+          ccache-key: v1-release-clang-cl
+          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-clang-cl
+          build-type: ${{ env.BUILD_TYPE }}
+          configure-options: >-
+            -DENABLE_LTO=ON
+            -DENABLE_PGO=ON
+            -DWITH_STORMBYTE=BUNDLED
+            -DBUILD_SHARED_LIBS=ON
+          run-tests: false
+          install: true
+          install-location: package
+
+      - name: Zip the install prefix
+        id: zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="${{ github.event.repository.name }}-${{ github.ref_name }}-windows-x64.zip"
+          for notice in LICENSE COPYING.* THIRD-PARTY; do
+            if [[ -f "${notice}" ]]; then
+              cp "${notice}" package/
+            fi
+          done
+          (
+            cd package
+            cmake -E tar cf "../${name}" --format=zip -- .
+          )
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "Packed ${name}"
+          cmake -E tar tf "${name}"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zip.outputs.name }}
+          path: ${{ steps.zip.outputs.name }}
+          if-no-files-found: error
+
+  ###########################################################################
+  # Attach the archives to this tag's release
+  ###########################################################################
+  publish:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download archives
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Attach archives to this tag's release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          shopt -s nullglob
+          files=(dist/*.zip)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No archives to upload"
+            exit 1
+          fi
+          printf 'Uploading to %s:\n' "$tag"
+          printf '  %s\n' "${files[@]}"
+          gh release upload "$tag" "${files[@]}" --repo "$GH_REPO" --clobber
+
+  ###########################################################################
+  # Docs (StormByteNetworkDoc) — Linux + same APT lists cache. Independent of the zips.
+  ###########################################################################
+  docs:
+    needs: [guard, checkout-bootstrap, apt-bootstrap]
+    uses: stormbytepp/githubactions/.github/workflows/generate-and-deploy-docs.yml@master
+    with:
+      doc_target: StormByteNetworkDoc
+      extra-cmake-options: >-
+        -DENABLE_DOC=ON
+        -DWITH_STORMBYTE=BUNDLED
+      docs_output_dir: ./_site

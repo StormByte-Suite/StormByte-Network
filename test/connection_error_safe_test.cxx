@@ -58,7 +58,7 @@ namespace {
 		/**
 		 * @brief Borrowed component path accepted by the public constructors.
 		 */
-		using Path = StormByte::Exception::Path;
+		using Path = Network::Exception::Path;
 	};
 }
 
@@ -138,8 +138,8 @@ int test_empty_message() {
 }
 
 int test_format_arguments() {
-	const Network::ConnectionError error{"peer {}: code {:04x}, retry {}", std::string_view{"alpha"}, 42, true};
-	ASSERT_EQUAL(std::string_view{"StormByte.Network.Connection: peer alpha: code 002a, retry true"}, std::string_view{error.what()});
+	const Network::ConnectionError error{"peer {}: code {}, retry {}", std::string_view{"alpha"}, 42, true};
+	ASSERT_EQUAL(std::string_view{"StormByte.Network.Connection: peer alpha: code 42, retry 1"}, std::string_view{error.what()});
 	RETURN_TEST(0);
 }
 
@@ -149,7 +149,7 @@ int test_inherited_child_paths() {
 	const Network::ConnectionError empty{ExceptionPaths::Path{}, std::string_view{"empty"}};
 	ASSERT_EQUAL(std::string_view{"StormByte.Network.Custom.Child: {literal}"}, std::string_view{plain.what()});
 	ASSERT_EQUAL(std::string_view{"StormByte.Network.Custom.Child: code 7"}, std::string_view{formatted.what()});
-	ASSERT_EQUAL(std::string_view{"StormByte.Network.: empty"}, std::string_view{empty.what()});
+	ASSERT_EQUAL(std::string_view{"StormByte.Network: empty"}, std::string_view{empty.what()});
 	RETURN_TEST(0);
 }
 

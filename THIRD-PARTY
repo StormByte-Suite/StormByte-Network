@@ -1,0 +1,45 @@
+This file is a notice for the binary archive of StormByte-Network. It is not a
+license and it does not change LICENSE.
+
+Original source of StormByte-Network is dual-licensed. LICENSE is that grant:
+GNU Lesser General Public License v3.0 or later, or a commercial license
+from the copyright holder. COPYING.LGPLv3 is the LGPL text. The commercial
+license does not replace the license of any third-party code compiled into
+the binary. Neither grant adds a patent license.
+
+This archive does not include a kit of relocatable object files. The way
+provided to rebuild or replace this library is to compile its corresponding
+source. That source is the Git tag of the release that contains this
+archive. The release page that hosts the zip also hosts the source archives
+GitHub generates for that tag:
+
+  https://github.com/StormByte-Suite/StormByte-Network/releases/tag/2.0.2
+
+Rebuilding that tag produces a replacement shared library (libStormByte-Network).
+Substituting that shared library is the relink method provided with this
+binary. The C++ runtime is not in this archive. The dynamic loader still
+has to provide libc++, libstdc++ or the MSVC CRT, whichever this build was
+linked against. The operating system socket library (Winsock or the POSIX
+socket API) is also not in this archive.
+
+Compiled into this shared library
+---------------------------------
+
+No third-party object code is compiled into this library. The shared
+library is original StormByte source under LICENSE and COPYING.LGPLv3.
+
+Linked at run time, not compiled in
+------------------------------------
+
+These are other shared libraries. They are not inside this file. Each has
+its own release archive, its own LICENSE and its own THIRD-PARTY. The
+versions below are the ones this tag is built against.
+
+  - StormByte Base 2.1.0 — https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0
+  - StormByte-Buffer 2.0.2 — https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2
+  - StormByte-Logger 2.0.2 — https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2
+  - StormByte System 2.0.2 — https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2
+
+A static rebuild of this library can fold those libraries into the result.
+That binary is a different distribution from this archive, and the notices
+of every library folded into it have to travel with it.

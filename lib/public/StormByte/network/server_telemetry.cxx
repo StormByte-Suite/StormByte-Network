@@ -41,7 +41,7 @@
 #include <StormByte/network/server_telemetry.hxx>
 
 #include <algorithm>
-#include <format>
+#include <string_view>
 
 namespace StormByte::Network {
 	ServerTelemetry::ServerTelemetry() noexcept = default;
@@ -95,7 +95,7 @@ namespace StormByte::Network {
 	}
 
 	ServerTelemetry::operator StormByte::Safe::String() const {
-		return StormByte::Safe::String{std::format(
+		return StormByte::Safe::String::ReplaceToken(
 			"CurrentConnections={} AcceptedConnections={} ClosedConnections={} PeakConnections={} "
 			"PacketsDispatched={} HandlersCompleted={} HandlersWithoutResponse={} HandlerErrors={} HandlerLatencySamples={} "
 			"MeanHandlerLatencyUs={} WorkerQueueBackpressureEvents={}",
@@ -104,7 +104,7 @@ namespace StormByte::Network {
 			static_cast<std::uint64_t>(PacketsDispatched()), static_cast<std::uint64_t>(HandlersCompleted()),
 			static_cast<std::uint64_t>(HandlersWithoutResponse()), static_cast<std::uint64_t>(HandlerErrors()),
 			static_cast<std::uint64_t>(HandlerLatencySamples()), MeanHandlerLatency().count(),
-			static_cast<std::uint64_t>(WorkerQueueBackpressureEvents()))};
+			static_cast<std::uint64_t>(WorkerQueueBackpressureEvents()));
 	}
 
 	void ServerTelemetry::RecordConnectionAccepted() noexcept {

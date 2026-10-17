@@ -41,8 +41,7 @@
 #include <StormByte/network/client_telemetry.hxx>
 
 #include <algorithm>
-#include <format>
-#include <string>
+#include <string_view>
 
 namespace StormByte::Network {
 	ClientTelemetry::ClientTelemetry() noexcept = default;
@@ -88,13 +87,15 @@ namespace StormByte::Network {
 	}
 
 	ClientTelemetry::operator StormByte::Safe::String() const {
-		return StormByte::Safe::String{std::format(
+		return StormByte::Safe::String::ReplaceToken(
 			"ConnectAttempts={} ConnectionsEstablished={} ConnectionFailures={} Connected={} "
 			"Requests={} Responses={} RequestsWithoutResponse={} RequestLatencySamples={} MeanRequestLatencyUs={}",
 			static_cast<std::uint64_t>(ConnectionAttempts()), static_cast<std::uint64_t>(ConnectionsEstablished()),
-			static_cast<std::uint64_t>(ConnectionFailures()), Connected(), static_cast<std::uint64_t>(Requests()),
+			static_cast<std::uint64_t>(ConnectionFailures()),
+			Connected() ? std::string_view{"true"} : std::string_view{"false"},
+			static_cast<std::uint64_t>(Requests()),
 			static_cast<std::uint64_t>(Responses()), static_cast<std::uint64_t>(RequestsWithoutResponse()),
-			static_cast<std::uint64_t>(RequestLatencySamples()), MeanRequestLatency().count())};
+			static_cast<std::uint64_t>(RequestLatencySamples()), MeanRequestLatency().count());
 	}
 
 	void ClientTelemetry::RecordConnectionAttempt() noexcept {

@@ -9,7 +9,7 @@
 
 StormByte-Network is the C++26 networking module of the [StormByte](https://suite.stormbyte.org/StormByte) suite.
 
-It depends on [StormByte Base 2.0.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.0.0) (or newer), [StormByte Buffer 2.0.0](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.0) (or newer), [StormByte Logger 2.0.0](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.0) (or newer), and [StormByte System 2.0.0](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.0) (or newer).
+It depends on [StormByte Base 2.1.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0), [StormByte Buffer 2.0.2](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2), [StormByte Logger 2.0.2](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2), and [StormByte System 2.0.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2).
 
 It is not a thin socket wrapper. You inherit `Client` or `Server`, define packets, and attach Buffer pipelines. POSIX and Winsock, framing, event-driven I/O and bounded packet processing stay private.
 
@@ -52,7 +52,7 @@ cmake --build build-install -j
 cmake --install build-install
 ```
 
-`BUILD_SHARED_LIBS` defaults to `ON`; use `-DBUILD_SHARED_LIBS=OFF` for a static build. BuildMaster carries the selected mode through the bundled StormByte dependency graph. In static mode it flattens private dependency link requirements for consumers; no vendor repack is needed.
+`BUILD_SHARED_LIBS` defaults to `ON`; use `-DBUILD_SHARED_LIBS=OFF` for a static build. Needs [StormByte-BuildMaster](https://github.com/StormByte-Suite/StormByte-BuildMaster) >= 2.1.0. Configure downloads the StormByte release archives. There are no StormByte source submodules. BuildMaster is the installed package when it is >= 2.1.0, otherwise the `buildmaster` submodule. `-DENABLE_LTO=ON` and `-DENABLE_PGO=ON` match the release builds. macOS is Apple Clang only.
 
 These examples use `ccache`; install it or omit the two compiler-launcher options when it is unavailable.
 
@@ -81,10 +81,10 @@ These examples use `ccache`; install it or omit the two compiler-launcher option
 
 | Dependency | Required Version | Role |
 |------------|------------------|------|
-| [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/2.0.0) | [2.0.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.0.0) | Expected, Safe ownership/containers/synchronization/threads, Size, ByteSize, visibility |
-| [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.0) | [2.0.0](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.0) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
-| [StormByte-Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.0) | [2.0.0](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.0) | Diagnostics |
-| [StormByte-System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.0) | [2.0.0](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.0) | Calling-thread utilities |
+| [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0) | [2.1.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0) | Expected, Safe ownership/containers/synchronization/threads, Size, ByteSize, visibility |
+| [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2) | [2.0.2](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
+| [StormByte-Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2) | [2.0.2](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2) | Diagnostics |
+| [StormByte-System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2) | [2.0.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2) | Calling-thread utilities |
 
 ## The rest of the suite
 
@@ -275,4 +275,4 @@ Issues on GitHub. No wiki, no discussions.
 
 StormByte-Network original source is dual-licensed under the GNU Lesser General Public License v3.0 or later, or a commercial license from the copyright holder (David C. Manuelda, StormBytePP).
 
-See [LICENSE](LICENSE), [COPYING.LGPLv3](COPYING.LGPLv3), and <https://www.gnu.org/licenses/lgpl-3.0.html>. These licenses do not cover bundled StormByte modules or other third-party material under `thirdparty/`; each keeps its own license. Neither license grants patent rights.
+See [LICENSE](LICENSE), [COPYING.LGPLv3](COPYING.LGPLv3), [THIRD-PARTY](THIRD-PARTY), and <https://www.gnu.org/licenses/lgpl-3.0.html>. The binary archive links Base, Buffer, Logger and System at run time; each keeps its own license. Neither license grants patent rights.
