@@ -172,10 +172,15 @@ function(_pgo_strip_profile_flags value out)
 		"-fprofile-update=[^ ]+"
 		"-fprofile-prefix-path=[^ ]+"
 		"-Wno-error=missing-profile"
+		"-Wno-error=coverage-mismatch"
+		"-Wno-error=profile-instr-unprofiled"
+		"-Wno-error=profile-instr-out-of-date"
 		"-Wno-profile-instr-unprofiled"
 		"-Wno-profile-instr-out-of-date"
 		"/clang:-fprofile-generate=[^ ]+"
 		"/clang:-fprofile-use=[^ ]+"
+		"/clang:-Wno-error=profile-instr-unprofiled"
+		"/clang:-Wno-error=profile-instr-out-of-date"
 		"/clang:-Wno-profile-instr-unprofiled"
 		"/clang:-Wno-profile-instr-out-of-date"
 		"/LTCG:PGINSTRUMENT"
@@ -224,19 +229,20 @@ macro(_pgo_apply_stage_flags stage)
 				"-fprofile-use=${PGO_PROFILE_DIR}"
 				"-fprofile-correction"
 				"-fprofile-prefix-path=${CMAKE_BINARY_DIR}"
-				"-Wno-error=missing-profile")
+				"-Wno-error=missing-profile"
+				"-Wno-error=coverage-mismatch")
 			list(APPEND _link "-fprofile-use=${PGO_PROFILE_DIR}")
 		elseif(_pgo_kind STREQUAL "CLANG")
 			list(APPEND _compile
 				"-fprofile-use=${PGO_PROFILE_DIR}/default.profdata"
-				"-Wno-profile-instr-unprofiled"
-				"-Wno-profile-instr-out-of-date")
+				"-Wno-error=profile-instr-unprofiled"
+				"-Wno-error=profile-instr-out-of-date")
 			list(APPEND _link "-fprofile-use=${PGO_PROFILE_DIR}/default.profdata")
 		elseif(_pgo_kind STREQUAL "CLANG_CL")
 			list(APPEND _compile
 				"/clang:-fprofile-use=${PGO_PROFILE_DIR}/default.profdata"
-				"/clang:-Wno-profile-instr-unprofiled"
-				"/clang:-Wno-profile-instr-out-of-date")
+				"/clang:-Wno-error=profile-instr-unprofiled"
+				"/clang:-Wno-error=profile-instr-out-of-date")
 		else()
 			list(APPEND _compile "/GL")
 			list(APPEND _link "/LTCG:PGOPTIMIZE")
