@@ -84,15 +84,31 @@ jobs:
             stdlib: libc++
             asset: linux-x64-libc++
     name: linux-${{ matrix.stdlib }}
-    env:
-      LD_LIBRARY_PATH: ${{ github.workspace }}/build/lib:${{ github.workspace }}/build/buildmaster/install/lib:${{ github.workspace }}/build/buildmaster/install/lib64
-
     steps:
       - name: Checkout repository and submodules
         uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
         with:
           fetch-depth: 1
           submodules: recursive
+
+      - name: Add shared library directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Prepend. A job-level assignment replaces the variable and
+          # drops whatever the runner or a previous step already set.
+          # /usr/lib/llvm-20/lib holds LLVM libunwind. libc++ needs it
+          # and the default loader does not search that directory.
+          # The toolchain creates it later; tests only need the entry.
+          extra="/usr/lib/llvm-20/lib:${{ github.workspace }}/build/lib:${{ github.workspace }}/build/buildmaster/install/lib:${{ github.workspace }}/build/buildmaster/install/lib64"
+          for name in LD_LIBRARY_PATH DYLD_LIBRARY_PATH; do
+            current="$(printenv "$name" 2>/dev/null || true)"
+            if [[ -n "${current}" ]]; then
+              echo "${name}=${extra}:${current}" >> "$GITHUB_ENV"
+            else
+              echo "${name}=${extra}" >> "$GITHUB_ENV"
+            fi
+          done
 
       - name: Build with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
@@ -152,15 +168,28 @@ jobs:
           - compiler: clang
             asset: macos-arm64
     name: macos
-    env:
-      DYLD_LIBRARY_PATH: ${{ github.workspace }}/build/lib:${{ github.workspace }}/build/buildmaster/install/lib:${{ github.workspace }}/build/buildmaster/install/lib64
-
     steps:
       - name: Checkout repository and submodules
         uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
         with:
           fetch-depth: 1
           submodules: recursive
+
+      - name: Add shared library directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Prepend. A job-level assignment replaces the variable and
+          # drops whatever the runner or a previous step already set.
+          extra="${{ github.workspace }}/build/lib:${{ github.workspace }}/build/buildmaster/install/lib:${{ github.workspace }}/build/buildmaster/install/lib64"
+          for name in LD_LIBRARY_PATH DYLD_LIBRARY_PATH; do
+            current="$(printenv "$name" 2>/dev/null || true)"
+            if [[ -n "${current}" ]]; then
+              echo "${name}=${extra}:${current}" >> "$GITHUB_ENV"
+            else
+              echo "${name}=${extra}" >> "$GITHUB_ENV"
+            fi
+          done
 
       - name: Build with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
