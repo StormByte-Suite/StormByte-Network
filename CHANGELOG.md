@@ -16,13 +16,9 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ## [Unreleased]
 
-### Changed
-
-- CI builds with `ENABLE_LTO=ON`, `ENABLE_PGO=OFF` and `ENABLE_TEST=ON`, then runs ctest. Profile-guided optimization stays on the release workflow.
-
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.2...HEAD
 
-## [2.0.2] - 2026-10-17
+## [2.0.2] - 2026-10-18
 
 ### Added
 
@@ -32,6 +28,7 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ### Changed
 
+- CI builds with `ENABLE_LTO=ON`, `ENABLE_PGO=OFF` and `ENABLE_TEST=ON`, then runs ctest. Profile-guided optimization stays on the release workflow.
 - Requires [StormByte Base](https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0) 2.1.0, [StormByte Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2) 2.0.2, [StormByte Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2) 2.0.2 and [StormByte System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2) 2.0.2. Each is a release archive (`stormbyte_component_url`) linked with `BACKEND=binary`. Base is declared here: Buffer no longer carries it as a submodule. The archive matches this OS and C++ runtime. Doxygen reads headers from `${BUILDMASTER_INSTALL_INCLUDEDIR}` after those archives unpack. BuildMaster is >= 2.1.0.
 - **Breaking**: Network exceptions replace literal `{}` with `Safe::String::ReplaceToken`. They no longer call `std::format`, so a specifier such as `{:04x}` is not a token. A number uses `std::to_string` (`true` becomes `1`). An empty extra path is `StormByte.Network`, not `StormByte.Network.`.
 - Client and server telemetry text uses `ReplaceToken` instead of `std::format`.
