@@ -16,6 +16,10 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ## [Unreleased]
 
+### Fixed
+
+- Clang PGO drops `.profraw` files left by compiler probes before ctest, and `llvm-profdata merge` uses `-failure-mode=all`. A probe writes a few hundred bytes for `main`, with a padded empty symbol name. The default failure mode is `any`, so that one file aborted the merge even after the instrumented tests had passed.
+
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.2...HEAD
 
 ## [2.0.2] - 2026-10-18

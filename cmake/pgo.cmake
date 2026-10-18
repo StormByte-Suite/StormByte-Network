@@ -593,6 +593,13 @@ if(_dll_dirs)
 	endif()
 endif()
 message(STATUS "ENABLE_PGO: ctest in @TEST_DIR@")
+# Compiler probes run with the generate flags and drop a tiny profraw here
+# (a single "main", often with an empty padded symbol). llvm-profdata's
+# default failure mode is "any": one of those files fails the whole merge.
+file(GLOB _stale "@PROFILE_DIR@/*.profraw")
+if(_stale)
+	file(REMOVE ${_stale})
+endif()
 execute_process(COMMAND ${_ctest} WORKING_DIRECTORY "@TEST_DIR@" RESULT_VARIABLE _rc)
 if(NOT _rc EQUAL 0)
 	message(FATAL_ERROR "ENABLE_PGO: ctest failed (${_rc})")
@@ -603,10 +610,10 @@ if(KIND STREQUAL "CLANG" OR KIND STREQUAL "CLANG_CL")
 		message(FATAL_ERROR "ENABLE_PGO: ctest wrote no .profraw files in @PROFILE_DIR@")
 	endif()
 	execute_process(
-		COMMAND "@PROFDATA@" merge -sparse "-output=@PROFILE_DIR@/default.profdata" ${_raws}
+		COMMAND "@PROFDATA@" merge -sparse -failure-mode=all "-output=@PROFILE_DIR@/default.profdata" ${_raws}
 		RESULT_VARIABLE _rc
 	)
-	if(NOT _rc EQUAL 0)
+	if(NOT _rc EQUAL 0 OR NOT EXISTS "@PROFILE_DIR@/default.profdata")
 		message(FATAL_ERROR "ENABLE_PGO: llvm-profdata merge failed (${_rc})")
 	endif()
 endif()
