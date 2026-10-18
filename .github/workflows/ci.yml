@@ -64,6 +64,30 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
+      - name: Add shared library directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Append. Assigning the variable would drop a path already set.
+          add_dir() {
+            local name="$1" dir="$2"
+            local current="${!name-}"
+            case ":${current}:" in
+              *":${dir}:"*) return 0 ;;
+            esac
+            if [[ -n "$current" ]]; then
+              export "${name}=${current}:${dir}"
+            else
+              export "${name}=${dir}"
+            fi
+            echo "${name}=${!name}" >> "$GITHUB_ENV"
+          }
+          for name in LD_LIBRARY_PATH DYLD_LIBRARY_PATH; do
+            add_dir "$name" "${{ github.workspace }}/build/lib"
+            add_dir "$name" "${{ github.workspace }}/build/buildmaster/install/lib"
+            add_dir "$name" "${{ github.workspace }}/build/buildmaster/install/lib64"
+          done
+
       - name: Build with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
         with:
@@ -98,6 +122,30 @@ jobs:
         with:
           fetch-depth: 1
           submodules: recursive
+
+      - name: Add shared library directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Append. Assigning the variable would drop a path already set.
+          add_dir() {
+            local name="$1" dir="$2"
+            local current="${!name-}"
+            case ":${current}:" in
+              *":${dir}:"*) return 0 ;;
+            esac
+            if [[ -n "$current" ]]; then
+              export "${name}=${current}:${dir}"
+            else
+              export "${name}=${dir}"
+            fi
+            echo "${name}=${!name}" >> "$GITHUB_ENV"
+          }
+          for name in LD_LIBRARY_PATH DYLD_LIBRARY_PATH; do
+            add_dir "$name" "${{ github.workspace }}/build/lib"
+            add_dir "$name" "${{ github.workspace }}/build/buildmaster/install/lib"
+            add_dir "$name" "${{ github.workspace }}/build/buildmaster/install/lib64"
+          done
 
       - name: Build with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
