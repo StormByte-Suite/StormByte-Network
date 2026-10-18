@@ -16,6 +16,10 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ## [Unreleased]
 
+### Changed
+
+- CI builds with `ENABLE_LTO=ON`, `ENABLE_PGO=OFF` and `ENABLE_TEST=ON`, then runs ctest. Profile-guided optimization stays on the release workflow.
+
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.2...HEAD
 
 ## [2.0.2] - 2026-10-17
