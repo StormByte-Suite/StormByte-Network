@@ -43,6 +43,7 @@
 #include <StormByte/network/visibility.h>
 #include <StormByte/safe/binary.hxx>
 #include <StormByte/safe/string.hxx>
+#include <StormByte/type_traits/safe.hxx>
 
 /**
  * @namespace StormByte
@@ -68,3 +69,5 @@ namespace StormByte {
 		};
 	}
 }
+
+STORMBYTE_DECLARE_MAYBE_SAFE(StormByte::Network::DiscoveryReply);
