@@ -161,15 +161,14 @@ namespace DiscoveryExample {
 }
 
 int main() {
-	using namespace DiscoveryExample;
-	Server server;
+	DiscoveryExample::Server server;
 	if (!server.Start()) {
 		std::cerr << "failed to start announcing server\n";
 		return 1;
 	}
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-	Client client;
+	DiscoveryExample::Client client;
 	if (!client.Find()) {
 		std::cerr << "discovery did not find the announced server\n";
 		return 1;
