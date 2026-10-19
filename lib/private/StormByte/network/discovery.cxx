@@ -186,7 +186,23 @@ bool StormByte::Network::Detail::DiscoveryTransport::SendQuery(const StormByte::
 #endif
 		static_cast<int>(payload.size()), 0,
 		reinterpret_cast<sockaddr*>(&dest), dest_len);
-	return sent == static_cast<int>(payload.size());
+	if (sent != static_cast<int>(payload.size()))
+		return false;
+
+#ifdef MACOS
+	// macOS does not deliver INADDR_BROADCAST back to the local host.
+	// Also send to loopback so a server on this machine can answer.
+	if (m_protocol == Connection::Protocol::IPv4) {
+		auto* v4 = reinterpret_cast<sockaddr_in*>(&dest);
+		v4->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		const int local = ::sendto(m_handle, payload.data(),
+			static_cast<int>(payload.size()), 0,
+			reinterpret_cast<sockaddr*>(&dest), dest_len);
+		if (local != static_cast<int>(payload.size()))
+			return false;
+	}
+#endif
+	return true;
 }
 
 bool StormByte::Network::Detail::DiscoveryTransport::Receive(std::chrono::milliseconds timeout, StormByte::Network::DiscoveryReply& reply) noexcept {
