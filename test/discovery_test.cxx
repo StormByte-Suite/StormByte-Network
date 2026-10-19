@@ -112,11 +112,11 @@ namespace DiscoveryExample {
 					return Safe::Status::Success;
 				};
 				auto clone = [](const void* context) noexcept -> void* {
-					return new bool(*static_cast<const bool*>(context));
+					return const_cast<void*>(context);
 				};
-				auto release = [](void* context) noexcept { delete static_cast<bool*>(context); };
+				auto release = [](void*) noexcept {};
 				Safe::Function<bool(const DiscoveryReply&)> on_reply(
-					new bool(found), +invoke, +clone, +release);
+					&found, +invoke, +clone, +release);
 				const bool sent = Discover(Connection::Protocol::IPv4, discovery_port,
 					std::chrono::milliseconds(2000), std::move(on_reply));
 				return sent && found;
