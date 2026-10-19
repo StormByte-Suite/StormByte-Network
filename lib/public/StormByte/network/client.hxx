@@ -44,7 +44,6 @@
 #include <StormByte/network/discovery.hxx>
 #include <StormByte/network/endpoint.hxx>
 #include <StormByte/network/remote_file.hxx>
-#include <StormByte/safe/function.hxx>
 #include <StormByte/safe/mutex.hxx>
 #include <StormByte/safe/pointers.hxx>
 #include <StormByte/safe/string.hxx>
@@ -167,7 +166,7 @@ namespace StormByte {
 				 */
 				bool Discover(const Connection::Protocol& protocol, unsigned short discovery_port,
 					std::chrono::milliseconds timeout,
-					StormByte::Safe::Function<bool(const DiscoveryReply&)> on_reply) noexcept;
+					bool (*on_reply)(const DiscoveryReply&, void*), void* context) noexcept;
 
 
 			protected:
