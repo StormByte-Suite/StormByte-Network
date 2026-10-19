@@ -58,11 +58,6 @@
 
 namespace {
 	constexpr const char* kIPv6MulticastGroup = "ff02::1";
-#ifndef IPV6_ADD_MEMBERSHIP
-#ifdef IPV6_JOIN_GROUP
-#define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
-#endif
-#endif
 }
 
 StormByte::Network::Detail::DiscoveryTransport::DiscoveryTransport(Connection::Protocol protocol):
@@ -112,7 +107,11 @@ bool StormByte::Network::Detail::DiscoveryTransport::EnableBroadcastOrMulticast(
 	if (inet_pton(AF_INET6, kIPv6MulticastGroup, &mreq.ipv6mr_multiaddr) != 1)
 		return false;
 	mreq.ipv6mr_interface = 0;
+#ifdef MACOS
+	return ::setsockopt(m_handle, IPPROTO_IPV6, IPV6_JOIN_GROUP,
+#else
 	return ::setsockopt(m_handle, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP,
+#endif
 #ifdef WINDOWS
 		reinterpret_cast<const char*>(&mreq),
 #else
@@ -159,7 +158,11 @@ bool StormByte::Network::Detail::DiscoveryTransport::SendQuery(const StormByte::
 		return false;
 
 	sockaddr_storage dest{};
-	DiscoverySockLen dest_len = 0;
+	#ifdef WINDOWS
+	int dest_len = 0;
+#else
+	socklen_t dest_len = 0;
+#endif
 	if (m_protocol == Connection::Protocol::IPv4) {
 		auto* v4 = reinterpret_cast<sockaddr_in*>(&dest);
 		v4->sin_family = AF_INET;
