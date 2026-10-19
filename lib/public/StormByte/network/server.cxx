@@ -289,6 +289,7 @@ bool Server::Connect(const Connection::Protocol& protocol, std::string_view addr
 }
 
 void Server::Disconnect() noexcept {
+	StopAnnounce();
 	if (m_pool && m_pool->IsWorkerThread()) {
 		PostCommand({ CommandType::Stop, {} });
 		return;
@@ -986,4 +987,40 @@ void Server::ProcessRemotePlane(const Safe::Shared<Detail::RemoteFile::Host>& ho
 	} catch (...) {
 		host->Stop();
 	}
+}
+
+#include <StormByte/network/discovery_transport.hxx>
+
+bool Server::Announce(const Connection::Protocol& protocol, unsigned short discovery_port) noexcept {
+	try {
+		StopAnnounce();
+		m_discovery_stop.store(false, Safe::MemoryOrder::Release);
+		m_discovery_thread = Safe::Thread(Detail::WorkerCallbackFactory<void()>::Make(
+			[this, protocol, discovery_port]() noexcept {
+				Detail::DiscoveryTransport transport(protocol);
+				if (!transport.Bind(discovery_port))
+					return;
+				while (!m_discovery_stop.load(Safe::MemoryOrder::Acquire)) {
+					DiscoveryReply query;
+					if (!transport.Receive(std::chrono::milliseconds(200), query))
+						continue;
+					const Safe::Binary reply = OnDiscoveryQuery(query.payload);
+					if (!reply.empty())
+						(void)transport.ReplyTo(reply, query);
+				}
+			}));
+		return true;
+	} catch (...) {
+		return false;
+	}
+}
+
+void Server::StopAnnounce() noexcept {
+	m_discovery_stop.store(true, Safe::MemoryOrder::Release);
+	if (m_discovery_thread.joinable())
+		m_discovery_thread.join();
+}
+
+Safe::Binary Server::OnDiscoveryQuery(const Safe::Binary&) const noexcept {
+	return {};
 }
