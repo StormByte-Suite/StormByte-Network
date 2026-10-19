@@ -49,9 +49,11 @@
 
 #ifdef WINDOWS
 #include <winsock2.h>
+using DiscoverySockLen = int;
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
+using DiscoverySockLen = socklen_t;
 #endif
 
 /**
@@ -142,7 +144,7 @@ namespace StormByte {
 					int m_handle = -1;
 #endif
 					sockaddr_storage m_last_from{};
-					socklen_t m_last_from_len = 0;
+					DiscoverySockLen m_last_from_len = 0;
 
 					bool CreateSocket() noexcept;
 					bool EnableBroadcastOrMulticast() noexcept;
