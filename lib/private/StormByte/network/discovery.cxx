@@ -51,6 +51,10 @@
 #include <unistd.h>
 #include <poll.h>
 #include <errno.h>
+#ifdef MACOS
+#include <ifaddrs.h>
+#include <net/if.h>
+#endif
 #else
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -187,8 +191,39 @@ bool StormByte::Network::Detail::DiscoveryTransport::SendQuery(const StormByte::
 	if (payload.empty())
 		return false;
 
+#ifdef MACOS
+	// macOS has no route for the limited broadcast (255.255.255.255).
+	// Send to the directed broadcast of each broadcast-capable interface.
+	if (m_protocol == Connection::Protocol::IPv4) {
+		ifaddrs* interfaces = nullptr;
+		if (::getifaddrs(&interfaces) != 0) {
+			std::cerr << "[discovery] getifaddrs failed errno=" << errno << "\n";
+			return false;
+		}
+		bool any = false;
+		for (ifaddrs* it = interfaces; it != nullptr; it = it->ifa_next) {
+			if (it->ifa_addr == nullptr || it->ifa_addr->sa_family != AF_INET)
+				continue;
+			if ((it->ifa_flags & IFF_BROADCAST) == 0 || it->ifa_broadaddr == nullptr)
+				continue;
+			if ((it->ifa_flags & IFF_UP) == 0 || (it->ifa_flags & IFF_LOOPBACK) != 0)
+				continue;
+			auto* broadcast = reinterpret_cast<sockaddr_in*>(it->ifa_broadaddr);
+			broadcast->sin_port = htons(port);
+			const int sent = ::sendto(m_handle, payload.data(),
+				static_cast<int>(payload.size()), 0,
+				reinterpret_cast<sockaddr*>(broadcast), sizeof(*broadcast));
+			std::cerr << "[discovery] SendQuery iface=" << (it->ifa_name ? it->ifa_name : "?")
+				<< " sent=" << sent << " errno=" << errno << "\n";
+			any = any || sent == static_cast<int>(payload.size());
+		}
+		::freeifaddrs(interfaces);
+		return any;
+	}
+#endif
+
 	sockaddr_storage dest{};
-	#ifdef WINDOWS
+#ifdef WINDOWS
 	int dest_len = 0;
 #else
 	socklen_t dest_len = 0;
@@ -217,8 +252,7 @@ bool StormByte::Network::Detail::DiscoveryTransport::SendQuery(const StormByte::
 		static_cast<int>(payload.size()), 0,
 		reinterpret_cast<sockaddr*>(&dest), dest_len);
 	std::cerr << "[discovery] SendQuery sent=" << sent
-		<< " expected=" << payload.size()
-		<< " errno=" << errno << "\n";
+		<< " expected=" << payload.size() << " errno=" << errno << "\n";
 	return sent == static_cast<int>(payload.size());
 }
 
