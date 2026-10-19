@@ -38,7 +38,7 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
-#include <StormByte/network/discovery.hxx>
+#include <StormByte/network/discovery_transport.hxx>
 
 #include <array>
 #include <cstring>
@@ -55,20 +55,19 @@
 #include <ws2tcpip.h>
 #endif
 
-using namespace StormByte::Network::Detail;
 
 namespace {
 	constexpr const char* kIPv6MulticastGroup = "ff02::1";
 }
 
-Discovery::Discovery(Connection::Protocol protocol):
+StormByte::Network::Detail::DiscoveryTransport::DiscoveryTransport(Connection::Protocol protocol):
 	m_protocol(protocol) {}
 
-Discovery::~Discovery() noexcept {
+StormByte::Network::Detail::DiscoveryTransport::~DiscoveryTransport() noexcept {
 	Close();
 }
 
-bool Discovery::CreateSocket() noexcept {
+bool StormByte::Network::Detail::DiscoveryTransport::CreateSocket() noexcept {
 #ifdef WINDOWS
 	WSADATA wsa;
 	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
@@ -92,7 +91,7 @@ bool Discovery::CreateSocket() noexcept {
 	return EnableBroadcastOrMulticast();
 }
 
-bool Discovery::EnableBroadcastOrMulticast() noexcept {
+bool StormByte::Network::Detail::DiscoveryTransport::EnableBroadcastOrMulticast() noexcept {
 	if (m_protocol == Connection::Protocol::IPv4) {
 		int broadcast = 1;
 		return ::setsockopt(m_handle, SOL_SOCKET, SO_BROADCAST,
@@ -117,13 +116,13 @@ bool Discovery::EnableBroadcastOrMulticast() noexcept {
 		sizeof(mreq)) == 0;
 }
 
-bool Discovery::Open() noexcept {
+bool StormByte::Network::Detail::DiscoveryTransport::Open() noexcept {
 	if (!CreateSocket())
 		return false;
 	return true;
 }
 
-bool Discovery::Bind(unsigned short port) noexcept {
+bool StormByte::Network::Detail::DiscoveryTransport::Bind(unsigned short port) noexcept {
 	if (!CreateSocket())
 		return false;
 
@@ -150,7 +149,7 @@ bool Discovery::Bind(unsigned short port) noexcept {
 	return true;
 }
 
-bool Discovery::SendQuery(const Safe::Binary& payload, unsigned short port) noexcept {
+bool StormByte::Network::Detail::DiscoveryTransport::SendQuery(const StormByte::Safe::Binary& payload, unsigned short port) noexcept {
 	if (payload.empty())
 		return false;
 
@@ -182,7 +181,7 @@ bool Discovery::SendQuery(const Safe::Binary& payload, unsigned short port) noex
 	return sent == static_cast<int>(payload.size());
 }
 
-bool Discovery::Receive(std::chrono::milliseconds timeout, DiscoveryReply& reply) noexcept {
+bool StormByte::Network::Detail::DiscoveryTransport::Receive(std::chrono::milliseconds timeout, StormByte::Network::DiscoveryReply& reply) noexcept {
 	if (
 #ifdef WINDOWS
 		m_handle == INVALID_SOCKET
@@ -218,7 +217,7 @@ bool Discovery::Receive(std::chrono::milliseconds timeout, DiscoveryReply& reply
 	if (received <= 0)
 		return false;
 
-	reply.payload = Safe::Binary(reinterpret_cast<const std::byte*>(buffer.data()),
+	reply.payload = StormByte::Safe::Binary(reinterpret_cast<const std::byte*>(buffer.data()),
 		static_cast<std::size_t>(received));
 
 	std::array<char, INET6_ADDRSTRLEN> text{};
@@ -233,11 +232,11 @@ bool Discovery::Receive(std::chrono::milliseconds timeout, DiscoveryReply& reply
 	} else {
 		return false;
 	}
-	reply.from_address = Safe::String{text.data()};
+	reply.from_address = StormByte::Safe::String{text.data()};
 	return true;
 }
 
-bool Discovery::ReplyTo(const Safe::Binary& payload, const DiscoveryReply&) noexcept {
+bool StormByte::Network::Detail::DiscoveryTransport::ReplyTo(const StormByte::Safe::Binary& payload, const StormByte::Network::DiscoveryReply&) noexcept {
 	if (payload.empty() || m_last_from_len == 0)
 		return false;
 	const int sent = ::sendto(m_handle,
@@ -251,7 +250,7 @@ bool Discovery::ReplyTo(const Safe::Binary& payload, const DiscoveryReply&) noex
 	return sent == static_cast<int>(payload.size());
 }
 
-void Discovery::Close() noexcept {
+void StormByte::Network::Detail::DiscoveryTransport::Close() noexcept {
 #ifdef WINDOWS
 	if (m_handle != INVALID_SOCKET) {
 		::closesocket(m_handle);
