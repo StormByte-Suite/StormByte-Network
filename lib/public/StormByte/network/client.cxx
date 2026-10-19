@@ -335,3 +335,43 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 		return {};
 	}
 }
+
+#include <StormByte/network/discovery_transport.hxx>
+
+bool Client::Discover(const Connection::Protocol& protocol, unsigned short discovery_port,
+	std::chrono::milliseconds timeout,
+	StormByte::Safe::Function<bool(const DiscoveryReply&)> on_reply) noexcept {
+	try {
+		const Safe::Binary query = MakeDiscoveryQuery();
+		if (query.empty() || !on_reply)
+			return false;
+
+		Detail::DiscoveryTransport transport(protocol);
+		if (!transport.Open() || !transport.SendQuery(query, discovery_port))
+			return false;
+
+		const auto deadline = std::chrono::steady_clock::now() + timeout;
+		while (std::chrono::steady_clock::now() < deadline) {
+			const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+				deadline - std::chrono::steady_clock::now());
+			if (remaining.count() <= 0)
+				break;
+			DiscoveryReply reply;
+			if (!transport.Receive(remaining, reply))
+				continue;
+			if (on_reply(reply))
+				break;
+		}
+		return true;
+	} catch (...) {
+		return false;
+	}
+}
+
+Safe::Binary Client::MakeDiscoveryQuery() const noexcept {
+	return {};
+}
+
+bool Client::InterpretDiscoveryReply(const Safe::Binary&, Safe::String&, unsigned short&) const noexcept {
+	return false;
+}
