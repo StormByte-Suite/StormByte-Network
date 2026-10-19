@@ -42,6 +42,7 @@
 #include <StormByte/network/discovery.hxx>
 #include <StormByte/network/server.hxx>
 #include <StormByte/safe/binary.hxx>
+#include <StormByte/safe/function.hxx>
 #include <StormByte/safe/string.hxx>
 
 #include <chrono>
@@ -92,28 +93,36 @@ namespace DiscoveryExample {
 
 			bool Find() {
 				bool found = false;
+				auto invoke = [](void* context, bool* output, const DiscoveryReply& reply) noexcept {
+					auto* found = static_cast<bool*>(context);
+					const std::string_view payload(
+						reinterpret_cast<const char*>(reply.payload.data()), reply.payload.size());
+					std::cout << "discovered from " << std::string_view{reply.from_address}
+						<< ":" << reply.from_port << " payload=\"" << payload << "\"\n";
+					Safe::String address;
+					unsigned short port = 0;
+					if (!InterpretReply(reply.payload, address, port)) {
+						*output = false;
+						return Safe::Status::Success;
+					}
+					std::cout << "accepted server at " << std::string_view{address}
+						<< ":" << port << "\n";
+					*found = true;
+					*output = true;
+					return Safe::Status::Success;
+				};
+				auto clone = [](const void* context) noexcept -> void* {
+					return new bool(*static_cast<const bool*>(context));
+				};
+				auto release = [](void* context) noexcept { delete static_cast<bool*>(context); };
+				Safe::Function<bool(const DiscoveryReply&)> on_reply(
+					new bool(found), +invoke, +clone, +release);
 				const bool sent = Discover(Connection::Protocol::IPv4, discovery_port,
-					std::chrono::milliseconds(2000), &OnReply, &found);
+					std::chrono::milliseconds(2000), std::move(on_reply));
 				return sent && found;
 			}
 
 		private:
-			static bool OnReply(const DiscoveryReply& reply, void* context) {
-				auto* found = static_cast<bool*>(context);
-				const std::string_view payload(
-					reinterpret_cast<const char*>(reply.payload.data()), reply.payload.size());
-				std::cout << "discovered from " << std::string_view{reply.from_address}
-					<< ":" << reply.from_port << " payload=\"" << payload << "\"\n";
-				Safe::String address;
-				unsigned short port = 0;
-				if (!InterpretReply(reply.payload, address, port))
-					return false;
-				std::cout << "accepted server at " << std::string_view{address}
-					<< ":" << port << "\n";
-				*found = true;
-				return true;
-			}
-
 			static bool InterpretReply(const Safe::Binary& reply,
 				Safe::String& address, unsigned short& port) {
 				const std::string_view text(reinterpret_cast<const char*>(reply.data()), reply.size());
