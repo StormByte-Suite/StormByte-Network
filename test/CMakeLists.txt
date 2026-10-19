@@ -28,6 +28,15 @@ if(ENABLE_TEST)
 		set_tests_properties(${test_class}SafeTest PROPERTIES TIMEOUT 30)
 	endforeach()
 
+
+	add_executable(DiscoveryTest discovery_test.cxx)
+	target_link_libraries(DiscoveryTest StormByte::Network)
+	if(WIN32)
+		target_link_libraries(DiscoveryTest ws2_32)
+	endif()
+	add_test(NAME DiscoveryTest COMMAND DiscoveryTest)
+	set_tests_properties(DiscoveryTest PROPERTIES TIMEOUT 30)
+
 	add_executable(HandshakeTest handshake_test.cxx)
 	target_link_libraries(HandshakeTest StormByte::Network)
 	if(WIN32)
