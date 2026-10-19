@@ -41,12 +41,15 @@
 #pragma once
 
 #include <StormByte/network/client_telemetry.hxx>
+#include <StormByte/network/discovery.hxx>
 #include <StormByte/network/endpoint.hxx>
 #include <StormByte/network/remote_file.hxx>
+#include <StormByte/safe/function.hxx>
 #include <StormByte/safe/mutex.hxx>
 #include <StormByte/safe/pointers.hxx>
 #include <StormByte/safe/string.hxx>
 
+#include <chrono>
 #include <string_view>
 
 /**
@@ -153,6 +156,20 @@ namespace StormByte {
 				 */
 				StormByte::Safe::Shared<ClientTelemetry> Telemetry() const noexcept;
 
+				/**
+				 * @brief Send a discovery query and invoke @p on_reply for each response.
+				 * @param protocol Address family.
+				 * @param discovery_port UDP port where servers announce.
+				 * @param timeout Maximum time to wait for replies.
+				 * @param on_reply Called for each datagram. Return true to stop, false to continue.
+				 * @return true if the query was sent. Does not imply a reply was received.
+				 * @details Uses MakeDiscoveryQuery() as the payload. Empty query does not send.
+				 */
+				bool Discover(const Connection::Protocol& protocol, unsigned short discovery_port,
+					std::chrono::milliseconds timeout,
+					StormByte::Safe::Function<bool(const DiscoveryReply&)> on_reply) noexcept;
+
+
 			protected:
 				/**
 				 * @brief Configure this connection exactly once, before its first file plane.
@@ -179,6 +196,23 @@ namespace StormByte {
 				 * @return True by default; false prevents sending and closes the connection.
 				 */
 				virtual bool AllowOutgoingOpcode(std::string_view uuid, Transport::Packet::OpcodeType opcode) const noexcept;
+
+				/**
+				 * @brief Build the opaque discovery query.
+				 * @return Query bytes. Empty means discovery is not used.
+				 */
+				virtual StormByte::Safe::Binary MakeDiscoveryQuery() const noexcept;
+
+				/**
+				 * @brief Interpret a discovery reply into a TCP endpoint.
+				 * @param reply Opaque reply payload.
+				 * @param address Filled with the TCP address when accepted.
+				 * @param port Filled with the TCP port when accepted.
+				 * @return true if this reply identifies a usable server.
+				 */
+				virtual bool InterpretDiscoveryReply(const StormByte::Safe::Binary& reply,
+					StormByte::Safe::String& address, unsigned short& port) const noexcept;
+
 
 				/**
 				 * @brief Send @p packet and return the response (or nullptr).
