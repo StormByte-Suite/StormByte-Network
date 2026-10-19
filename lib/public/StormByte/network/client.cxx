@@ -340,10 +340,10 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 
 bool Client::Discover(const Connection::Protocol& protocol, unsigned short discovery_port,
 	std::chrono::milliseconds timeout,
-	StormByte::Safe::Function<bool(const DiscoveryReply&)> on_reply) noexcept {
+	bool (*on_reply)(const DiscoveryReply&, void*), void* context) noexcept {
 	try {
 		const Safe::Binary query = MakeDiscoveryQuery();
-		if (query.empty() || !on_reply)
+		if (query.empty() || on_reply == nullptr)
 			return false;
 
 		Detail::DiscoveryTransport transport(protocol);
@@ -359,7 +359,7 @@ bool Client::Discover(const Connection::Protocol& protocol, unsigned short disco
 			DiscoveryReply reply;
 			if (!transport.Receive(remaining, reply))
 				continue;
-			if (on_reply(reply))
+			if (on_reply(reply, context))
 				break;
 		}
 		return true;
