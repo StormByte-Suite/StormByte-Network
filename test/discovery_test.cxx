@@ -93,22 +93,40 @@ namespace DiscoveryExample {
 			bool Find() {
 				bool found = false;
 				const bool sent = Discover(Connection::Protocol::IPv4, discovery_port,
-					std::chrono::milliseconds(2000),
-					[&](const DiscoveryReply& reply) {
-						const std::string_view payload(
-							reinterpret_cast<const char*>(reply.payload.data()), reply.payload.size());
-						std::cout << "discovered from " << std::string_view{reply.from_address}
-							<< ":" << reply.from_port << " payload=\"" << payload << "\"\n";
-						Safe::String address;
-						unsigned short port = 0;
-						if (!InterpretDiscoveryReply(reply.payload, address, port))
-							return false;
-						std::cout << "accepted server at " << std::string_view{address}
-							<< ":" << port << "\n";
-						found = true;
-						return true;
-					});
+					std::chrono::milliseconds(2000), &OnReply, &found);
 				return sent && found;
+			}
+
+		private:
+			static bool OnReply(const DiscoveryReply& reply, void* context) {
+				auto* found = static_cast<bool*>(context);
+				const std::string_view payload(
+					reinterpret_cast<const char*>(reply.payload.data()), reply.payload.size());
+				std::cout << "discovered from " << std::string_view{reply.from_address}
+					<< ":" << reply.from_port << " payload=\"" << payload << "\"\n";
+				Safe::String address;
+				unsigned short port = 0;
+				if (!InterpretReply(reply.payload, address, port))
+					return false;
+				std::cout << "accepted server at " << std::string_view{address}
+					<< ":" << port << "\n";
+				*found = true;
+				return true;
+			}
+
+			static bool InterpretReply(const Safe::Binary& reply,
+				Safe::String& address, unsigned short& port) {
+				const std::string_view text(reinterpret_cast<const char*>(reply.data()), reply.size());
+				constexpr std::string_view prefix = "HERE:my-service:";
+				if (!text.starts_with(prefix))
+					return false;
+				try {
+					port = static_cast<unsigned short>(std::stoi(std::string(text.substr(prefix.size()))));
+				} catch (...) {
+					return false;
+				}
+				address = Safe::String{"127.0.0.1"};
+				return port != 0;
 			}
 
 		protected:
