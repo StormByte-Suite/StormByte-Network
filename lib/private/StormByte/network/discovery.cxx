@@ -126,6 +126,31 @@ bool StormByte::Network::Detail::DiscoveryTransport::EnableBroadcastOrMulticast(
 bool StormByte::Network::Detail::DiscoveryTransport::Open() noexcept {
 	if (!CreateSocket())
 		return false;
+	// An unbound datagram socket cannot send to the limited broadcast
+	// address on macOS. Bind to an ephemeral port first.
+	sockaddr_storage addr{};
+	if (m_protocol == Connection::Protocol::IPv4) {
+		auto* v4 = reinterpret_cast<sockaddr_in*>(&addr);
+		v4->sin_family = AF_INET;
+		v4->sin_port = 0;
+		v4->sin_addr.s_addr = INADDR_ANY;
+		if (::bind(m_handle, reinterpret_cast<sockaddr*>(v4), sizeof(*v4)) != 0) {
+			std::cerr << "[discovery] Open bind v4 failed errno=" << errno << "\n";
+			Close();
+			return false;
+		}
+	} else {
+		auto* v6 = reinterpret_cast<sockaddr_in6*>(&addr);
+		v6->sin6_family = AF_INET6;
+		v6->sin6_port = 0;
+		v6->sin6_addr = in6addr_any;
+		if (::bind(m_handle, reinterpret_cast<sockaddr*>(v6), sizeof(*v6)) != 0) {
+			std::cerr << "[discovery] Open bind v6 failed errno=" << errno << "\n";
+			Close();
+			return false;
+		}
+	}
+	std::cerr << "[discovery] Open bound ephemeral\n";
 	return true;
 }
 
@@ -192,7 +217,8 @@ bool StormByte::Network::Detail::DiscoveryTransport::SendQuery(const StormByte::
 		static_cast<int>(payload.size()), 0,
 		reinterpret_cast<sockaddr*>(&dest), dest_len);
 	std::cerr << "[discovery] SendQuery sent=" << sent
-		<< " expected=" << payload.size() << "\n";
+		<< " expected=" << payload.size()
+		<< " errno=" << errno << "\n";
 	return sent == static_cast<int>(payload.size());
 }
 
