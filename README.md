@@ -27,6 +27,7 @@ It is not a thin socket wrapper. You inherit `Client` or `Server`, define packet
 	- [A client](#a-client)
 	- [A server](#a-server)
 	- [A packet](#a-packet)
+	- [Discovery](#discovery)
 - [Design notes](#design-notes)
 - [Testing](#testing)
 - [Contributing](#contributing)
@@ -76,6 +77,7 @@ These examples use `ccache`; install it or omit the two compiler-launcher option
 - Per-session in-flight ordering, bounded output buffering and backpressure handling
 - Optional payload processing for opcodes ≥ `Packet::PROCESS_THRESHOLD`
 - Authorized, file-like remote readers and exclusive writers over private TCP channels
+- Discovery via `Server::Announce` / `Client::Discover` (IPv4 broadcast or IPv6 multicast, same API)
 
 ## Dependencies
 
@@ -223,6 +225,98 @@ protected:
 	}
 };
 ```
+
+
+### Discovery
+
+Network does not invent a discovery protocol. It only moves opaque bytes. A derived server decides whether a query matches and what to reply. A derived client decides what to send and which replies to accept.
+
+Announce a server on a UDP port (independent of the TCP listen port):
+
+```cpp
+#include <StormByte/network/server.hxx>
+#include <StormByte/safe/binary.hxx>
+
+class DiscoverableServer : public StormByte::Network::Server {
+public:
+	using Server::Server;
+	~DiscoverableServer() noexcept override { StopAnnounce(); Disconnect(); }
+
+	bool Start(unsigned short tcp_port, unsigned short discovery_port) {
+		if (!Connect(Connection::Protocol::IPv4, "0.0.0.0", tcp_port))
+			return false;
+		m_tcp_port = tcp_port;
+		return Announce(Connection::Protocol::IPv4, discovery_port);
+	}
+
+protected:
+	StormByte::Network::PacketPointer ProcessClientPacket(
+		std::string_view, StormByte::Network::PacketPointer) noexcept override {
+		return {};
+	}
+
+	// Query is opaque. Reply is opaque. Empty means "do not answer".
+	StormByte::Safe::Binary OnDiscoveryQuery(const StormByte::Safe::Binary& query) const noexcept override {
+		const std::string_view text(reinterpret_cast<const char*>(query.data()), query.size());
+		if (text != "FIND:my-service")
+			return {};
+		const std::string reply = "HERE:my-service:" + std::to_string(m_tcp_port);
+		return StormByte::Safe::Binary(reinterpret_cast<const std::byte*>(reply.data()), reply.size());
+	}
+
+private:
+	unsigned short m_tcp_port = 0;
+};
+```
+
+Discover from a client. `on_reply` returns `true` to stop, `false` to keep waiting until the timeout:
+
+```cpp
+#include <StormByte/network/client.hxx>
+#include <StormByte/network/discovery.hxx>
+#include <iostream>
+
+class DiscoveringClient : public StormByte::Network::Client {
+public:
+	using Client::Client;
+
+	bool Find(unsigned short discovery_port) {
+		return Discover(Connection::Protocol::IPv4, discovery_port,
+			std::chrono::milliseconds(1500),
+			[this](const DiscoveryReply& reply) {
+				std::cout << "from " << std::string_view{reply.from_address}
+				          << ":" << reply.from_port
+				          << " payload " << reply.payload.size() << " bytes\n";
+				Safe::String address;
+				unsigned short tcp_port = 0;
+				if (!InterpretDiscoveryReply(reply.payload, address, tcp_port))
+					return false; // keep looking
+				std::cout << "accepted " << std::string_view{address} << ":" << tcp_port << "\n";
+				return true; // stop
+			});
+	}
+
+protected:
+	StormByte::Safe::Binary MakeDiscoveryQuery() const noexcept override {
+		constexpr std::string_view q = "FIND:my-service";
+		return StormByte::Safe::Binary(reinterpret_cast<const std::byte*>(q.data()), q.size());
+	}
+
+	bool InterpretDiscoveryReply(const StormByte::Safe::Binary& reply,
+	                             StormByte::Safe::String& address,
+	                             unsigned short& port) const noexcept override {
+		const std::string_view text(reinterpret_cast<const char*>(reply.data()), reply.size());
+		constexpr std::string_view prefix = "HERE:my-service:";
+		if (!text.starts_with(prefix))
+			return false;
+		port = static_cast<unsigned short>(std::stoi(std::string(text.substr(prefix.size()))));
+		address = "127.0.0.1"; // or use the source address from DiscoveryReply in the callback
+		return true;
+	}
+};
+```
+
+IPv6 uses the same calls with `Connection::Protocol::IPv6`. Network sends to the link-local multicast group instead of the IPv4 broadcast address. The derived code does not change.
 
 ### A packet
 
