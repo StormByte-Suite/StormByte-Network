@@ -56,7 +56,6 @@
 #include <StormByte/safe/vector.hxx>
 #include <StormByte/size.hxx>
 
-#include <atomic>
 #include <cstdint>
 #include <string_view>
 
@@ -375,7 +374,7 @@ namespace StormByte {
 				Safe::Mutex m_command_mutex;										///< Guards command queue.
 				Safe::Shared<ServerTelemetry> m_telemetry;						///< Aggregate live telemetry.
 				Safe::Thread m_discovery_thread;							///< Discovery listener thread.
-				std::atomic<bool> m_discovery_stop{false};				///< Stops the discovery loop.
+				Safe::Atomic<bool> m_discovery_stop{false};				///< Stops the discovery loop.
 
 				/**
 				 * @brief Stop a move source before the base endpoint is transferred.
