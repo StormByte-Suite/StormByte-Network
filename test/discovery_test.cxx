@@ -119,6 +119,7 @@ namespace DiscoveryExample {
 					&found, +invoke, +clone, +release);
 				const bool sent = Discover(Connection::Protocol::IPv4, discovery_port,
 					std::chrono::milliseconds(2000), std::move(on_reply));
+				std::cerr << "[test] Discover returned " << sent << " found=" << found << "\n";
 				return sent && found;
 			}
 
