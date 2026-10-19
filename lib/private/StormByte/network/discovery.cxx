@@ -58,6 +58,11 @@
 
 namespace {
 	constexpr const char* kIPv6MulticastGroup = "ff02::1";
+#ifndef IPV6_ADD_MEMBERSHIP
+#ifdef IPV6_JOIN_GROUP
+#define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
+#endif
+#endif
 }
 
 StormByte::Network::Detail::DiscoveryTransport::DiscoveryTransport(Connection::Protocol protocol):
@@ -154,7 +159,7 @@ bool StormByte::Network::Detail::DiscoveryTransport::SendQuery(const StormByte::
 		return false;
 
 	sockaddr_storage dest{};
-	socklen_t dest_len = 0;
+	DiscoverySockLen dest_len = 0;
 	if (m_protocol == Connection::Protocol::IPv4) {
 		auto* v4 = reinterpret_cast<sockaddr_in*>(&dest);
 		v4->sin_family = AF_INET;
