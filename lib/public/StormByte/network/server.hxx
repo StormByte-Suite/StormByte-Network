@@ -41,6 +41,7 @@
 #pragma once
 
 #include <StormByte/network/detail/server_state.hxx>
+#include <StormByte/network/discovery.hxx>
 #include <StormByte/network/endpoint.hxx>
 #include <StormByte/network/remote_file_mount.hxx>
 #include <StormByte/network/server_telemetry.hxx>
@@ -55,6 +56,7 @@
 #include <StormByte/safe/vector.hxx>
 #include <StormByte/size.hxx>
 
+#include <atomic>
 #include <cstdint>
 #include <string_view>
 
@@ -204,6 +206,21 @@ namespace StormByte {
 				 */
 				StormByte::Safe::Shared<ServerTelemetry> Telemetry() const noexcept;
 
+				/**
+				 * @brief Start listening for discovery queries on @p discovery_port.
+				 * @param protocol Address family (IPv4 broadcast or IPv6 multicast).
+				 * @param discovery_port UDP port to bind.
+				 * @return true when the listener is running.
+				 * @details Independent of the TCP Connect. Stop with StopAnnounce.
+				 */
+				bool Announce(const Connection::Protocol& protocol, unsigned short discovery_port) noexcept;
+
+				/**
+				 * @brief Stop the discovery listener.
+				 */
+				void StopAnnounce() noexcept;
+
+
 			protected:
 				/**
 				 * @brief Install one pipeline pair for a single application session.
@@ -298,6 +315,14 @@ namespace StormByte {
 				 */
 				virtual void OnClientDisconnected(std::string_view uuid) noexcept;
 
+				/**
+				 * @brief Decide whether to answer a discovery query.
+				 * @param query Opaque query payload.
+				 * @return Reply bytes. Empty means do not answer.
+				 */
+				virtual StormByte::Safe::Binary OnDiscoveryQuery(const StormByte::Safe::Binary& query) const noexcept;
+
+
 			private:
 				/**
 				 * @brief Result category returned by a packet worker.
@@ -349,6 +374,8 @@ namespace StormByte {
 				Safe::Deque<Command> m_commands;									///< Event-loop command queue.
 				Safe::Mutex m_command_mutex;										///< Guards command queue.
 				Safe::Shared<ServerTelemetry> m_telemetry;						///< Aggregate live telemetry.
+				Safe::Thread m_discovery_thread;							///< Discovery listener thread.
+				std::atomic<bool> m_discovery_stop{false};				///< Stops the discovery loop.
 
 				/**
 				 * @brief Stop a move source before the base endpoint is transferred.
