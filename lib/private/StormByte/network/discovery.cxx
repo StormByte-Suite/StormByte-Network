@@ -42,6 +42,7 @@
 
 #include <array>
 #include <cstring>
+#include <iostream>
 
 #ifdef UNIX
 #include <arpa/inet.h>
@@ -88,7 +89,9 @@ bool StormByte::Network::Detail::DiscoveryTransport::CreateSocket() noexcept {
 		&reuse,
 #endif
 		sizeof(reuse));
-	return EnableBroadcastOrMulticast();
+	const bool ok = EnableBroadcastOrMulticast();
+	std::cerr << "[discovery] CreateSocket handle_ok broadcast_or_multicast=" << ok << "\n";
+	return ok;
 }
 
 bool StormByte::Network::Detail::DiscoveryTransport::EnableBroadcastOrMulticast() noexcept {
@@ -137,9 +140,11 @@ bool StormByte::Network::Detail::DiscoveryTransport::Bind(unsigned short port) n
 		v4->sin_port = htons(port);
 		v4->sin_addr.s_addr = INADDR_ANY;
 		if (::bind(m_handle, reinterpret_cast<sockaddr*>(v4), sizeof(*v4)) != 0) {
+			std::cerr << "[discovery] Bind v4 failed errno=" << errno << "\n";
 			Close();
 			return false;
 		}
+		std::cerr << "[discovery] Bind v4 ok port=" << port << "\n";
 	} else {
 		auto* v6 = reinterpret_cast<sockaddr_in6*>(&addr);
 		v6->sin6_family = AF_INET6;
@@ -186,23 +191,9 @@ bool StormByte::Network::Detail::DiscoveryTransport::SendQuery(const StormByte::
 #endif
 		static_cast<int>(payload.size()), 0,
 		reinterpret_cast<sockaddr*>(&dest), dest_len);
-	if (sent != static_cast<int>(payload.size()))
-		return false;
-
-#ifdef MACOS
-	// macOS does not deliver INADDR_BROADCAST back to the local host.
-	// Also send to loopback so a server on this machine can answer.
-	if (m_protocol == Connection::Protocol::IPv4) {
-		auto* v4 = reinterpret_cast<sockaddr_in*>(&dest);
-		v4->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-		const int local = ::sendto(m_handle, payload.data(),
-			static_cast<int>(payload.size()), 0,
-			reinterpret_cast<sockaddr*>(&dest), dest_len);
-		if (local != static_cast<int>(payload.size()))
-			return false;
-	}
-#endif
-	return true;
+	std::cerr << "[discovery] SendQuery sent=" << sent
+		<< " expected=" << payload.size() << "\n";
+	return sent == static_cast<int>(payload.size());
 }
 
 bool StormByte::Network::Detail::DiscoveryTransport::Receive(std::chrono::milliseconds timeout, StormByte::Network::DiscoveryReply& reply) noexcept {
@@ -220,8 +211,10 @@ bool StormByte::Network::Detail::DiscoveryTransport::Receive(std::chrono::millis
 	pfd.fd = m_handle;
 	pfd.events = POLLIN;
 	const int ready = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
-	if (ready <= 0)
+	if (ready <= 0) {
+		std::cerr << "[discovery] Receive timeout/error ready=" << ready << "\n";
 		return false;
+	}
 #else
 	fd_set read_fds;
 	FD_ZERO(&read_fds);
@@ -230,16 +223,21 @@ bool StormByte::Network::Detail::DiscoveryTransport::Receive(std::chrono::millis
 	tv.tv_sec = static_cast<long>(timeout.count() / 1000);
 	tv.tv_usec = static_cast<long>((timeout.count() % 1000) * 1000);
 	const int ready = ::select(0, &read_fds, nullptr, nullptr, &tv);
-	if (ready <= 0)
+	if (ready <= 0) {
+		std::cerr << "[discovery] Receive timeout/error ready=" << ready << "\n";
 		return false;
+	}
 #endif
 
 	std::array<char, 2048> buffer{};
 	m_last_from_len = sizeof(m_last_from);
 	const int received = ::recvfrom(m_handle, buffer.data(), static_cast<int>(buffer.size()), 0,
 		reinterpret_cast<sockaddr*>(&m_last_from), &m_last_from_len);
-	if (received <= 0)
+	if (received <= 0) {
+		std::cerr << "[discovery] Receive recvfrom=" << received << "\n";
 		return false;
+	}
+	std::cerr << "[discovery] Receive got " << received << " bytes\n";
 
 	reply.payload = StormByte::Safe::Binary(reinterpret_cast<const std::byte*>(buffer.data()),
 		static_cast<std::size_t>(received));
