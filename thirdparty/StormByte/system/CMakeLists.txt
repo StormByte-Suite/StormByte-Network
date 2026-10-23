@@ -1,6 +1,6 @@
 include("${CMAKE_SOURCE_DIR}/cmake/stormbyte.cmake")
 
-set(STORMBYTE_SYSTEM_VERSION "2.0.2")
+set(STORMBYTE_SYSTEM_VERSION "2.1.0")
 stormbyte_component_url(STORMBYTE_SYSTEM_URL "${STORMBYTE_SYSTEM_VERSION}" "StormByte-System")
 
 set(STORMBYTE_SYSTEM_OPTSTR "BACKEND=binary;ALIAS=StormByte::System")
@@ -20,6 +20,7 @@ buildmaster_component(
 	"StormByte-System"
 	"${STORMBYTE_SYSTEM_OPTSTR}"
 )
+buildmaster_link(StormByte-System StormByte-Base)
 
 if(WIN32 AND BUILD_SHARED_LIBS)
 	target_compile_definitions(StormByte-System INTERFACE STORMBYTE_SYSTEM_SHARED)

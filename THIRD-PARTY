@@ -13,7 +13,7 @@ source. That source is the Git tag of the release that contains this
 archive. The release page that hosts the zip also hosts the source archives
 GitHub generates for that tag:
 
-  https://github.com/StormByte-Suite/StormByte-Network/releases/tag/2.0.2
+  https://github.com/StormByte-Suite/StormByte-Network/releases/tag/2.0.3
 
 Rebuilding that tag produces a replacement shared library (libStormByte-Network).
 Substituting that shared library is the relink method provided with this
@@ -35,10 +35,10 @@ These are other shared libraries. They are not inside this file. Each has
 its own release archive, its own LICENSE and its own THIRD-PARTY. The
 versions below are the ones this tag is built against.
 
-  - StormByte Base 2.1.0 — https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0
-  - StormByte-Buffer 2.0.2 — https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2
-  - StormByte-Logger 2.0.2 — https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2
-  - StormByte System 2.0.2 — https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2
+  - StormByte Base 2.2.0 — https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.0
+  - StormByte-Buffer 2.0.3 — https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.3
+  - StormByte-Logger 2.0.3 — https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.3
+  - StormByte System 2.1.0 — https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.0
 
 A static rebuild of this library can fold those libraries into the result.
 That binary is a different distribution from this archive, and the notices

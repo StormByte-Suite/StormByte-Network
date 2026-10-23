@@ -1,6 +1,6 @@
 include("${CMAKE_SOURCE_DIR}/cmake/stormbyte.cmake")
 
-set(STORMBYTE_BUFFER_VERSION "2.0.2")
+set(STORMBYTE_BUFFER_VERSION "2.0.3")
 stormbyte_component_url(STORMBYTE_BUFFER_URL "${STORMBYTE_BUFFER_VERSION}" "StormByte-Buffer")
 
 set(STORMBYTE_BUFFER_OPTSTR "BACKEND=binary;ALIAS=StormByte::Buffer")
@@ -20,6 +20,7 @@ buildmaster_component(
 	"StormByte-Buffer"
 	"${STORMBYTE_BUFFER_OPTSTR}"
 )
+buildmaster_link(StormByte-Buffer StormByte-Base StormByte-Logger StormByte-System)
 
 if(WIN32 AND BUILD_SHARED_LIBS)
 	target_compile_definitions(StormByte-Buffer INTERFACE STORMBYTE_BUFFER_SHARED)
