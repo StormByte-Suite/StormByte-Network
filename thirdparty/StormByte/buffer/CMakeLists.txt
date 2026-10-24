@@ -1,6 +1,6 @@
 include("${CMAKE_SOURCE_DIR}/cmake/stormbyte.cmake")
 
-set(STORMBYTE_BUFFER_VERSION "2.0.3")
+set(STORMBYTE_BUFFER_VERSION "2.0.4")
 stormbyte_component_url(STORMBYTE_BUFFER_URL "${STORMBYTE_BUFFER_VERSION}" "StormByte-Buffer")
 
 set(STORMBYTE_BUFFER_OPTSTR "BACKEND=binary;ALIAS=StormByte::Buffer")

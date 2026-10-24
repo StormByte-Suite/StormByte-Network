@@ -1,6 +1,6 @@
 include("${CMAKE_SOURCE_DIR}/cmake/stormbyte.cmake")
 
-set(STORMBYTE_SYSTEM_VERSION "2.1.0")
+set(STORMBYTE_SYSTEM_VERSION "2.1.1")
 stormbyte_component_url(STORMBYTE_SYSTEM_URL "${STORMBYTE_SYSTEM_VERSION}" "StormByte-System")
 
 set(STORMBYTE_SYSTEM_OPTSTR "BACKEND=binary;ALIAS=StormByte::System")
