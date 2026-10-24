@@ -12,13 +12,13 @@
 # so comparing those two cannot see it.
 #
 # Linux is x86-64-v3 (AVX2+FMA+BMI). Apple is apple-m1. Windows is
-# /O2 /arch:AVX2. No /fp:fast and no /EHsc.
+# /O2 /arch:AVX. No /fp:fast and no /EHsc.
 
 option(ENABLE_LTO "Link-time optimization. Not tied to the build type. Combines with ENABLE_PGO." ON)
 
 set(OPTIMIZATION_FLAGS_LINUX "-O2;-march=x86-64-v3" CACHE STRING "Extra C/CXX flags on Linux. Semicolon-separated.")
 set(OPTIMIZATION_FLAGS_MAC "-O2;-mcpu=apple-m1" CACHE STRING "Extra C/CXX flags on Apple. Semicolon-separated.")
-set(OPTIMIZATION_FLAGS_WINDOWS "/O2;/arch:AVX2" CACHE STRING "Extra C/CXX flags on Windows. Semicolon-separated.")
+set(OPTIMIZATION_FLAGS_WINDOWS "/O2;/arch:AVX" CACHE STRING "Extra C/CXX flags on Windows. Semicolon-separated.")
 
 if(WIN32)
 	set(_sb_opt_flags "${OPTIMIZATION_FLAGS_WINDOWS}")
