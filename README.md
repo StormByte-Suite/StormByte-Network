@@ -9,7 +9,7 @@
 
 StormByte-Network is the C++26 networking module of the [StormByte](https://suite.stormbyte.org/StormByte) suite.
 
-It depends on [StormByte Base 2.2.2](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2), [StormByte Buffer 2.0.2](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2), [StormByte Logger 2.0.2](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2), and [StormByte System 2.0.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2).
+It depends on [StormByte Base 2.2.2](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2), [StormByte Buffer 2.0.5](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5), [StormByte Logger 2.0.5](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5), and [StormByte System 2.1.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2).
 
 It is not a thin socket wrapper. You inherit `Client` or `Server`, define packets, and attach Buffer pipelines. POSIX and Winsock, framing, event-driven I/O and bounded packet processing stay private.
 
@@ -84,9 +84,9 @@ These examples use `ccache`; install it or omit the two compiler-launcher option
 | Dependency | Required Version | Role |
 |------------|------------------|------|
 | [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2) | [2.2.2](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2) | Expected, Safe ownership/containers/synchronization/threads, Size, ByteSize, visibility |
-| [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2) | [2.0.2](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
-| [StormByte-Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2) | [2.0.2](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2) | Diagnostics |
-| [StormByte-System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2) | [2.0.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2) | Calling-thread utilities |
+| [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5) | [2.0.5](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
+| [StormByte-Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5) | [2.0.5](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5) | Diagnostics |
+| [StormByte-System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2) | [2.1.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2) | Calling-thread utilities |
 
 ## The rest of the suite
 

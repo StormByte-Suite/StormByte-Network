@@ -9,18 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 StormByte Network is the C++26 networking layer of the StormByte suite.
 
-It depends on [StormByte Base](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.0) 2.2.0, [StormByte Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.3) 2.0.3, [StormByte Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.3) 2.0.3, and [StormByte System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.0) 2.1.0. Each is its own archive. This repository is not Base, Buffer, Config, Crypto, Database, Logger, Multimedia or System.
+It depends on [StormByte Base](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2) 2.2.2, [StormByte Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5) 2.0.5, [StormByte Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5) 2.0.5, and [StormByte System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2) 2.1.2. Each is its own archive. This repository is not Base, Buffer, Config, Crypto, Database, Logger, Multimedia or System.
 
 Inherit `Client` or `Server`, define packets, and attach Buffer pipelines.
 IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public API.
 
 ## [Unreleased]
 
+[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.5...HEAD
+
+## [2.0.5] - 2026-10-28
+
 ### Changed
 
-- Bundled builds use Base 2.2.2. Require BuildMaster 2.1.3 and pin its bundled submodule to the published release.
+- Bundled builds use Base 2.2.2, Buffer 2.0.5, Logger 2.0.5 and System 2.1.2. Require BuildMaster 2.1.3 and pin its bundled submodule to the published release.
 
-[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.4...HEAD
+[2.0.5]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.4...2.0.5
 
 ## [2.0.4] - 2026-10-24
 
