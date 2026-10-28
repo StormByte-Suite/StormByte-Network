@@ -16,6 +16,10 @@ IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public
 
 ## [Unreleased]
 
+### Changed
+
+- Bundled builds use Base 2.2.2. Require BuildMaster 2.1.3 and pin its bundled submodule to the published release.
+
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.4...HEAD
 
 ## [2.0.4] - 2026-10-24

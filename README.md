@@ -9,7 +9,7 @@
 
 StormByte-Network is the C++26 networking module of the [StormByte](https://suite.stormbyte.org/StormByte) suite.
 
-It depends on [StormByte Base 2.1.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0), [StormByte Buffer 2.0.2](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2), [StormByte Logger 2.0.2](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2), and [StormByte System 2.0.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2).
+It depends on [StormByte Base 2.2.2](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2), [StormByte Buffer 2.0.2](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2), [StormByte Logger 2.0.2](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2), and [StormByte System 2.0.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2).
 
 It is not a thin socket wrapper. You inherit `Client` or `Server`, define packets, and attach Buffer pipelines. POSIX and Winsock, framing, event-driven I/O and bounded packet processing stay private.
 
@@ -53,7 +53,7 @@ cmake --build build-install -j
 cmake --install build-install
 ```
 
-`BUILD_SHARED_LIBS` defaults to `ON`; use `-DBUILD_SHARED_LIBS=OFF` for a static build. Needs [StormByte-BuildMaster](https://github.com/StormByte-Suite/StormByte-BuildMaster) >= 2.1.0. Configure downloads the StormByte release archives. There are no StormByte source submodules. BuildMaster is the installed package when it is >= 2.1.0, otherwise the `buildmaster` submodule. `-DENABLE_LTO=ON` and `-DENABLE_PGO=ON` match the release builds. macOS is Apple Clang only.
+`BUILD_SHARED_LIBS` defaults to `ON`; use `-DBUILD_SHARED_LIBS=OFF` for a static build. Needs [StormByte-BuildMaster](https://github.com/StormByte-Suite/StormByte-BuildMaster) >= 2.1.3. Configure downloads the StormByte release archives. There are no StormByte source submodules. BuildMaster is the installed package when it is >= 2.1.3, otherwise the `buildmaster` submodule. `-DENABLE_LTO=ON` and `-DENABLE_PGO=ON` match the release builds. macOS is Apple Clang only.
 
 These examples use `ccache`; install it or omit the two compiler-launcher options when it is unavailable.
 
@@ -83,7 +83,7 @@ These examples use `ccache`; install it or omit the two compiler-launcher option
 
 | Dependency | Required Version | Role |
 |------------|------------------|------|
-| [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0) | [2.1.0](https://github.com/StormByte-Suite/StormByte/releases/tag/2.1.0) | Expected, Safe ownership/containers/synchronization/threads, Size, ByteSize, visibility |
+| [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2) | [2.2.2](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2) | Expected, Safe ownership/containers/synchronization/threads, Size, ByteSize, visibility |
 | [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2) | [2.0.2](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.2) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
 | [StormByte-Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2) | [2.0.2](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.2) | Diagnostics |
 | [StormByte-System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2) | [2.0.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.0.2) | Calling-thread utilities |
