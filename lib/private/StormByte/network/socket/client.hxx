@@ -41,6 +41,7 @@
 #pragma once
 
 #include <StormByte/buffer/consumer.hxx>
+#include <StormByte/network/socket/operation.hxx>
 #include <StormByte/network/socket/socket.hxx>
 #include <StormByte/network/typedefs.hxx>
 #include <StormByte/safe/binary.hxx>
@@ -200,6 +201,24 @@ namespace StormByte {
 					 * @return Empty Expected on success.
 					 */
 					ExpectedVoid Send(std::span<const std::byte> data) noexcept;
+
+					/**
+					 * @brief Send bytes under one total deadline without discarding progress.
+					 * @param data Borrowed bytes.
+					 * @param control Absolute deadline and borrowed cancellation flag.
+					 * @return Stop reason, exact bytes accepted by the OS and native error.
+					 * @details Timeout/cancellation leaves the connection open. Bytes already
+					 * accepted cannot be undone; do not replay the entire payload blindly.
+					 */
+					OperationResult Send(std::span<const std::byte> data, const OperationControl& control) noexcept;
+
+					/**
+					 * @brief Attempt a partial non-blocking read into caller storage.
+					 * @param data Nonempty borrowed destination.
+					 * @return Complete with data, WouldBlock, PeerClosed, or Error.
+					 * @details No lifecycle state is changed on EOF; legacy read APIs are unchanged.
+					 */
+					OperationResult ReadSome(std::span<std::byte> data) noexcept;
 
 					/**
 					 * @brief Send Base-owned bytes through a synchronous borrowed span.

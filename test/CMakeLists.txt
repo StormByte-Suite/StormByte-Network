@@ -1,6 +1,23 @@
 option(ENABLE_TEST "Enable Unit Tests" OFF)
 if(ENABLE_TEST)
 	enable_testing()
+	# Private symbols are hidden in the shared library. Compile the transport
+	# provider locally rather than exporting internals or requiring static archives.
+	add_executable(TransportTest
+		transport_test.cxx
+		../lib/private/StormByte/network/connection/handler.cxx
+		../lib/private/StormByte/network/connection/info.cxx
+		../lib/private/StormByte/network/socket/client.cxx
+		../lib/private/StormByte/network/socket/operation.cxx
+		../lib/private/StormByte/network/socket/socket.cxx
+	)
+	target_link_libraries(TransportTest StormByte::Network)
+	if(WIN32)
+		target_link_libraries(TransportTest ws2_32 iphlpapi)
+	endif()
+	add_test(NAME TransportTest COMMAND TransportTest)
+	set_tests_properties(TransportTest PROPERTIES TIMEOUT 30)
+
 	foreach(test_class IN ITEMS
 		Client
 		ClientTelemetry

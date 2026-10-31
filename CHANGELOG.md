@@ -5,6 +5,11 @@ All notable changes to **StormByte-Network** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- Add opt-in private total-deadline/cancellation sends with retained partial-write
+  progress and explicit partial-read data/would-block/EOF/error outcomes.
+
 ## [Summary]
 
 StormByte Network is the C++26 networking layer of the StormByte suite.

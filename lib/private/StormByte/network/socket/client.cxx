@@ -267,6 +267,71 @@ ExpectedVoid Socket::Client::Send(Buffer::Consumer data) noexcept {
 	return {};
 }
 
+Socket::OperationResult Socket::Client::Send(
+	std::span<const std::byte> data, const OperationControl& control) noexcept {
+	ByteSize total{0};
+	if (m_status.load(Safe::MemoryOrder::Acquire) != Connection::Status::Connected || !HasHandle())
+		return {OperationState::Error};
+	while (!data.empty()) {
+		const auto state = control.Check();
+		if (state != OperationState::Complete)
+			return {state, total};
+#ifdef LINUX
+		const int flags = MSG_NOSIGNAL;
+#else
+		const int flags = 0;
+#endif
+		const int written = static_cast<int>(::send(m_handle,
+			reinterpret_cast<const char*>(data.data()),
+			static_cast<int>(ClampChunk(m_effective_send_buf, ByteSize{data.size()})), flags));
+		if (written > 0) {
+			total += ByteSize{written};
+			data = data.subspan(static_cast<std::size_t>(written));
+			continue;
+		}
+		if (written == 0)
+			return {OperationState::PeerClosed, total};
+		const int error = Connection::Handler::Instance().LastErrorCode();
+#ifdef WINDOWS
+		if (error == WSAEINTR)
+			continue;
+		const bool blocked = error == WSAEWOULDBLOCK;
+#else
+		if (error == EINTR)
+			continue;
+		const bool blocked = error == EAGAIN || error == EWOULDBLOCK;
+#endif
+		if (!blocked)
+			return {OperationState::Error, total, error};
+		auto result = WaitWritable(m_handle, control);
+		if (result.state != OperationState::Complete) {
+			result.bytes = total;
+			return result;
+		}
+	}
+	return {OperationState::Complete, total};
+}
+
+Socket::OperationResult Socket::Client::ReadSome(std::span<std::byte> data) noexcept {
+	if (data.empty() || m_status.load(Safe::MemoryOrder::Acquire) != Connection::Status::Connected || !HasHandle())
+		return {OperationState::Error};
+	const int received = static_cast<int>(::recv(m_handle,
+		reinterpret_cast<char*>(data.data()),
+		static_cast<int>(ClampChunk(m_effective_recv_buf, ByteSize{data.size()})), 0));
+	if (received > 0)
+		return {OperationState::Complete, ByteSize{received}};
+	if (received == 0)
+		return {OperationState::PeerClosed};
+	const int error = Connection::Handler::Instance().LastErrorCode();
+#ifdef WINDOWS
+	if (error == WSAEWOULDBLOCK)
+#else
+	if (error == EAGAIN || error == EWOULDBLOCK)
+#endif
+		return {OperationState::WouldBlock};
+	return {OperationState::Error, ByteSize{0}, error};
+}
+
 bool Socket::Client::HasShutdownRequest() noexcept {
 	char buffer[1];
 #ifdef UNIX
