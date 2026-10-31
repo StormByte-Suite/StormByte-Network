@@ -46,6 +46,7 @@
 #include <StormByte/network/exception.hxx>
 #include <StormByte/safe/pointers.hxx>
 #include <StormByte/safe/string.hxx>
+#include <StormByte/safe/vector.hxx>
 
 #include <string_view>
 
@@ -54,6 +55,8 @@
 #else
 #include <sys/socket.h>
 #endif
+
+STORMBYTE_DECLARE_MAYBE_SAFE(sockaddr);
 
 /**
  * @namespace StormByte
@@ -73,11 +76,35 @@ namespace StormByte {
 			constexpr const unsigned short DEFAULT_MTU = 1500;	///< Default MTU in bytes.
 
 			/**
+			 * @brief Explicit resolution policy; strict families never synthesize alternatives.
+			 */
+			enum class AddressPolicy { IPv4Only, IPv6Only, SystemOrder, PreferIPv4, PreferIPv6 };
+
+			/**
 			 * @class Info
 			 * @brief Resolved peer address with provider-owned native storage.
 			 */
 			class STORMBYTE_NETWORK_PRIVATE Info final {
 				public:
+					/**
+					 * @brief Provider-owned immutable alternative native addresses.
+					 * @details sockaddr contains only native scalar/byte fields. Safe owners
+					 * retain the Network storage factory's allocator and release operations.
+					 */
+					using Addresses = StormByte::Safe::Vector<StormByte::Safe::Shared<const sockaddr>>;
+
+					/**
+					 * @brief Blocking OS lookup returning all usable addresses.
+					 * @param hostname Borrowed host name without embedded nulls.
+					 * @param port Destination port.
+					 * @param policy Strict family or stable family preference.
+					 * @return Address alternatives or resolution error.
+					 * @details This primitive has no deadline. Use Resolver for bounded caller
+					 * waiting; getaddrinfo itself cannot be cancelled portably.
+					 */
+					static StormByte::Expected<Addresses, Exception> ResolveAll(
+						std::string_view hostname, unsigned short port, AddressPolicy policy) noexcept;
+
 					/**
 					 * @brief Copy constructor (deleted).
 					 * @param other Address that cannot be copied.

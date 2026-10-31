@@ -51,53 +51,53 @@
  * @brief Root namespace of the StormByte suite.
  */
 namespace StormByte {
-/**
- * @namespace StormByte::Network
- * @brief Network module of the StormByte suite.
- */
-namespace Network {
-/**
- * @namespace StormByte::Network::Socket
- * @brief Private native socket operations.
- */
-namespace Socket {
 	/**
-	 * @brief Terminal or immediate progress state, independent of native error codes.
+	 * @namespace StormByte::Network
+	 * @brief Network module of the StormByte suite.
 	 */
-	enum class OperationState { Complete, WouldBlock, PeerClosed, TimedOut, Cancelled, Error, Busy };
-
-	/**
-	 * @brief Scalar synchronous operation controls; no resources are retained.
-	 * @details Cancellation wins over expiry. The borrowed flag must outlive the
-	 * call. A maximum deadline means no timeout. Lifecycle and I/O remain serialized.
-	 */
-	struct OperationControl {
-		std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();	///< Absolute total deadline.
-		const StormByte::Safe::Atomic<bool>* cancellation = nullptr;	///< Borrowed cancellation flag.
-
+	namespace Network {
 		/**
-		 * @brief Check cancellation and the absolute deadline.
-		 * @return Complete when work may continue, otherwise its stop reason.
+		 * @namespace StormByte::Network::Socket
+		 * @brief Private native socket operations.
 		 */
-		OperationState Check() const noexcept;
-	};
+		namespace Socket {
+			/**
+			 * @brief Terminal or immediate progress state, independent of native error codes.
+			 */
+			enum class OperationState { Complete, WouldBlock, PeerClosed, TimedOut, Cancelled, Error, Busy };
 
-	/**
-	 * @brief Non-owning result of a controlled operation or single read.
-	 */
-	struct OperationResult {
-		OperationState state = OperationState::Complete;	///< Completion or stop reason.
-		StormByte::ByteSize bytes{0};	///< Bytes transferred, including progress before a failure.
-		int native_error = 0;	///< Captured OS error, zero for non-error outcomes.
-	};
+			/**
+			 * @brief Scalar synchronous operation controls; no resources are retained.
+			 * @details Cancellation wins over expiry. The borrowed flag must outlive the
+			 * call. A maximum deadline means no timeout. Lifecycle and I/O remain serialized.
+			 */
+			struct OperationControl {
+				std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::time_point::max();	///< Absolute total deadline.
+				const StormByte::Safe::Atomic<bool>* cancellation = nullptr;	///< Borrowed cancellation flag.
 
-	/**
-	 * @brief Wait for writability with bounded cancellation polling and EINTR retries.
-	 * @param handle Non-blocking native handle, borrowed for this call.
-	 * @param control Absolute deadline and optional cancellation flag.
-	 * @return Complete for readiness (including socket errors), or the stop reason.
-	 */
-	OperationResult WaitWritable(Connection::HandlerType handle, const OperationControl& control) noexcept;
-}
-}
+				/**
+				 * @brief Check cancellation and the absolute deadline.
+				 * @return Complete when work may continue, otherwise its stop reason.
+				 */
+				OperationState Check() const noexcept;
+			};
+
+			/**
+			 * @brief Non-owning result of a controlled operation or single read.
+			 */
+			struct OperationResult {
+				OperationState state = OperationState::Complete;	///< Completion or stop reason.
+				StormByte::ByteSize bytes{0};	///< Bytes transferred, including progress before a failure.
+				int native_error = 0;	///< Captured OS error, zero for non-error outcomes.
+			};
+
+			/**
+			 * @brief Wait for writability with bounded cancellation polling and EINTR retries.
+			 * @param handle Non-blocking native handle, borrowed for this call.
+			 * @param control Absolute deadline and optional cancellation flag.
+			 * @return Complete for readiness (including socket errors), or the stop reason.
+			 */
+			OperationResult WaitWritable(Connection::HandlerType handle, const OperationControl& control) noexcept;
+		}
+	}
 }

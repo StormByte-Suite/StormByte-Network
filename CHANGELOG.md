@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add opt-in private total-deadline/cancellation sends with retained partial-write
   progress and explicit partial-read data/would-block/EOF/error outcomes.
+- Add a managed single-slot private resolver, explicit IPv4/IPv6 alternative
+  address policies and total-deadline non-blocking connection fallback. Native
+  DNS remains uncancellable; timed-out work stays owned until joined cleanup.
 
 ## [Summary]
 

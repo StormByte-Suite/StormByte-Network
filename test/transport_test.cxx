@@ -42,6 +42,7 @@
 #include <StormByte/network/socket/client.hxx>
 #include <StormByte/test_handlers.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <iostream>
@@ -123,6 +124,141 @@ struct PeerFixture {
 	}
 };
 
+Safe::Atomic<int> lookup_calls{0};
+Safe::Atomic<int> lookup_completions{0};
+
+/**
+ * @brief Deterministic slow native-provider stand-in; no external DNS is required.
+ * @param hostname Borrowed request name.
+ * @param port Destination port.
+ * @param policy Requested address policy.
+ * @return Native numeric alternatives after a controlled delay.
+ */
+Expected<Connection::Info::Addresses, Network::Exception> SlowLookup(
+	std::string_view hostname, unsigned short port, Connection::AddressPolicy policy) noexcept {
+	lookup_calls.fetch_add(1, Safe::MemoryOrder::AcqRel);
+	std::this_thread::sleep_for(150ms);
+	auto result = Connection::Info::ResolveAll(hostname, port, policy);
+	lookup_completions.fetch_add(1, Safe::MemoryOrder::AcqRel);
+	return result;
+}
+
+// -------------------
+// Connection
+// -------------------
+
+int test_connect_deadline_cancel_and_retry() {
+	PeerFixture fixture;
+	auto addresses = Connection::Info::ResolveAll("127.0.0.1", fixture.port, Connection::AddressPolicy::IPv4Only);
+	ASSERT_TRUE(addresses.has_value());
+	Safe::Atomic<bool> cancelled{true};
+	auto result = fixture.client.ConnectResolved(addresses.value(), {{}, &cancelled});
+	ASSERT_TRUE(result.state == Socket::OperationState::Cancelled);
+	ASSERT_TRUE(fixture.client.Status() == Connection::Status::Disconnected);
+	result = fixture.client.ConnectResolved(addresses.value(), {std::chrono::steady_clock::now() - 1ms});
+	ASSERT_TRUE(result.state == Socket::OperationState::TimedOut);
+	ASSERT_TRUE(fixture.client.Status() == Connection::Status::Disconnected);
+	Connection::Info::Addresses invalid;
+	invalid.push_back({});
+	result = fixture.client.ConnectResolved(invalid, {});
+	ASSERT_TRUE(result.state == Socket::OperationState::Error);
+	result = fixture.client.ConnectResolved(addresses.value(), {std::chrono::steady_clock::now() + 1s});
+	ASSERT_TRUE(result.state == Socket::OperationState::Complete);
+	result = fixture.client.ConnectResolved(addresses.value(), {});
+	ASSERT_TRUE(result.state == Socket::OperationState::Error);
+	ASSERT_TRUE(fixture.client.Status() == Connection::Status::Connected);
+	return 0;
+}
+
+int test_connect_explicit_policy_preserves_family() {
+	PeerFixture fixture;
+	Socket::Client ipv6{Connection::Protocol::IPv6, fixture.logger};
+	Connection::Resolver resolver;
+	auto result = ipv6.Connect("127.0.0.1", fixture.port, resolver,
+		{std::chrono::steady_clock::now() + 1s});
+	ASSERT_TRUE(result.state == Socket::OperationState::Error);
+	result = ipv6.Connect("127.0.0.1", fixture.port, resolver,
+		{std::chrono::steady_clock::now() + 1s}, Connection::AddressPolicy::SystemOrder);
+	ASSERT_TRUE(result.state == Socket::OperationState::Complete);
+	ipv6.Disconnect();
+	ASSERT_TRUE(!ipv6.Connect("127.0.0.1", fixture.port));
+	ASSERT_TRUE(ipv6.Status() == Connection::Status::Disconnected);
+	return 0;
+}
+
+int test_connect_failed_alternatives_then_legacy_retry() {
+	PeerFixture fixture;
+	auto addresses = Connection::Info::ResolveAll("127.0.0.2", fixture.port, Connection::AddressPolicy::IPv4Only);
+	ASSERT_TRUE(addresses.has_value());
+	const auto result = fixture.client.ConnectResolved(addresses.value(), {std::chrono::steady_clock::now() + 1s});
+	ASSERT_TRUE(result.state == Socket::OperationState::Error && result.native_error != 0);
+	ASSERT_TRUE(fixture.client.Status() == Connection::Status::Disconnected);
+	ASSERT_TRUE(fixture.client.Handle() == static_cast<Connection::HandlerType>(-1));
+	fixture.Connect();
+	ASSERT_TRUE(fixture.client.Status() == Connection::Status::Connected);
+	return 0;
+}
+
+int test_connect_fallback_and_io() {
+	PeerFixture fixture;
+	auto addresses = Connection::Info::ResolveAll("127.0.0.2", fixture.port, Connection::AddressPolicy::IPv4Only);
+	auto reachable = Connection::Info::ResolveAll("127.0.0.1", fixture.port, Connection::AddressPolicy::IPv4Only);
+	ASSERT_TRUE(addresses.has_value() && reachable.has_value());
+	addresses->push_back((*reachable)[0]);
+	const auto result = fixture.client.ConnectResolved(addresses.value(), {std::chrono::steady_clock::now() + 1s});
+	ASSERT_TRUE(result.state == Socket::OperationState::Complete);
+	fixture.peer = ::accept(fixture.listener, nullptr, nullptr);
+	ASSERT_TRUE(fixture.peer != static_cast<Connection::HandlerType>(-1));
+	const std::array<std::byte, 1> byte{std::byte{'x'}};
+	ASSERT_TRUE(fixture.client.Send(byte, {}).bytes == ByteSize{1});
+	char received = 0;
+	ASSERT_TRUE(::recv(fixture.peer, &received, 1, 0) == 1 && received == 'x');
+	return 0;
+}
+
+int test_connect_managed_resolution() {
+	PeerFixture fixture;
+	Connection::Resolver resolver;
+	auto result = fixture.client.Connect("127.0.0.1", fixture.port, resolver,
+		{std::chrono::steady_clock::now() + 1s});
+	ASSERT_TRUE(result.state == Socket::OperationState::Complete);
+	ASSERT_TRUE(fixture.client.Status() == Connection::Status::Connected);
+	return 0;
+}
+
+#ifdef LINUX
+int test_connect_pending_deadline_and_cancellation() {
+	PeerFixture fixture;
+	ASSERT_TRUE(::listen(fixture.listener, 0) == 0);
+	Socket::Client queued{Connection::Protocol::IPv4, fixture.logger};
+	ASSERT_TRUE(queued.Connect("127.0.0.1", fixture.port).has_value());
+	auto addresses = Connection::Info::ResolveAll("127.0.0.1", fixture.port, Connection::AddressPolicy::IPv4Only);
+	ASSERT_TRUE(addresses.has_value());
+	auto start = std::chrono::steady_clock::now();
+	auto result = fixture.client.ConnectResolved(addresses.value(), {start + 30ms});
+	ASSERT_TRUE(result.state == Socket::OperationState::TimedOut);
+	ASSERT_TRUE(std::chrono::steady_clock::now() - start < 1s);
+	ASSERT_TRUE(fixture.client.Status() == Connection::Status::Disconnected);
+	ASSERT_TRUE(fixture.client.Handle() == static_cast<Connection::HandlerType>(-1));
+	Safe::Atomic<bool> cancelled{false};
+	std::thread cancel([&] {
+		std::this_thread::sleep_for(20ms);
+		cancelled.store(true, Safe::MemoryOrder::Release);
+	});
+	start = std::chrono::steady_clock::now();
+	result = fixture.client.ConnectResolved(addresses.value(), {start + 1s, &cancelled});
+	cancel.join();
+	ASSERT_TRUE(result.state == Socket::OperationState::Cancelled);
+	ASSERT_TRUE(std::chrono::steady_clock::now() - start < 1s);
+	ASSERT_TRUE(fixture.client.Status() == Connection::Status::Disconnected);
+	fixture.peer = ::accept(fixture.listener, nullptr, nullptr);
+	ASSERT_TRUE(fixture.peer != static_cast<Connection::HandlerType>(-1));
+	result = fixture.client.ConnectResolved(addresses.value(), {std::chrono::steady_clock::now() + 1s});
+	ASSERT_TRUE(result.state == Socket::OperationState::Complete);
+	return 0;
+}
+#endif
+
 // -------------------
 // Partial I/O
 // -------------------
@@ -132,6 +268,7 @@ int test_partial_read_states() {
 	std::array<std::byte, 8> buffer{};
 	ASSERT_TRUE(fixture.client.ReadSome(buffer).state == Socket::OperationState::Error);
 	fixture.Connect();
+	ASSERT_TRUE(fixture.client.ReadSome({}).state == Socket::OperationState::Error);
 	ASSERT_TRUE(fixture.client.ReadSome(buffer).state == Socket::OperationState::WouldBlock);
 	ASSERT_TRUE(::send(fixture.peer, "abc", 3, 0) == 3);
 	auto result = fixture.client.ReadSome(buffer);
@@ -150,6 +287,30 @@ int test_partial_read_states() {
 		std::this_thread::sleep_for(1ms);
 	}
 	ASSERT_TRUE(result.state == Socket::OperationState::PeerClosed);
+	ASSERT_TRUE(result.bytes == ByteSize{0});
+	return 0;
+}
+
+int test_partial_read_transport_error() {
+	PeerFixture fixture;
+	fixture.Connect();
+	const linger reset{1, 0};
+	ASSERT_TRUE(::setsockopt(fixture.peer, SOL_SOCKET, SO_LINGER,
+		reinterpret_cast<const char*>(&reset), sizeof(reset)) == 0);
+	Close(fixture.peer);
+	fixture.peer = static_cast<Connection::HandlerType>(-1);
+	std::array<std::byte, 8> buffer{};
+	Socket::OperationResult result;
+	for (int attempt = 0; attempt < 100; ++attempt) {
+		result = fixture.client.ReadSome(buffer);
+		if (result.state != Socket::OperationState::WouldBlock)
+			break;
+		std::this_thread::sleep_for(1ms);
+	}
+	ASSERT_TRUE(result.state == Socket::OperationState::Error && result.native_error != 0);
+	ASSERT_TRUE(result.bytes == ByteSize{0});
+	result = fixture.client.Send(buffer, {std::chrono::steady_clock::now() + 1s});
+	ASSERT_TRUE(result.state == Socket::OperationState::Error && result.native_error != 0);
 	ASSERT_TRUE(result.bytes == ByteSize{0});
 	return 0;
 }
@@ -190,6 +351,16 @@ int test_send_deadline_with_progress() {
 	ASSERT_TRUE(result.bytes > ByteSize{0} && result.bytes < ByteSize{data.size()});
 	ASSERT_TRUE(std::chrono::steady_clock::now() - start < 1s);
 	ASSERT_TRUE(fixture.client.Status() == Connection::Status::Connected);
+	std::array<std::byte, 4096> received{};
+	std::size_t remaining = static_cast<std::size_t>(result.bytes);
+	while (remaining > 0) {
+		const int count = static_cast<int>(::recv(fixture.peer, reinterpret_cast<char*>(received.data()),
+			static_cast<int>(std::min(remaining, received.size())), 0));
+		ASSERT_TRUE(count > 0);
+		for (int index = 0; index < count; ++index)
+			ASSERT_TRUE(received[static_cast<std::size_t>(index)] == std::byte{42});
+		remaining -= static_cast<std::size_t>(count);
+	}
 	return 0;
 }
 
@@ -210,14 +381,137 @@ int test_send_success_and_preflight() {
 	return 0;
 }
 
+// -------------------
+// Resolution
+// -------------------
+
+int test_resolution_cancelled_connect_and_cleanup() {
+	lookup_calls.store(0, Safe::MemoryOrder::Release);
+	lookup_completions.store(0, Safe::MemoryOrder::Release);
+	PeerFixture fixture;
+	Safe::Atomic<bool> cancelled{false};
+	Socket::OperationResult result;
+	const auto start = std::chrono::steady_clock::now();
+	{
+		Connection::Resolver resolver(SlowLookup);
+		std::thread cancel([&] {
+			std::this_thread::sleep_for(20ms);
+			cancelled.store(true, Safe::MemoryOrder::Release);
+		});
+		result = fixture.client.Connect("127.0.0.1", fixture.port, resolver, {start + 1s, &cancelled});
+		cancel.join();
+		ASSERT_TRUE(result.state == Socket::OperationState::Cancelled);
+		ASSERT_TRUE(std::chrono::steady_clock::now() - start < 100ms);
+		ASSERT_TRUE(fixture.client.Status() == Connection::Status::Disconnected);
+	}
+	ASSERT_TRUE(lookup_calls.load(Safe::MemoryOrder::Acquire) == 1);
+	ASSERT_TRUE(lookup_completions.load(Safe::MemoryOrder::Acquire) == 1);
+	return 0;
+}
+
+int test_resolution_deadline_busy_and_reuse() {
+	lookup_calls.store(0, Safe::MemoryOrder::Release);
+	lookup_completions.store(0, Safe::MemoryOrder::Release);
+	Connection::Resolver resolver(SlowLookup);
+	Socket::OperationState state;
+	const auto start = std::chrono::steady_clock::now();
+	auto result = resolver.Resolve("127.0.0.1", 1234, Connection::AddressPolicy::IPv4Only,
+		{start + 10ms}, state);
+	ASSERT_TRUE(!result && state == Socket::OperationState::TimedOut);
+	ASSERT_TRUE(std::chrono::steady_clock::now() - start < 100ms);
+	for (int attempt = 0; attempt < 20; ++attempt) {
+		result = resolver.Resolve("127.0.0.1", 1234, Connection::AddressPolicy::IPv4Only, {}, state);
+		ASSERT_TRUE(!result && state == Socket::OperationState::Busy);
+	}
+	ASSERT_TRUE(lookup_calls.load(Safe::MemoryOrder::Acquire) == 1);
+	std::this_thread::sleep_for(180ms);
+	result = resolver.Resolve("127.0.0.1", 1234, Connection::AddressPolicy::IPv4Only,
+		{std::chrono::steady_clock::now() + 1s}, state);
+	ASSERT_TRUE(result.has_value() && state == Socket::OperationState::Complete);
+	ASSERT_TRUE(lookup_calls.load(Safe::MemoryOrder::Acquire) == 2);
+	ASSERT_TRUE(lookup_completions.load(Safe::MemoryOrder::Acquire) == 2);
+	return 0;
+}
+
+int test_resolution_family_policy_and_addresses() {
+	using Policy = Connection::AddressPolicy;
+	auto ipv4 = Connection::Info::ResolveAll("127.0.0.1", 1234, Policy::IPv4Only);
+	auto ipv6 = Connection::Info::ResolveAll("::1", 1234, Policy::IPv6Only);
+	ASSERT_TRUE(ipv4.has_value() && ipv6.has_value());
+	ASSERT_TRUE((*ipv4)[0]->sa_family == AF_INET && (*ipv6)[0]->sa_family == AF_INET6);
+	auto info = Connection::Info::FromSockAddr((*ipv6)[0]);
+	ASSERT_TRUE(info.has_value() && info->Port() == 1234);
+	ASSERT_TRUE(!Connection::Info::ResolveAll("::1", 1234, Policy::IPv4Only));
+	ASSERT_TRUE(!Connection::Info::ResolveAll(std::string_view{"bad\0host", 8}, 1234, Policy::SystemOrder));
+	ASSERT_TRUE(!Connection::Info::ResolveAll("localhost", 1234, static_cast<Policy>(-1)));
+	for (auto policy: {Policy::SystemOrder, Policy::PreferIPv4, Policy::PreferIPv6}) {
+		auto addresses = Connection::Info::ResolveAll("localhost", 1234, policy);
+		ASSERT_TRUE(addresses.has_value() && !addresses->empty());
+		bool deferred = false;
+		const int preferred = policy == Policy::PreferIPv4 ? AF_INET : AF_INET6;
+		for (const auto& address: addresses.value()) {
+			auto peer = Connection::Info::FromSockAddr(address);
+			ASSERT_TRUE(peer.has_value() && peer->Port() == 1234);
+			if (policy != Policy::SystemOrder) {
+				if (address->sa_family != preferred)
+					deferred = true;
+				else
+					ASSERT_TRUE(!deferred);
+			}
+		}
+	}
+	return 0;
+}
+
+int test_resolution_preflight_and_error() {
+	Connection::Resolver resolver;
+	Socket::OperationState state;
+	Safe::Atomic<bool> cancelled{true};
+	auto result = resolver.Resolve("127.0.0.1", 1234, Connection::AddressPolicy::IPv4Only,
+		{{}, &cancelled}, state);
+	ASSERT_TRUE(!result && state == Socket::OperationState::Cancelled);
+	result = resolver.Resolve("127.0.0.1", 1234, Connection::AddressPolicy::IPv4Only,
+		{std::chrono::steady_clock::now() - 1ms}, state);
+	ASSERT_TRUE(!result && state == Socket::OperationState::TimedOut);
+	result = resolver.Resolve("::1", 1234, Connection::AddressPolicy::IPv4Only,
+		{std::chrono::steady_clock::now() + 1s}, state);
+	ASSERT_TRUE(!result && state == Socket::OperationState::Error);
+	return 0;
+}
+
 int main() {
 	int failures = 0;
+	// -------------------
+	// Connection
+	// -------------------
+	failures += test_connect_deadline_cancel_and_retry();
+	failures += test_connect_explicit_policy_preserves_family();
+	failures += test_connect_failed_alternatives_then_legacy_retry();
+	failures += test_connect_fallback_and_io();
+	failures += test_connect_managed_resolution();
+#ifdef LINUX
+	failures += test_connect_pending_deadline_and_cancellation();
+#endif
 	// -------------------
 	// Partial I/O
 	// -------------------
 	failures += test_partial_read_states();
+	failures += test_partial_read_transport_error();
 	failures += test_send_cancelled_with_progress();
 	failures += test_send_deadline_with_progress();
 	failures += test_send_success_and_preflight();
+	// -------------------
+	// Resolution
+	// -------------------
+	failures += test_resolution_cancelled_connect_and_cleanup();
+	failures += test_resolution_deadline_busy_and_reuse();
+	failures += test_resolution_family_policy_and_addresses();
+	failures += test_resolution_preflight_and_error();
+	if (failures == 0)
+#ifdef LINUX
+		std::cout << "15 focused transport cases passed\n";
+#else
+		std::cout << "14 focused transport cases passed (Linux backlog test not applicable)\n";
+#endif
 	return failures;
 }

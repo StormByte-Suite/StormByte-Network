@@ -176,6 +176,123 @@ ExpectedVoid Socket::Client::Send(const Buffer::FIFO& buffer) noexcept {
 	return Send(buffer.Data().span());
 }
 
+Socket::OperationResult Socket::Client::Connect(std::string_view hostname,
+	unsigned short port, Connection::Resolver& resolver, const OperationControl& control) noexcept {
+	if (m_protocol != Connection::Protocol::IPv4 && m_protocol != Connection::Protocol::IPv6)
+		return {OperationState::Error};
+	return Connect(hostname, port, resolver, control, m_protocol == Connection::Protocol::IPv4
+		? Connection::AddressPolicy::IPv4Only : Connection::AddressPolicy::IPv6Only);
+}
+
+Socket::OperationResult Socket::Client::Connect(std::string_view hostname, unsigned short port,
+	Connection::Resolver& resolver, const OperationControl& control, Connection::AddressPolicy policy) noexcept {
+	if (m_status.load(Safe::MemoryOrder::Acquire) != Connection::Status::Disconnected)
+		return {OperationState::Error};
+	OperationState state;
+	auto addresses = resolver.Resolve(hostname, port, policy, control, state);
+	if (!addresses)
+		return {state};
+	return ConnectResolved(addresses.value(), control);
+}
+
+Socket::OperationResult Socket::Client::ConnectResolved(
+	std::span<const Safe::Shared<const sockaddr>> addresses, const OperationControl& control) noexcept {
+	if (m_status.load(Safe::MemoryOrder::Acquire) != Connection::Status::Disconnected)
+		return {OperationState::Error};
+	const auto original_protocol = m_protocol;
+	auto fail = [&](OperationResult result) noexcept {
+		EnsureIsClosed();
+		m_conn_info.reset();
+		m_protocol = original_protocol;
+		m_status.store(Connection::Status::Disconnected, Safe::MemoryOrder::Release);
+		return result;
+	};
+	EnsureIsClosed();
+	m_conn_info.reset();
+	OperationResult last{OperationState::Error};
+	try {
+		m_status.store(Connection::Status::Connecting, Safe::MemoryOrder::Release);
+		for (const auto& address: addresses) {
+			const auto state = control.Check();
+			if (state != OperationState::Complete)
+				return fail({state});
+			EnsureIsClosed();
+			auto info = Connection::Info::FromSockAddr(address);
+			if (!info)
+				continue;
+			m_protocol = address->sa_family == AF_INET ? Connection::Protocol::IPv4 : Connection::Protocol::IPv6;
+			auto handle = CreateSocket();
+			if (!handle)
+				continue;
+			m_handle = handle.value();
+			m_status.store(Connection::Status::Connecting, Safe::MemoryOrder::Release);
+#ifdef WINDOWS
+			u_long mode = 1;
+			if (ioctlsocket(m_handle, FIONBIO, &mode) != 0) {
+				last = {OperationState::Error, ByteSize{0}, WSAGetLastError()};
+				continue;
+			}
+#else
+			const int flags = fcntl(m_handle, F_GETFL, 0);
+			if (flags < 0 || fcntl(m_handle, F_SETFL, flags | O_NONBLOCK) != 0) {
+				last = {OperationState::Error, ByteSize{0}, errno};
+				continue;
+			}
+#endif
+			const int connected = ::connect(m_handle, info->SockAddr().get(),
+#ifdef WINDOWS
+				static_cast<int>(info->SockAddrSize()));
+#else
+				static_cast<socklen_t>(info->SockAddrSize()));
+#endif
+			if (connected != 0) {
+				const int error = Connection::Handler::Instance().LastErrorCode();
+#ifdef WINDOWS
+				const bool pending = error == WSAEWOULDBLOCK || error == WSAEINPROGRESS || error == WSAEINTR;
+#else
+				const bool pending = error == EINPROGRESS || error == EWOULDBLOCK || error == EINTR;
+#endif
+				if (!pending) {
+					last = {OperationState::Error, ByteSize{0}, error};
+					continue;
+				}
+				last = WaitWritable(m_handle, control);
+				if (last.state == OperationState::TimedOut || last.state == OperationState::Cancelled)
+					return fail(last);
+				if (last.state != OperationState::Complete)
+					continue;
+			}
+			int socket_error = 0;
+#ifdef WINDOWS
+			int length = sizeof(socket_error);
+#else
+			socklen_t length = sizeof(socket_error);
+#endif
+			if (getsockopt(m_handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&socket_error), &length) != 0) {
+				last = {OperationState::Error, ByteSize{0}, Connection::Handler::Instance().LastErrorCode()};
+				continue;
+			}
+			if (socket_error != 0) {
+				last = {OperationState::Error, ByteSize{0}, socket_error};
+				continue;
+			}
+			const auto before_initialization = control.Check();
+			if (before_initialization != OperationState::Complete)
+				return fail({before_initialization});
+			m_conn_info = Safe::MakeUnique<Connection::Info>(std::move(info.value()));
+			InitializeAfterConnect();
+			m_protocol = original_protocol;
+			const auto after_initialization = control.Check();
+			if (after_initialization != OperationState::Complete)
+				return fail({after_initialization});
+			return {};
+		}
+		return fail(last);
+	} catch (...) {
+		return fail({OperationState::Error});
+	}
+}
+
 ExpectedVoid Socket::Client::Send(const Safe::Binary& data) noexcept {
 	return Send(data.span());
 }

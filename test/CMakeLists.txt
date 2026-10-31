@@ -7,6 +7,7 @@ if(ENABLE_TEST)
 		transport_test.cxx
 		../lib/private/StormByte/network/connection/handler.cxx
 		../lib/private/StormByte/network/connection/info.cxx
+		../lib/private/StormByte/network/connection/resolver.cxx
 		../lib/private/StormByte/network/socket/client.cxx
 		../lib/private/StormByte/network/socket/operation.cxx
 		../lib/private/StormByte/network/socket/socket.cxx

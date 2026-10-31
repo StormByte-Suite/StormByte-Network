@@ -41,6 +41,7 @@
 #pragma once
 
 #include <StormByte/buffer/consumer.hxx>
+#include <StormByte/network/connection/resolver.hxx>
 #include <StormByte/network/socket/operation.hxx>
 #include <StormByte/network/socket/socket.hxx>
 #include <StormByte/network/typedefs.hxx>
@@ -156,6 +157,41 @@ namespace StormByte {
 					 * @return Empty Expected on success.
 					 */
 					ExpectedVoid Connect(std::string_view hostname, const unsigned short& port) noexcept;
+
+					/**
+					 * @brief Resolve and connect using the constructor's strict address family.
+					 * @param hostname Borrowed host name.
+					 * @param port Destination port.
+					 * @param resolver Shared managed DNS slot, retained by its caller.
+					 * @param control One total deadline covering caller DNS wait and all attempts.
+					 * @return Completion or stop reason; failure leaves this client disconnected.
+					 */
+					OperationResult Connect(std::string_view hostname, unsigned short port,
+						Connection::Resolver& resolver, const OperationControl& control) noexcept;
+
+					/**
+					 * @brief Resolve and connect with explicit family policy.
+					 * @param hostname Borrowed host name.
+					 * @param port Destination port.
+					 * @param resolver Shared managed DNS slot.
+					 * @param control One total deadline covering DNS wait and all attempts.
+					 * @param policy Explicit resolution policy.
+					 * @return Completion or stop reason. Already-connected clients are preserved.
+					 */
+					OperationResult Connect(std::string_view hostname, unsigned short port,
+						Connection::Resolver& resolver, const OperationControl& control,
+						Connection::AddressPolicy policy) noexcept;
+
+					/**
+					 * @brief Attempt resolved alternatives sequentially with non-blocking connect.
+					 * @param addresses Borrowed immutable native address owners, in attempt order.
+					 * @param control One total deadline for all alternatives, never restarted.
+					 * @return Complete only after SO_ERROR succeeds; failure closes failed handles.
+					 * @details Constructor family preference remains unchanged for future calls.
+					 */
+					OperationResult ConnectResolved(
+						std::span<const StormByte::Safe::Shared<const sockaddr>> addresses,
+						const OperationControl& control) noexcept;
 
 					/**
 					 * @brief Receive up to @p size bytes (no timeout).

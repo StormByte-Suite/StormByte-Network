@@ -43,6 +43,7 @@
 
 #include <cstring>
 #include <memory>
+#include <string>
 #include <utility>
 
 #ifdef WINDOWS
@@ -75,6 +76,64 @@ StormByte::Expected<Info, Exception> Info::FromHost(std::string_view hostname, c
 	if (!expected_sock_addr)
 		return Unexpected(expected_sock_addr.error());
 	return Info(std::move(expected_sock_addr.value()));
+}
+
+StormByte::Expected<Info::Addresses, Exception> Info::ResolveAll(
+	std::string_view hostname, unsigned short port, AddressPolicy policy) noexcept {
+	if (hostname.find('\0') != std::string_view::npos)
+		return Unexpected<Exception>("Invalid host name");
+	addrinfo hints{}, *result = nullptr;
+	switch (policy) {
+		case AddressPolicy::IPv4Only:
+			hints.ai_family = AF_INET;
+			break;
+		case AddressPolicy::IPv6Only:
+			hints.ai_family = AF_INET6;
+			break;
+		case AddressPolicy::SystemOrder:
+		case AddressPolicy::PreferIPv4:
+		case AddressPolicy::PreferIPv6:
+			hints.ai_family = AF_UNSPEC;
+			break;
+		default:
+			return Unexpected<Exception>("Unsupported address policy");
+	}
+	hints.ai_socktype = SOCK_STREAM;
+	try {
+		(void)Handler::Instance();
+		const StormByte::Safe::String host{hostname};
+		const std::string service = std::to_string(port);
+		hints.ai_flags = AI_NUMERICSERV;
+		const int error = getaddrinfo(host.c_str(), service.c_str(), &hints, &result);
+		std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> guard(result, freeaddrinfo);
+		if (error != 0)
+			return Unexpected<Exception>("Can't resolve host '{}': getaddrinfo code {}", hostname, error);
+		Addresses addresses;
+		Addresses deferred;
+		const int preferred = policy == AddressPolicy::PreferIPv4 ? AF_INET :
+			policy == AddressPolicy::PreferIPv6 ? AF_INET6 : AF_UNSPEC;
+		for (const auto* entry = result; entry; entry = entry->ai_next) {
+			if (!entry->ai_addr || (entry->ai_family != AF_INET && entry->ai_family != AF_INET6))
+				continue;
+			const auto length = entry->ai_family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
+			if (static_cast<std::size_t>(entry->ai_addrlen) < length)
+				continue;
+			auto storage = StormByte::Safe::MakeShared<sockaddr_storage>();
+			std::memcpy(storage.get(), entry->ai_addr, length);
+			auto address = StormByte::Safe::ReinterpretPointerCast<const sockaddr>(storage);
+			if (preferred != AF_UNSPEC && entry->ai_family != preferred)
+				deferred.push_back(std::move(address));
+			else
+				addresses.push_back(std::move(address));
+		}
+		for (auto& address: deferred)
+			addresses.push_back(std::move(address));
+		if (addresses.empty())
+			return Unexpected<Exception>("No usable resolved addresses");
+		return addresses;
+	} catch (...) {
+		return Unexpected<Exception>("Failed to allocate resolved addresses");
+	}
 }
 
 StormByte::Expected<Info, Exception> Info::FromSockAddr(StormByte::Safe::Shared<const sockaddr> sock_addr) noexcept {
