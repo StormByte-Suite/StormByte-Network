@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### TODO
+
+- Missing deadlines on the request/response `Client` path. Internet clients
+  (for example a GUI talking to a remote licensing server over TLS) cannot tell
+  a slow peer from a hung one and currently block forever. The deadline and
+  cancellation model already used by `HTTP::Client` and the remote-file plane
+  should also cover:
+  - `Client::Send` (`lib/public/StormByte/network/client.cxx`): after
+    `Endpoint::Reply` it waits in `connection->Receive()` with no limit. The
+    per-request deadline should be configurable (for example
+    `Send(packet, timeout)` or a client-wide default) and a timeout should be
+    reported as a distinct error instead of an empty packet.
+  - `Transport::Frame::ProcessInput`
+    (`lib/private/StormByte/network/transport/frame.cxx`): opcode, size and
+    payload reads call `Receive`/`ReceiveInto` with `timeout_seconds = 0`
+    (infinite), even though `Socket::Client::ReceiveLoop` already supports a
+    timeout. One deadline should span the whole frame, so a peer that dribbles
+    bytes cannot extend it indefinitely.
+  - `Client::Connect` → `Socket::Client::Connect(hostname, port)`
+    (`lib/private/StormByte/network/socket/client.cxx`): DNS resolution
+    (`Connection::Info::FromHost`) and `::connect()` are blocking and have no
+    deadline. It should reuse the `Resolver` + `OperationControl` overload that
+    `HTTP::Client` uses and accept a connect timeout.
+  - TLS handshake: `Socket::Client::StartTLS` hard-codes a 10 s deadline. It
+    should be configurable, ideally as part of the same connect deadline.
+  - Cross-thread cancellation: `Client::Disconnect()` only resets
+    `m_connection`, but `Send` holds its own copy. A `Disconnect` from another
+    thread therefore does not unblock a pending receive, and the unsynchronized
+    access to `m_connection` is a data race. A thread-safe `Cancel()` is needed
+    that shuts the socket down (`shutdown()`) and wakes any blocked operation.
+- Investigate the ~1 s round-trip latency observed for a single small
+  request/response on localhost (possibly the `WaitForData` polling interval on
+  the client or server receive path).
+
 ## [3.0.0] - 2026-11-01
 
 ### Added
