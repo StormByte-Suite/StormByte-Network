@@ -9,20 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.0.0] - 2026-11-01
 
-- Allow 90 seconds for the complete HTTP test suite on native-policy platforms
-  and report per-case durations, without relaxing individual operation deadlines.
-- Flush HTTP per-case diagnostics before CI timeouts and separate TLS
-  cancellation from expiry; connection-refusal fixtures release their port
-  before connecting instead of leaving a bound non-listening socket.
-- Limit disposable TLS leaf certificates to 365 days for macOS native policy,
-  use bound non-listening loopback ports for connection-refusal tests, and
-  check resolver cancellation independently of thread scheduling latency.
-- Accept an explicit transport reset as a rejected mTLS connection in HTTP tests.
-- Use nghttp2's portable signed-size API for HTTP/2 on Windows and report
-  native resolution failures and macOS TLS fixture policy rejections in CI.
-- Resolve numeric IPv4/IPv6 addresses without name-service lookup and give
-  Windows select-based event loops enough capacity to preserve the 64-peer TLS
-  handshake limit.
+### Added
+
 - Add the public, synchronous `HTTP::Client` with Safe-owned binary requests,
   duplicate-preserving response headers/trailers and typed errors. Support
   HTTP/1.1 (including HTTP/1.0 responses) and actual nghttp2 HTTP/2 over plain
@@ -41,15 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add deterministic loopback HTTP/HTTPS HTTP/1 and HTTP/2 regression tests,
   including sizable byte-exact h2 flow-control transfers and disposable offline
   client-authentication TLS fixtures.
-- Keep bundled nghttp2 archive symbols hidden inside Network rather than
-  re-exporting the private engine from the shared library.
-- **Breaking:** remove public `Packet::PROCESS_THRESHOLD`. All packet payloads now
-  pass through input and output pipelines uniformly, regardless of opcode.
-  Existing packet opcodes and wire framing are unchanged.
-- **Breaking:** remove protected `Client::ConfigurePipelines` and
-  `Server::ConfigureClientPipelines`. Derived consumers, including
-  Alchemist/Alchemy and other applications, must migrate and rebuild; their
-  application packets, opcodes, serialization and handlers are unchanged.
 - Add public pre-connect `ConfigureTLS`/`DisableTLS` with validated, deeply
   copied Crypto TLS identity, custom roots, policy, ALPN, revocation evidence
   and optional mTLS inputs. Retain configuration across reconnects and moves.
@@ -58,17 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deterministic offline or fixed-time revocation-evidence validation.
   Plaintext remains supported only when TLS is unconfigured; configured
   connections fail closed with no plaintext fallback.
-- Protect all remote-file auxiliary traffic with independent TLS sessions
-  inheriting primary configuration, including file bytes, tokens, framing,
-  metadata, control operations and heartbeat/release exchanges.
-- Advance server TLS handshakes and record I/O incrementally without blocking
-  the event loop, cap pending primary handshakes at 64 and enforce ten-second
-  handshake deadlines. Admit callbacks and packet dispatch only after
-  authenticated success; authenticate file channels before token processing.
-- Replace the client/server XOR fixture with real offline Crypto TLS and
-  remove the obsolete application-handshake suite and README example.
-- Require StormByte-Crypto 2.3.0 for TLS integration, using its published binary
-  release in bundled builds and the Crypto component in system builds.
 - Add `WITH_NGHTTP2=BUNDLED|SYSTEM`; bundled builds use the source submodule
   pinned to v1.70.0, while an explicitly missing system library is an error.
 - Add a private TLS socket adapter driven by StormByte-Crypto, with authenticated
@@ -81,6 +49,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   address policies and total-deadline non-blocking connection fallback. Native
   DNS remains uncancellable; timed-out work stays owned until joined cleanup.
 
+### Changed
+
+- **Breaking:** all packet payloads now pass through input and output pipelines
+  uniformly, regardless of opcode. Existing packet opcodes and wire framing
+  are unchanged.
+- Require StormByte-Crypto 2.3.0 for TLS integration, using its published binary
+  release in bundled builds and the Crypto component in system builds.
+- Advance server TLS handshakes and record I/O incrementally without blocking
+  the event loop, cap pending primary handshakes at 64 and enforce ten-second
+  handshake deadlines.
+- Replace the client/server XOR fixture with real offline Crypto TLS.
+- Allow 90 seconds for the complete HTTP test suite on native-policy platforms
+  and report per-case durations, without relaxing individual operation deadlines.
+- Flush HTTP per-case diagnostics before CI timeouts and report native
+  resolution failures and macOS TLS fixture policy rejections in CI.
+
+### Removed
+
+- **Breaking:** remove public `Packet::PROCESS_THRESHOLD`.
+- **Breaking:** remove protected `Client::ConfigurePipelines` and
+  `Server::ConfigureClientPipelines`. Derived consumers, including
+  Alchemist/Alchemy and other applications, must migrate and rebuild; their
+  application packets, opcodes, serialization and handlers are unchanged.
+- Remove the obsolete application-handshake suite and README example.
+
+### Fixed
+
+- Resolve numeric IPv4/IPv6 addresses without name-service lookup and give
+  Windows select-based event loops enough capacity to preserve the 64-peer TLS
+  handshake limit.
+- Use nghttp2's portable signed-size API for HTTP/2 on Windows.
+- Limit disposable TLS leaf certificates to 365 days for macOS native policy.
+- Release connection-refusal fixture ports before connecting instead of using
+  `127.0.0.2` or leaving a bound non-listening socket.
+- Separate TLS cancellation from expiry and check resolver cancellation
+  independently of thread scheduling latency.
+- Accept an explicit transport reset as a rejected mTLS connection in HTTP tests.
+
+### Security
+
+- Protect all remote-file auxiliary traffic with independent TLS sessions
+  inheriting primary configuration, including file bytes, tokens, framing,
+  metadata, control operations and heartbeat/release exchanges.
+- Admit callbacks and packet dispatch only after authenticated success;
+  authenticate file channels before token processing.
+- Keep bundled nghttp2 archive symbols hidden inside Network rather than
+  re-exporting the private engine from the shared library.
+
+[3.0.0]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.5...3.0.0
+
 ## [Summary]
 
 StormByte Network is the C++26 networking layer of the StormByte suite.
@@ -90,9 +108,7 @@ It depends on [StormByte Base](https://github.com/StormByte-Suite/StormByte/rele
 Inherit `Client` or `Server`, define packets, and optionally configure Crypto TLS.
 IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public API.
 
-## [Unreleased]
-
-[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/2.0.5...HEAD
+[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.0.0...HEAD
 
 ## [2.0.5] - 2026-10-28
 
