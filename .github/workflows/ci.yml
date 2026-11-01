@@ -165,6 +165,15 @@ jobs:
           run-tests: true
           ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
 
+      - name: Diagnose macOS TLS fixture rejection
+        if: failure()
+        shell: bash
+        run: |
+          /usr/bin/security verify-cert \
+            -c test/fixtures/tls/server.pem \
+            -r test/fixtures/tls/ca.pem \
+            -p ssl -s localhost -L -v
+
   ###########################################################################
   # Windows
   ###########################################################################

@@ -342,12 +342,17 @@ Socket::OperationResult Socket::Client::ConnectResolved(
 				return fail({state});
 			EnsureIsClosed();
 			auto info = Connection::Info::FromSockAddr(address);
-			if (!info)
+			if (!info) {
+				m_logger << Logger::Level::Error << "Invalid resolved address: " << info.error()->what() << std::endl;
 				continue;
+			}
 			m_protocol = address->sa_family == AF_INET ? Connection::Protocol::IPv4 : Connection::Protocol::IPv6;
 			auto handle = CreateSocket();
-			if (!handle)
+			if (!handle) {
+				last = {OperationState::Error, ByteSize{0}, Connection::Handler::Instance().LastErrorCode()};
+				m_logger << Logger::Level::Error << "Failed to create resolved socket: " << handle.error()->what() << std::endl;
 				continue;
+			}
 			m_handle = handle.value();
 			m_status.store(Connection::Status::Connecting, Safe::MemoryOrder::Release);
 #ifdef WINDOWS

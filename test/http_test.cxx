@@ -44,6 +44,7 @@
 
 #include "tls_fixture.hxx"
 
+#define NGHTTP2_NO_SSIZE_T
 #include <nghttp2/nghttp2.h>
 
 #include <algorithm>
@@ -417,9 +418,9 @@ struct H2Peer {
 			if (self.fault == Fault::Header)
 				fields.emplace_back("bad", "bad\rvalue");
 			native = Fields(fields);
-			nghttp2_data_provider provider{};
+			nghttp2_data_provider2 provider{};
 			provider.read_callback = Body;
-			Require(nghttp2_submit_response(self.session, frame->hd.stream_id, native.data(), native.size(),
+			Require(nghttp2_submit_response2(self.session, frame->hd.stream_id, native.data(), native.size(),
 				self.bodyless ? nullptr : &provider) == 0,
 				"response submit");
 		});
@@ -428,7 +429,7 @@ struct H2Peer {
 	/**
 	 * @brief Flow-controlled large response and final trailers.
 	 */
-	static ssize_t Body(nghttp2_session*, int32_t stream, uint8_t* output, size_t size, uint32_t* flags,
+	static nghttp2_ssize Body(nghttp2_session*, int32_t stream, uint8_t* output, size_t size, uint32_t* flags,
 		nghttp2_data_source*, void* user) noexcept {
 		std::size_t count = 0;
 		const auto result = Guard(user, [&](H2Peer& self) {
@@ -445,7 +446,7 @@ struct H2Peer {
 				Require(nghttp2_submit_trailer(self.session, stream, native.data(), native.size()) == 0, "trailer submit");
 			}
 		});
-		return result ? NGHTTP2_ERR_CALLBACK_FAILURE : static_cast<ssize_t>(count);
+		return result ? NGHTTP2_ERR_CALLBACK_FAILURE : static_cast<nghttp2_ssize>(count);
 	}
 
 	/**
@@ -472,7 +473,7 @@ struct H2Peer {
 		while (!closed) {
 			for (;;) {
 				const uint8_t* output;
-				const auto count = nghttp2_session_mem_send(session, &output);
+				const auto count = nghttp2_session_mem_send2(session, &output);
 				Require(count >= 0 && !failed, "server mem send");
 				if (!count)
 					break;
@@ -482,8 +483,8 @@ struct H2Peer {
 				break;
 			const auto count = peer.Read(input);
 			Require(count != 0, "server HTTP/2 EOF");
-			const auto consumed = nghttp2_session_mem_recv(session, reinterpret_cast<const uint8_t*>(input.data()), count);
-			Require(consumed == static_cast<ssize_t>(count) && !failed, "server mem recv");
+			const auto consumed = nghttp2_session_mem_recv2(session, reinterpret_cast<const uint8_t*>(input.data()), count);
+			Require(consumed == static_cast<nghttp2_ssize>(count) && !failed, "server mem recv");
 		}
 		// A fresh-connection client closes after its final response. Drain its
 		// remaining WINDOW_UPDATE/ACK bytes first; closing with unread TCP input

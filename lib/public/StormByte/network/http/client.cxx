@@ -44,6 +44,7 @@
 #include <StormByte/network/socket/tls.hxx>
 #include <StormByte/network/tls_configuration.hxx>
 
+#define NGHTTP2_NO_SSIZE_T
 #include <nghttp2/nghttp2.h>
 
 #include <algorithm>
@@ -1094,7 +1095,7 @@ namespace {
 		/**
 		 * @brief Feed upload bytes under nghttp2's send-window scheduling.
 		 */
-		static ssize_t Upload(nghttp2_session*, int32_t, uint8_t* output, size_t size,
+		static nghttp2_ssize Upload(nghttp2_session*, int32_t, uint8_t* output, size_t size,
 			uint32_t* flags, nghttp2_data_source*, void* user) noexcept {
 			std::size_t copied = 0;
 			const auto result = Guard(user, [&](H2& self) {
@@ -1106,7 +1107,7 @@ namespace {
 				if (self.sent == body.size())
 					*flags |= NGHTTP2_DATA_FLAG_EOF;
 			});
-			return result ? NGHTTP2_ERR_CALLBACK_FAILURE : static_cast<ssize_t>(copied);
+			return result ? NGHTTP2_ERR_CALLBACK_FAILURE : static_cast<nghttp2_ssize>(copied);
 		}
 
 		/**
@@ -1168,9 +1169,9 @@ namespace {
 				headers.push_back({reinterpret_cast<uint8_t*>(name.data()), reinterpret_cast<uint8_t*>(value.data()),
 					name.size(), value.size(), NGHTTP2_NV_FLAG_NONE});
 			}
-			nghttp2_data_provider provider{};
+			nghttp2_data_provider2 provider{};
 			provider.read_callback = Upload;
-			stream = nghttp2_submit_request(session, nullptr, headers.data(), headers.size(),
+			stream = nghttp2_submit_request2(session, nullptr, headers.data(), headers.size(),
 				request.body.empty() ? nullptr : &provider, nullptr);
 			Result(stream);
 			std::array<std::byte, 16384> input{};
@@ -1178,7 +1179,7 @@ namespace {
 				Check(channel.control.Check());
 				for (;;) {
 					const uint8_t* output = nullptr;
-					const auto bytes = nghttp2_session_mem_send(session, &output);
+					const auto bytes = nghttp2_session_mem_send2(session, &output);
 					if (bytes < 0)
 						Result(static_cast<int>(bytes));
 					Result(0);
@@ -1193,7 +1194,7 @@ namespace {
 				const auto bytes = channel.Read(input);
 				if (!bytes)
 					throw Error::Truncated;
-				const auto consumed = nghttp2_session_mem_recv(session,
+				const auto consumed = nghttp2_session_mem_recv2(session,
 					reinterpret_cast<const uint8_t*>(input.data()), bytes);
 				if (consumed < 0)
 					Result(static_cast<int>(consumed));

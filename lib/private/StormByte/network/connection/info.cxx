@@ -199,8 +199,11 @@ StormByte::Expected<StormByte::Safe::Shared<sockaddr>, Exception> Info::ResolveH
 	(void)Handler::Instance();
 	int ret = getaddrinfo(owned_hostname.c_str(), nullptr, &hints, &res);
 	std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard(res, freeaddrinfo);
-	if (ret != 0 || !res)
-		return Unexpected<Exception>("Can't resolve host '{}': {}", hostname, std::string_view{Handler::Instance().LastError()});
+	if (ret != 0)
+		return Unexpected<Exception>("Can't resolve host '{}': getaddrinfo code {} (family {})",
+			hostname, ret, hints.ai_family);
+	if (!res)
+		return Unexpected<Exception>("No resolved addresses for host '{}'", hostname);
 	if (!res->ai_addr || (res->ai_family != AF_INET && res->ai_family != AF_INET6))
 		return Unexpected<Exception>("Unable to determine resolved address");
 	const auto size = res->ai_family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);

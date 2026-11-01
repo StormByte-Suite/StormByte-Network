@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Use nghttp2's portable signed-size API for HTTP/2 on Windows and report
+  native resolution failures and macOS TLS fixture policy rejections in CI.
 - Resolve numeric IPv4/IPv6 addresses without name-service lookup and give
   Windows select-based event loops enough capacity to preserve the 64-peer TLS
   handshake limit.
