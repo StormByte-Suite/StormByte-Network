@@ -194,10 +194,8 @@ int test_move_construction() {
 
 int test_opcode_boundaries() {
 	const std::array<Packet::OpcodeType, 5> opcodes{
-		0, Packet::PROCESS_THRESHOLD - 1, Packet::PROCESS_THRESHOLD,
-		Packet::PROCESS_THRESHOLD + 1, std::numeric_limits<Packet::OpcodeType>::max()
+		0, 9, 10, 11, std::numeric_limits<Packet::OpcodeType>::max()
 	};
-	ASSERT_EQUAL(Packet::OpcodeType{10}, Packet::PROCESS_THRESHOLD);
 	for (const auto opcode: opcodes) {
 		const PacketFixture packet(opcode);
 		ASSERT_EQUAL(opcode, packet.Opcode());

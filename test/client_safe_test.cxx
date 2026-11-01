@@ -152,7 +152,7 @@ int test_offline_operations() {
 			/**
 			 * @brief Construct an application request with no payload.
 			 */
-			EmptyPacket(): Packet(PROCESS_THRESHOLD) {}
+			EmptyPacket(): Packet(10) {}
 
 		protected:
 			/**
@@ -167,8 +167,8 @@ int test_offline_operations() {
 	ClientFixture client;
 	ASSERT_EQUAL(Network::Connection::Status::Disconnected, client.Status());
 	ASSERT_NOT_NULL(client.Telemetry().get());
-	ASSERT_TRUE(client.AllowIncomingOpcode("offline", Network::Transport::Packet::PROCESS_THRESHOLD));
-	ASSERT_TRUE(client.AllowOutgoingOpcode("offline", Network::Transport::Packet::PROCESS_THRESHOLD));
+	ASSERT_TRUE(client.AllowIncomingOpcode("offline", 10));
+	ASSERT_TRUE(client.AllowOutgoingOpcode("offline", 10));
 	ASSERT_FALSE(client.ConfigureTLS(Crypto::TLS::ClientConfiguration{}));
 	ASSERT_TRUE(client.DisableTLS());
 	EmptyPacket packet;

@@ -100,7 +100,7 @@ These examples use `ccache`; install it or omit the two compiler-launcher option
 - Request/response (`Send`) and fire-and-forget (`Reply`)
 - Server event loop with bounded packet-handler workers
 - Per-session in-flight ordering, bounded output buffering and backpressure handling
-- Optional payload processing for opcodes ≥ `Packet::PROCESS_THRESHOLD`
+- Input and output pipeline processing applies uniformly to every packet payload
 - Authorized, file-like remote readers and exclusive writers over private TCP channels
 - Discovery via `Server::Announce` / `Client::Discover` (IPv4 broadcast or IPv6 multicast, same API)
 
@@ -171,7 +171,7 @@ Protected `AllowIncomingOpcode(uuid, opcode)` and `AllowOutgoingOpcode(uuid, opc
 
 Frames following an application login remain unprocessed while its handler is active, even when multiple messages arrived in the same TCP read. Only after the previous handler completes are the next opcode's policy and factory evaluated using the updated state. Unknown opcodes, invalid payloads and factory exceptions fail closed.
 
-TLS protects the complete wire stream, including every opcode, serialized length and payload regardless of `Transport::Packet::PROCESS_THRESHOLD`. Packet definitions, serialization, deserialization and handlers are unchanged. TLS record lengths and traffic timing remain observable. Bare TCP EOF without authenticated close-notify is a failure; explicit local disconnect remains abortive.
+TLS protects the complete wire stream, including every opcode, serialized length and payload. Packet definitions, serialization, deserialization and handlers are unchanged. TLS record lengths and traffic timing remain observable. Bare TCP EOF without authenticated close-notify is a failure; explicit local disconnect remains abortive.
 
 To return a rejection message before closing, a handler calls protected `DisconnectClientAfterReply(uuid)` and returns its application-defined rejection packet. Network discards pending input without executing its pipelines, factory or handlers, drains the response, then closes the socket. `DisconnectClient(uuid)` closes immediately without guaranteeing a reply. Draining completes local sends; it does not prove the remote application read them. Use an application ACK when that confirmation is required.
 

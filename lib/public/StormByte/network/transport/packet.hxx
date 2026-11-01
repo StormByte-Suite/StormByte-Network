@@ -122,11 +122,6 @@ namespace StormByte {
 					 */
 					Buffer::FIFO Serialize() const noexcept;
 
-					/**
-					 * @brief Minimum opcode whose payload uses Buffer pipelines when framing.
-					 */
-					static constexpr unsigned short PROCESS_THRESHOLD = 10;
-
 				protected:
 					OpcodeType m_opcode;	///< Packet opcode.
 

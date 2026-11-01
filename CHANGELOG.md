@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Breaking:** remove public `Packet::PROCESS_THRESHOLD`. All packet payloads now
+  pass through input and output pipelines uniformly, regardless of opcode.
+  Existing packet opcodes and wire framing are unchanged.
 - **Breaking:** remove protected `Client::ConfigurePipelines` and
   `Server::ConfigureClientPipelines`. Derived consumers, including
   Alchemist/Alchemy and other applications, must migrate and rebuild; their
@@ -231,9 +234,7 @@ Initial public release of StormByte-Network.
     - Safe shutdown (stop accept, join workers, disconnect peers)
 - **Transport layer**
     - `Packet` base: opcode + `DoSerialize()` payload hook
-    - `PROCESS_THRESHOLD` to optionally pipeline payloads
     - `Frame` on-wire layout: opcode, payload size, payload
-    - Pipeline processing on frame input/output when the threshold is met
 - **Sockets**
     - Cross-platform TCP client/server (POSIX + Windows Winsock)
     - Non-blocking I/O, configurable SO_SNDBUF/SO_RCVBUF, TCP_NODELAY

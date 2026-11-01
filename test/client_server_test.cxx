@@ -144,7 +144,7 @@ namespace Test {
 
 	namespace Packet {
 		enum class Opcode: unsigned short {
-			C_MSG_ASKNAMELIST = Net::Transport::Packet::PROCESS_THRESHOLD,
+			C_MSG_ASKNAMELIST = 10,
 			S_MSG_RESPONDNAMELIST,
 			C_MSG_ASKRANDOMNUMBER,
 			S_MSG_RESPONDRANDOMNUMBER,
@@ -159,7 +159,8 @@ namespace Test {
 			C_MSG_DISCONNECT,
 			C_MSG_SLOW,
 			S_MSG_SLOW,
-			C_MSG_STOPSERVER
+			C_MSG_STOPSERVER,
+			C_MSG_PIPELINE_BELOW = 9
 		};
 
 		class Generic: public Transport::Packet {
@@ -287,7 +288,7 @@ namespace Test {
 
 		class Ping: public Generic {
 			public:
-				Ping(): Generic(Opcode::C_MSG_PING) {
+				explicit Ping(::Test::Packet::Opcode opcode = ::Test::Packet::Opcode::C_MSG_PING): Generic(opcode) {
 				}
 
 				StormByte::Safe::Binary DoSerialize() const noexcept override {
@@ -466,6 +467,9 @@ namespace Test {
 				case Packet::Opcode::C_MSG_ASKRANDOMNUMBER: {
 					return StormByte::Network::PacketPointer::MakePointer<Packet::AskRandomNumber>();
 				}
+				case Packet::Opcode::C_MSG_PIPELINE_BELOW:
+					return StormByte::Network::PacketPointer::MakePointer<Packet::Ping>(
+						Packet::Opcode::C_MSG_PIPELINE_BELOW);
 
 				case Packet::Opcode::C_MSG_DISCONNECT:
 					return StormByte::Network::PacketPointer::MakePointer<Packet::DisconnectRequest>();
@@ -633,8 +637,8 @@ namespace Test {
 				return answer_packet->TakeData();
 			}
 
-			bool RequestPing() noexcept {
-				Packet::Ping request_packet;
+			bool RequestPing(Packet::Opcode opcode = Packet::Opcode::C_MSG_PING) noexcept {
+				Packet::Ping request_packet(opcode);
 				auto response_packet = Send(request_packet);
 				if (!response_packet) {
 					return false;
@@ -807,6 +811,7 @@ namespace Test {
 						return StormByte::Network::PacketPointer::MakePointer<Packet::AnswerLargeDataEchoed>(large_data_packet->TakeData());
 					}
 
+					case Packet::Opcode::C_MSG_PIPELINE_BELOW:
 					case Packet::Opcode::C_MSG_PING:
 						return StormByte::Network::PacketPointer::MakePointer<Packet::Pong>();
 					case Packet::Opcode::C_MSG_SLOW:
@@ -1734,6 +1739,7 @@ int test_request_additional_commands() {
 	}
 
 	ASSERT_TRUE(client.RequestPing());
+	ASSERT_TRUE(client.RequestPing(::Test::Packet::Opcode::C_MSG_PIPELINE_BELOW));
 
 	const std::string text = "StormByte network command with spaces and UTF-8: cafe";
 	auto echoed_text = client.RequestEchoText(text);

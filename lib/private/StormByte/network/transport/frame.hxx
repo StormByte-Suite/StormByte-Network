@@ -74,7 +74,8 @@ namespace StormByte {
 			 * @class Frame
 			 * @brief On-wire unit: opcode + payload size + payload.
 			 * @details Layout: Opcode (OpcodeType) + payload size (size_t) + payload.
-			 * Opcodes >= Packet::PROCESS_THRESHOLD run payload through pipelines.
+			 * Every payload runs through the configured input and output pipelines,
+			 * regardless of opcode.
 			 */
 			class STORMBYTE_NETWORK_PRIVATE Frame {
 				friend class StormByte::Network::Detail::Session;

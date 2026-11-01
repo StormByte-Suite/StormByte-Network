@@ -93,7 +93,7 @@ namespace {
 			/**
 			 * @brief Construct an application packet with no payload.
 			 */
-			EmptyPacket() noexcept: Packet(PROCESS_THRESHOLD) {}
+			EmptyPacket() noexcept: Packet(10) {}
 
 		private:
 			/**

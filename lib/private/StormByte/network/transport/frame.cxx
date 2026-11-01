@@ -87,17 +87,15 @@ Frame::Frame(const Packet& packet) noexcept {
 }
 
 bool Frame::DecodeInput(Pipeline& in_pipeline, StormByte::Safe::Shared<Logger::Log> logger) noexcept {
-	if (m_opcode >= Packet::PROCESS_THRESHOLD) {
-		Producer payload_producer;
-		payload_producer.Write(std::move(m_payload));
-		payload_producer.Close();
-		Consumer processed_payload = in_pipeline.Process(
-			payload_producer.Consumer(), logger, ExecutionMode::Async);
-		m_payload.clear();
-		processed_payload.ExtractUntilEoF(m_payload);
-		if (!processed_payload.IsReadable())
-			return false;
-	}
+	Producer payload_producer;
+	payload_producer.Write(std::move(m_payload));
+	payload_producer.Close();
+	Consumer processed_payload = in_pipeline.Process(
+		payload_producer.Consumer(), logger, ExecutionMode::Async);
+	m_payload.clear();
+	processed_payload.ExtractUntilEoF(m_payload);
+	if (!processed_payload.IsReadable())
+		return false;
 	return true;
 }
 
@@ -165,15 +163,13 @@ Consumer Frame::ProcessOutput(Pipeline& pipeline, StormByte::Safe::Shared<Logger
 	Producer producer;
 	producer.Write(StormByte::ByteSize{sizeof(Packet::OpcodeType)}, Serializable<Packet::OpcodeType>(m_opcode).Serialize());
 	StormByte::Safe::Binary payload = std::move(m_payload);
-	if (m_opcode >= Packet::PROCESS_THRESHOLD) {
-		Producer payload_producer;
-		payload_producer.Write(std::move(payload));
-		payload_producer.Close();
-		Consumer processed_payload = pipeline.Process(
-			payload_producer.Consumer(), logger, ExecutionMode::Async);
-		payload.clear();
-		processed_payload.ExtractUntilEoF(payload);
-	}
+	Producer payload_producer;
+	payload_producer.Write(std::move(payload));
+	payload_producer.Close();
+	Consumer processed_payload = pipeline.Process(
+		payload_producer.Consumer(), logger, ExecutionMode::Async);
+	payload.clear();
+	processed_payload.ExtractUntilEoF(payload);
 
 	producer.Write(StormByte::ByteSize{sizeof(std::size_t)},
 		Serializable<std::size_t>(static_cast<std::size_t>(payload.size())).Serialize());

@@ -117,7 +117,7 @@ namespace RemoteFileTest {
 	 * @brief Application opcodes used by the test control protocol.
 	 */
 	enum class AppOpcode: unsigned short {
-		ReadRequest = Packet::PROCESS_THRESHOLD,
+		ReadRequest = 10,
 		WriteRequest,
 		Mount,
 		Unauthorized

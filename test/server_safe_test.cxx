@@ -194,8 +194,8 @@ int test_default_configuration() {
 	ServerFixture server;
 	ASSERT_EQUAL(Network::Connection::Status::Disconnected, server.Status());
 	ASSERT_NOT_NULL(server.Telemetry().get());
-	ASSERT_TRUE(server.AllowIncomingOpcode("offline", Network::Transport::Packet::PROCESS_THRESHOLD));
-	ASSERT_TRUE(server.AllowOutgoingOpcode("offline", Network::Transport::Packet::PROCESS_THRESHOLD));
+	ASSERT_TRUE(server.AllowIncomingOpcode("offline", 10));
+	ASSERT_TRUE(server.AllowOutgoingOpcode("offline", 10));
 	ASSERT_TRUE(server.OnClientConnected("offline"));
 	ASSERT_NO_THROW(server.OnClientDisconnected("offline"));
 	RETURN_TEST(0);
