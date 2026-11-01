@@ -38,6 +38,8 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
+#include "tls_fixture.hxx"
+
 #include <StormByte/logger/threaded_log.hxx>
 #include <StormByte/network/client.hxx>
 #include <StormByte/network/remote_file.hxx>
@@ -56,6 +58,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <set>
 #include <span>
@@ -64,6 +67,16 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#ifdef UNIX
+#include <arpa/inet.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#else
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
 
 namespace RemoteFileTest {
 	namespace Net = StormByte::Network;
@@ -265,157 +278,7 @@ namespace RemoteFileTest {
 	}
 
 	/**
-	 * @brief Accumulate the borrowed input until EOF or a read failure.
-	 * @param input Borrowed input stream.
-	 * @param bytes Destination for all successfully read bytes.
-	 */
-	void ReadPipeUntilEoF(const Buf::PipeInput& input, StormByte::Safe::Binary& bytes) {
-		while (!input.EoF() && input.IsReadable()) {
-			StormByte::Safe::Binary chunk;
-			if (!input.Read(StormByte::ByteSize{1}, chunk))
-				break;
-			bytes.append(chunk);
-			const auto available = input.Available();
-			if (available > StormByte::ByteSize{0}) {
-				StormByte::Safe::Binary rest;
-				if (!input.Read(available, rest))
-					break;
-				bytes.append(rest);
-			}
-		}
-	}
-
-	/**
-	 * @brief XOR transform callable for complete remote-file messages.
-	 */
-	struct XorPipe final {
-		public:
-			/**
-			 * @brief Transform all input bytes and close the output.
-			 * @param input Borrowed input stream.
-			 * @param output Borrowed output stream.
-			 * @param log Borrowed logger, unused by this transform.
-			 */
-			void operator()(const Buf::PipeInput& input, const Buf::PipeOutput& output,
-				const StormByte::Safe::Shared<Log>& log) const {
-				(void)log;
-				StormByte::Safe::Binary bytes;
-				ReadPipeUntilEoF(input, bytes);
-				for (auto& byte: bytes)
-					byte ^= std::byte{0x67};
-				if (!bytes.empty())
-					(void)output.Write(std::move(bytes));
-				output.Close();
-			}
-	};
-
-	/**
-	 * @brief Encode or verify the reversible envelope used by remote-file tests.
-	 */
-	struct ReversibleEnvelopePipe final {
-		public:
-			/**
-			 * @brief Select envelope encoding or decoding.
-			 * @param encode Whether to encode rather than verify and decode.
-			 */
-			explicit ReversibleEnvelopePipe(bool encode):
-				m_encode(encode) {
-			}
-
-			/**
-			 * @brief Process a complete envelope, mark invalid input as failed, and close output.
-			 * @param input Borrowed input stream.
-			 * @param output Borrowed output stream.
-			 * @param log Borrowed logger, unused by this transform.
-			 */
-			void operator()(const Buf::PipeInput& input, const Buf::PipeOutput& output,
-				const StormByte::Safe::Shared<Log>& log) const {
-				(void)log;
-				StormByte::Safe::Binary bytes;
-				ReadPipeUntilEoF(input, bytes);
-				if (m_encode) {
-					for (auto& byte: bytes)
-						byte ^= std::byte{0x67};
-					StormByte::Safe::Binary framed{std::byte{'A'}, std::byte{'E'}, std::byte{'A'}, std::byte{'D'}};
-					framed.append(bytes);
-					framed.append(StormByte::Serializable<std::uint64_t>(Tag(bytes)).Serialize());
-					(void)output.Write(std::move(framed));
-				}
-				else if (bytes.size() >= StormByte::ByteSize{12} && bytes[0] == std::byte{'A'} && bytes[1] == std::byte{'E'}
-					&& bytes[2] == std::byte{'A'} && bytes[3] == std::byte{'D'}) {
-					const std::size_t body_size = static_cast<std::size_t>(bytes.size()) - 12;
-					const auto tag = StormByte::Serializable<std::uint64_t>::Deserialize(
-						bytes.span().subspan(4 + body_size, sizeof(std::uint64_t)));
-					StormByte::Safe::Binary body(bytes.span().subspan(4, body_size));
-					if (tag && *tag == Tag(body)) {
-						for (auto& byte: body)
-							byte ^= std::byte{0x67};
-						(void)output.Write(std::move(body));
-					}
-					else
-						output.SetError();
-				}
-				else
-					output.SetError();
-				output.Close();
-			}
-
-		private:
-			/**
-			 * @brief Compute the test envelope integrity tag.
-			 * @param bytes Encoded body bytes.
-			 * @return Integrity tag for the supplied body.
-			 */
-			static std::uint64_t Tag(const StormByte::Safe::Binary& bytes) noexcept {
-				std::uint64_t hash = 1469598103934665603ull;
-				for (std::byte byte: bytes)
-					hash = (hash ^ std::to_integer<std::uint8_t>(byte)) * 1099511628211ull;
-				return hash;
-			}
-
-			/**
-			 * @brief Whether this callable encodes rather than decodes envelopes.
-			 */
-			bool m_encode;
-	};
-
-}
-
-STORMBYTE_DECLARE_MAYBE_SAFE(RemoteFileTest::XorPipe);
-STORMBYTE_DECLARE_MAYBE_SAFE(RemoteFileTest::ReversibleEnvelopePipe);
-
-namespace RemoteFileTest {
-
-	/**
-	 * @brief Build the test input transformation pipeline.
-	 * @param framed Whether to verify and decode test envelopes.
-	 * @return Input pipeline for the selected encoding.
-	 */
-	Buf::Pipeline MakeInput(bool framed) {
-		Buf::Pipeline pipeline;
-		if (framed)
-			pipeline.Add(Buf::Pipe{ReversibleEnvelopePipe{false}});
-		else
-			pipeline.Add(Buf::Pipe{XorPipe{}});
-		return pipeline;
-	}
-
-	/**
-	 * @brief Build the test output transformation pipeline.
-	 * @param framed Whether to encode test envelopes.
-	 * @return Output pipeline for the selected encoding.
-	 */
-	Buf::Pipeline MakeOutput(bool framed) {
-		Buf::Pipeline pipeline;
-		if (framed)
-			pipeline.Add(Buf::Pipe{ReversibleEnvelopePipe{true}});
-		else
-			pipeline.Add(Buf::Pipe{XorPipe{}});
-		return pipeline;
-	}
-
-	/**
-	 * @brief Test control client with selectable transformation pipelines.
+	 * @brief Test control client with optional authenticated TLS.
 	 */
 	class Client final: public Net::Client {
 		public:
@@ -427,44 +290,24 @@ namespace RemoteFileTest {
 			}
 
 			/**
-			 * @brief Install fixture transforms explicitly on the newly connected session.
+			 * @brief Connect the selected plaintext or authenticated TLS transport.
 			 * @param protocol Address family.
 			 * @param address Remote address.
 			 * @param port Remote port.
-			 * @return Whether transport and one-time configuration succeeded.
+			 * @return Whether the transport connected and authenticated successfully.
 			 */
 			bool Connect(const Net::Connection::Protocol& protocol, std::string_view address,
 				const unsigned short& port) override {
-				if (!Net::Client::Connect(protocol, address, port))
-					return false;
-				if (ConfigurePipelines(InputPipeline(), OutputPipeline()))
-					return true;
-				Disconnect();
-				return false;
+				return Net::Client::Connect(protocol, address, port);
 			}
 
 			/**
-			 * @brief Build the selected input pipeline.
-			 * @return Input transformation pipeline.
+			 * @brief Select authenticated TLS before connecting.
+			 * @param enabled Whether TLS is enabled.
 			 */
-			Buf::Pipeline InputPipeline() const noexcept {
-				return MakeInput(m_framed.load());
-			}
-
-			/**
-			 * @brief Build the selected output pipeline.
-			 * @return Output transformation pipeline.
-			 */
-			Buf::Pipeline OutputPipeline() const noexcept {
-				return MakeOutput(m_framed.load());
-			}
-
-			/**
-			 * @brief Select whether to use test envelopes.
-			 * @param enabled Whether envelope framing is enabled.
-			 */
-			void UseFramedPipeline(bool enabled) noexcept {
-				m_framed.store(enabled);
+			void UseTLS(bool enabled) noexcept {
+				if (enabled && !TLSFixture::Configure(*this))
+					std::terminate();
 			}
 
 			/**
@@ -500,11 +343,6 @@ namespace RemoteFileTest {
 				return CreateRemoteFileWriter(mount);
 			}
 
-		private:
-			/**
-			 * @brief Whether the client uses test envelopes.
-			 */
-			std::atomic<bool> m_framed{false};
 	};
 
 	/**
@@ -513,12 +351,14 @@ namespace RemoteFileTest {
 	class Server final: public Net::Server {
 		public:
 			/**
-			 * @brief Configure fixture transformations separately for each admitted UUID.
+			 * @brief Admit an authenticated or explicitly plaintext application session.
 			 * @param uuid Application session identity.
-			 * @return Whether configuration succeeded.
+			 * @return True for admitted fixture sessions.
 			 */
 			bool OnClientConnected(std::string_view uuid) noexcept override {
-				return ConfigureClientPipelines(uuid, InputPipeline(), OutputPipeline());
+				(void)uuid;
+				admitted.fetch_add(1);
+				return true;
 			}
 
 			/**
@@ -549,12 +389,15 @@ namespace RemoteFileTest {
 			 */
 			std::atomic<bool> allow_write{true};
 
+			std::atomic<unsigned int> admitted{0}; ///< Authenticated or plaintext admissions.
+
 			/**
-			 * @brief Select whether to use test envelopes.
-			 * @param enabled Whether envelope framing is enabled.
+			 * @brief Select authenticated TLS before listening.
+			 * @param enabled Whether TLS is enabled.
 			 */
-			void UseFramedPipeline(bool enabled) noexcept {
-				m_framed.store(enabled);
+			void UseTLS(bool enabled) noexcept {
+				if (enabled && !TLSFixture::Configure(*this))
+					std::terminate();
 			}
 
 			/**
@@ -563,22 +406,6 @@ namespace RemoteFileTest {
 			 */
 			void SetExtraPaths(std::vector<std::filesystem::path> paths) {
 				m_extra_paths = std::move(paths);
-			}
-
-			/**
-			 * @brief Build the selected input pipeline.
-			 * @return Input transformation pipeline.
-			 */
-			Buf::Pipeline InputPipeline() const noexcept {
-				return MakeInput(m_framed.load());
-			}
-
-			/**
-			 * @brief Build the selected output pipeline.
-			 * @return Output transformation pipeline.
-			 */
-			Buf::Pipeline OutputPipeline() const noexcept {
-				return MakeOutput(m_framed.load());
 			}
 
 		private:
@@ -624,10 +451,6 @@ namespace RemoteFileTest {
 			 */
 			std::vector<std::filesystem::path> m_extra_paths;
 
-			/**
-			 * @brief Whether the server uses test envelopes.
-			 */
-			std::atomic<bool> m_framed{false};
 	};
 
 }
@@ -638,6 +461,92 @@ STORMBYTE_DECLARE_MAYBE_SAFE(RemoteFileTest::Server);
 namespace RemoteFileTest {
 
 	/**
+	 * @brief Test-owned raw peer used to reject plaintext and stalled auxiliary TLS.
+	 */
+	class RawPeer final {
+		public:
+			/**
+			 * @brief Connect a raw loopback socket without any TLS engine.
+			 * @param destination Auxiliary port.
+			 */
+			explicit RawPeer(unsigned short destination) {
+				m_handle = ::socket(AF_INET, SOCK_STREAM, 0);
+				sockaddr_in endpoint{};
+				endpoint.sin_family = AF_INET;
+				endpoint.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+				endpoint.sin_port = htons(destination);
+				if (m_handle == static_cast<Net::Connection::HandlerType>(-1)
+					|| ::connect(m_handle, reinterpret_cast<const sockaddr*>(&endpoint), sizeof(endpoint)) != 0) {
+					Close();
+					throw std::runtime_error("raw auxiliary connection failed");
+				}
+			}
+
+			RawPeer(const RawPeer&) = delete;
+			RawPeer& operator=(const RawPeer&) = delete;
+
+			/**
+			 * @brief Release the test-owned native socket.
+			 */
+			~RawPeer() noexcept {
+				Close();
+			}
+
+			/**
+			 * @brief Send unprotected bytes that must never reach file dispatch.
+			 * @param bytes Borrowed plaintext.
+			 */
+			void Send(std::span<const std::byte> bytes) {
+#ifdef LINUX
+				const int flags = MSG_NOSIGNAL;
+#else
+				const int flags = 0;
+#endif
+				if (::send(m_handle, reinterpret_cast<const char*>(bytes.data()),
+					static_cast<int>(bytes.size()), flags) <= 0)
+					throw std::runtime_error("raw auxiliary send failed");
+			}
+
+			/**
+			 * @brief Observe bounded server-side rejection or handshake expiry.
+			 * @param seconds Maximum wait in seconds.
+			 * @return True when the server closes within the bound.
+			 */
+			bool Closed(long seconds = 5) {
+				fd_set descriptors;
+				FD_ZERO(&descriptors);
+				FD_SET(m_handle, &descriptors);
+				timeval timeout{seconds, 0};
+				const int ready = ::select(
+#ifdef UNIX
+					m_handle + 1,
+#else
+					0,
+#endif
+					&descriptors, nullptr, nullptr, &timeout);
+				char byte{};
+				return ready > 0 && ::recv(m_handle, &byte, 1, 0) <= 0;
+			}
+
+		private:
+			Net::Connection::HandlerType m_handle{static_cast<Net::Connection::HandlerType>(-1)}; ///< Native test socket.
+
+			/**
+			 * @brief Close only this fixture's native handle.
+			 */
+			void Close() noexcept {
+				if (m_handle == static_cast<Net::Connection::HandlerType>(-1))
+					return;
+#ifdef UNIX
+				::close(m_handle);
+#else
+				::closesocket(m_handle);
+#endif
+				m_handle = static_cast<Net::Connection::HandlerType>(-1);
+			}
+	};
+
+	/**
 	 * @brief Own a temporary directory for test fixtures.
 	 */
 	class TempDirectory final {
@@ -646,7 +555,7 @@ namespace RemoteFileTest {
 			 * @brief Create a temporary fixture directory.
 			 */
 			TempDirectory() {
-				m_path = std::filesystem::temp_directory_path() / ("stormbyte-rfile-" + std::to_string(
+				m_path = std::filesystem::current_path() / ("stormbyte-rfile-" + std::to_string(
 					std::chrono::steady_clock::now().time_since_epoch().count()));
 				std::filesystem::create_directories(m_path);
 			}
@@ -841,15 +750,15 @@ namespace RemoteFileTest {
 		Check(released_writer && released_writer->Close(), "released writer path cleanup failed");
 	}
 
-	void ExerciseSharedPipelineAndDisconnect(Server&, Client& client,
+	void ExerciseTLSAndDisconnect(Server&, Client& client,
 		const std::filesystem::path& read_path, const std::filesystem::path& write_path) {
 		auto [read_mount, read_rejected] = client.RequestMount(false);
-		Check(!read_rejected && read_mount.Result() == Mount::Status::Authorized, "framed-pipeline read mount failed");
+		Check(!read_rejected && read_mount.Result() == Mount::Status::Authorized, "TLS read mount failed");
 		auto reader = client.AttachReader(read_mount);
-		Check(reader && reader->Open(), "private channel failed to clone the normal endpoint pipelines");
+		Check(reader && reader->Open(), "private TLS channel authentication failed");
 		std::array<std::byte, 3> bytes{};
 		Check(reader->Read(std::span<std::byte>{bytes}).count == 3
-			&& std::string(reinterpret_cast<const char*>(bytes.data()), 3) == "012", "expanded pipeline decode failed");
+			&& std::string(reinterpret_cast<const char*>(bytes.data()), 3) == "012", "TLS read bytes differed");
 
 		auto [write_mount, write_rejected] = client.RequestMount(true);
 		Check(!write_rejected && write_mount.Result() == Mount::Status::Authorized, "disconnect writer mount failed");
@@ -1314,21 +1223,6 @@ namespace RemoteFileTest {
 		RETURN_TEST(0);
 	}
 
-	void test_pipeline_and_control_disconnect() {
-		TempDirectory temporary;
-		const auto read_path = temporary.Path() / "pipeline-read.bin";
-		const auto write_path = temporary.Path() / "pipeline-write.bin";
-		WriteFile(read_path, "0123456789ABCDEF");
-		WriteFile(write_path, "old");
-		Server server(read_path, write_path);
-		server.UseFramedPipeline(true);
-		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "pipeline server connect failed");
-		Client client;
-		client.UseFramedPipeline(true);
-		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "pipeline client connect failed");
-		ExerciseSharedPipelineAndDisconnect(server, client, read_path, write_path);
-	}
-
 	void test_plane_failure_faults_every_leaf() {
 		TempDirectory temporary;
 		const auto read_path = temporary.Path() / "fault-read.bin";
@@ -1337,10 +1231,25 @@ namespace RemoteFileTest {
 		ExerciseTransportFailureMarksReaderFault(read_path, write_path);
 	}
 
+	void test_tls_and_control_disconnect() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "tls-detached-read.bin";
+		const auto write_path = temporary.Path() / "tls-detached-write.bin";
+		WriteFile(read_path, "0123456789ABCDEF");
+		WriteFile(write_path, "old");
+		Server server(read_path, write_path);
+		server.UseTLS(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS detached server connect failed");
+		Client client;
+		client.UseTLS(true);
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS detached client connect failed");
+		ExerciseTLSAndDisconnect(server, client, read_path, write_path);
+	}
+
 	// -------------------
 	// Protocol
 	// -------------------
-	void test_mismatched_control_pipeline_denies_mount() {
+	void test_plaintext_control_denied_by_tls_server() {
 		TempDirectory temporary;
 		const auto read_path = temporary.Path() / "mismatch-control-read.bin";
 		const auto write_path = temporary.Path() / "mismatch-control-write.bin";
@@ -1348,7 +1257,7 @@ namespace RemoteFileTest {
 		WriteBytes(read_path, expected);
 		WriteBytes(write_path, expected);
 		Server server(read_path, write_path);
-		server.UseFramedPipeline(true);
+		server.UseTLS(true);
 		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "mismatch control server connect failed");
 		Client attacker;
 		Check(attacker.Connect(Net::Connection::Protocol::IPv4, address, port), "mismatch control connect failed");
@@ -1359,7 +1268,7 @@ namespace RemoteFileTest {
 		attacker.Disconnect();
 		Check(EqualBytes(ReadBytes(write_path), expected), "incompatible control pipeline modified a file");
 		Client legitimate;
-		legitimate.UseFramedPipeline(true);
+		legitimate.UseTLS(true);
 		Check(legitimate.Connect(Net::Connection::Protocol::IPv4, address, port), "legitimate control connect failed");
 		auto [valid, valid_rejected] = legitimate.RequestMount(false);
 		Check(!valid_rejected && valid.Result() == Mount::Status::Authorized, "mismatch broke legitimate mount handling");
@@ -1424,10 +1333,10 @@ namespace RemoteFileTest {
 		const auto write_path = temporary.Path() / "unused-write.bin";
 		WriteBytes(read_path, MakePattern(1024 * 1024));
 		Server server(read_path, write_path);
-		server.UseFramedPipeline(true);
+		server.UseTLS(true);
 		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "large-read server connect failed");
 		Client client;
-		client.UseFramedPipeline(true);
+		client.UseTLS(true);
 		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "large-read client connect failed");
 		ExercisePatternReader(client, read_path);
 	}
@@ -1437,6 +1346,216 @@ namespace RemoteFileTest {
 		const auto read_path = temporary.Path() / "unused-read.bin";
 		const auto write_path = temporary.Path() / "unused-write.bin";
 		ExerciseRemotePlaneScale(read_path, write_path, temporary.Path());
+	}
+
+	// -------------------
+	// TLS
+	// -------------------
+	void test_tls_auxiliary_plaintext_rejected() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "tls-read.bin";
+		const auto write_path = temporary.Path() / "tls-write.bin";
+		const auto original = MakePattern(128);
+		WriteBytes(read_path, original);
+		WriteBytes(write_path, original);
+		Server server(read_path, write_path);
+		server.UseTLS(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS rejection server connect");
+		Client owner;
+		owner.UseTLS(true);
+		Check(owner.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS rejection owner connect");
+		auto [mount, rejected] = owner.RequestMount(true);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "TLS rejection mount");
+		RawPeer attacker(mount.Port());
+		StormByte::Safe::Binary unprotected{std::byte{'n'}, std::byte{'o'}, std::byte{'t'},
+			std::byte{'T'}, std::byte{'L'}, std::byte{'S'}};
+		unprotected.append(std::span{mount.Token()});
+		attacker.Send(unprotected.span());
+		Check(attacker.Closed(), "plaintext auxiliary channel was not rejected");
+		Check(EqualBytes(ReadBytes(write_path), original), "plaintext auxiliary peer modified file");
+		Check(owner.Status() == Net::Connection::Status::Connected, "auxiliary rejection closed primary");
+		Client legitimate;
+		legitimate.UseTLS(true);
+		Check(legitimate.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS legitimate connect");
+		auto [fresh, fresh_rejected] = legitimate.RequestMount(true);
+		Check(!fresh_rejected && fresh.Result() == Mount::Status::Authorized, "rejected TLS channel retained token");
+		auto writer = legitimate.AttachWriter(fresh);
+		Check(writer && writer->Open() && writer->Close(), "auxiliary rejection broke independent TLS peer");
+	}
+
+	void test_tls_auxiliary_stall_expires() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "tls-stall-read.bin";
+		const auto write_path = temporary.Path() / "tls-stall-write.bin";
+		WriteBytes(read_path, MakePattern(128));
+		WriteFile(write_path, "original");
+		Server server(read_path, write_path);
+		server.UseTLS(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS stall server connect");
+		Client owner;
+		owner.UseTLS(true);
+		Check(owner.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS stall primary connect");
+		auto [mount, rejected] = owner.RequestMount(true);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "TLS stall mount");
+		RawPeer stalled(mount.Port());
+		Client legitimate;
+		legitimate.UseTLS(true);
+		Check(legitimate.Connect(Net::Connection::Protocol::IPv4, address, port), "stalled peer blocked event loop");
+		auto [read_mount, read_rejected] = legitimate.RequestMount(false);
+		Check(!read_rejected && read_mount.Result() == Mount::Status::Authorized, "stall blocked independent mount");
+		auto reader = legitimate.AttachReader(read_mount);
+		Check(reader && reader->Open(), "stall blocked independent auxiliary authentication");
+		Check(stalled.Closed(), "silent auxiliary TLS handshake did not expire");
+		Check(ReadFile(write_path) == "original", "stalled auxiliary peer changed file");
+		auto [fresh, fresh_rejected] = legitimate.RequestMount(true);
+		Check(!fresh_rejected && fresh.Result() == Mount::Status::Authorized, "expired TLS handshake retained write reservation");
+		auto writer = legitimate.AttachWriter(fresh);
+		Check(writer && writer->Open() && writer->Close(), "write failed after stalled TLS rejection");
+		Check(reader->Close().status == Buf::IO::Status::Ok, "independent TLS reader close");
+	}
+
+	void test_tls_configuration_cannot_downgrade_live_channels() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "tls-policy-read.bin";
+		const auto write_path = temporary.Path() / "tls-policy-write.bin";
+		WriteBytes(read_path, MakePattern(128));
+		Server server(read_path, write_path);
+		server.UseTLS(true);
+		Check(!server.ConfigureTLS(StormByte::Crypto::TLS::ServerConfiguration{}), "invalid server configuration accepted");
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "retained server policy connect");
+		Client client;
+		client.UseTLS(true);
+		Check(!client.ConfigureTLS(StormByte::Crypto::TLS::ClientConfiguration{}), "invalid client configuration accepted");
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "retained client policy connect");
+		Check(!server.DisableTLS() && !client.DisableTLS(), "live application TLS was downgraded");
+		auto [mount, rejected] = client.RequestMount(false);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "TLS policy mount");
+		auto reader = client.AttachReader(mount);
+		Check(reader && reader->Open(), "TLS policy auxiliary authentication");
+		client.Disconnect();
+		Check(!client.DisableTLS(), "detached auxiliary TLS was downgraded");
+		Check(!TLSFixture::Configure(client, "wrong.example"), "detached channel policy was replaced");
+		StormByte::Safe::Binary bytes{StormByte::ByteSize{128}};
+		Check(reader->Read(bytes.span()).count == bytes.size() && EqualBytes(bytes, MakePattern(128)),
+			"retained auxiliary TLS policy lost data");
+		Check(reader->Close().status == Buf::IO::Status::Ok, "retained auxiliary TLS release");
+	}
+
+	void test_tls_current_time_default_and_fixed_opt_in() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "tls-time-read.bin";
+		const auto write_path = temporary.Path() / "tls-time-write.bin";
+		WriteBytes(read_path, MakePattern(128));
+		Server server(read_path, write_path);
+		server.UseTLS(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS time server connect");
+		for (const int invalid_time: {-1, 1}) {
+			Client refreshed;
+			Check(TLSFixture::Configure(refreshed, "localhost", true, invalid_time), "refresh configuration rejected");
+			for (int reconnect = 0; reconnect < 2; ++reconnect) {
+				Check(refreshed.Connect(Net::Connection::Protocol::IPv4, address, port),
+					"current-time default retained invalid caller instant");
+				auto [mount, rejected] = refreshed.RequestMount(false);
+				Check(!rejected && mount.Result() == Mount::Status::Authorized, "refreshed TLS mount");
+				if (reconnect == 1) {
+					auto reader = refreshed.AttachReader(mount);
+					Check(reader && reader->Open() && reader->Close().status == Buf::IO::Status::Ok,
+						"auxiliary session retained invalid caller instant");
+				}
+				refreshed.Disconnect();
+			}
+			Client fixed;
+			Check(TLSFixture::Configure(fixed, "localhost", false, invalid_time), "fixed configuration rejected");
+			Check(!fixed.Connect(Net::Connection::Protocol::IPv4, address, port),
+				"fixed-time opt-in ignored invalid certificate validation instant");
+		}
+		Client valid_fixed;
+		valid_fixed.UseTLS(true);
+		Check(valid_fixed.Connect(Net::Connection::Protocol::IPv4, address, port), "valid fixed TLS instant rejected");
+		auto [mount, rejected] = valid_fixed.RequestMount(false);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "fixed TLS mount");
+		auto reader = valid_fixed.AttachReader(mount);
+		Check(reader && reader->Open() && reader->Close().status == Buf::IO::Status::Ok,
+			"fixed TLS auxiliary session failed");
+	}
+
+	void test_tls_heartbeat_read_write_roundtrip() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "tls-heartbeat-read.bin";
+		const auto write_path = temporary.Path() / "tls-heartbeat-write.bin";
+		const auto original = MakePattern(1024 * 1024);
+		WriteBytes(read_path, original);
+		WriteFile(write_path, "old");
+		Server server(read_path, write_path);
+		server.UseTLS(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS heartbeat server connect");
+		Client client;
+		client.UseTLS(true);
+		Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS heartbeat client connect");
+		ExercisePatternReader(client, read_path);
+		ExercisePatternWriter(client, write_path);
+		auto [mount, rejected] = client.RequestMount(false);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "TLS heartbeat mount");
+		auto reader = client.AttachReader(mount);
+		Check(reader && reader->Open(), "TLS heartbeat reader open");
+		std::this_thread::sleep_for(std::chrono::seconds{5});
+		StormByte::Safe::Binary received{StormByte::ByteSize{original.size()}};
+		const auto read = reader->Read(received.span());
+		Check(read.count == original.size() && EqualBytes(received, original), "TLS heartbeat lost bytes or channel");
+		Check(reader->Close().status == Buf::IO::Status::Ok, "TLS heartbeat release");
+	}
+
+	void test_tls_mtls_rejects_missing_identity() {
+		TempDirectory temporary;
+		Server server(temporary.Path() / "read.bin", temporary.Path() / "write.bin");
+		Check(TLSFixture::Configure(server, true), "mTLS server configuration");
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "mTLS server connect");
+		Client client;
+		client.UseTLS(true);
+		if (client.Connect(Net::Connection::Protocol::IPv4, address, port)) {
+			auto [mount, rejected] = client.RequestMount(true);
+			(void)rejected;
+			Check(mount.Result() != Mount::Status::Authorized, "mTLS admitted an anonymous file capability");
+		}
+		Check(server.admitted.load() == 0, "mTLS connected callback ran before client authentication");
+		Check(server.Telemetry()->PacketsDispatched() == StormByte::Size{0}, "mTLS dispatched an unauthenticated packet");
+		Check(!std::filesystem::exists(temporary.Path() / "write.bin"), "mTLS unauthenticated file creation");
+	}
+
+	void test_tls_primary_pending_limit() {
+		TempDirectory temporary;
+		Server server(temporary.Path() / "read.bin", temporary.Path() / "write.bin");
+		server.UseTLS(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS pending-limit server connect");
+		std::vector<std::unique_ptr<RawPeer>> pending;
+		for (std::size_t index = 0; index < 65; ++index)
+			pending.push_back(std::make_unique<RawPeer>(port));
+		Check(pending.back()->Closed(), "primary TLS pending bound did not reject excess peer");
+		Check(server.admitted.load() == 0, "pending TLS peers reached admission");
+		Check(server.Telemetry()->AcceptedConnections() == StormByte::Size{64}, "pending TLS limit exceeded 64");
+		Check(server.Telemetry()->PacketsDispatched() == StormByte::Size{0}, "pending TLS peers reached dispatch");
+	}
+
+	void test_tls_primary_stall_isolation() {
+		TempDirectory temporary;
+		const auto read_path = temporary.Path() / "tls-primary-stall-read.bin";
+		const auto write_path = temporary.Path() / "tls-primary-stall-write.bin";
+		WriteBytes(read_path, MakePattern(128));
+		Server server(read_path, write_path);
+		server.UseTLS(true);
+		Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "TLS primary stall server connect");
+		RawPeer stalled(port);
+		Check(server.admitted.load() == 0, "pending TLS handshake fired connected callback");
+		Client legitimate;
+		legitimate.UseTLS(true);
+		Check(legitimate.Connect(Net::Connection::Protocol::IPv4, address, port), "primary stall blocked authentication");
+		auto [mount, rejected] = legitimate.RequestMount(false);
+		Check(!rejected && mount.Result() == Mount::Status::Authorized, "primary stall blocked file mount");
+		auto reader = legitimate.AttachReader(mount);
+		Check(reader && reader->Open(), "primary stall blocked file authentication");
+		Check(stalled.Closed(12), "pending primary TLS deadline was not enforced");
+		Check(server.admitted.load() == 1, "stalled TLS peer was admitted");
+		Check(reader->Close().status == Buf::IO::Status::Ok, "primary stall damaged file channel");
 	}
 
 	// -------------------
@@ -1519,13 +1638,13 @@ int main() {
 	// Lifecycle
 	// -------------------
 	result += RunOne("test_closed_mount_rejected_and_fresh_token_usable", test_closed_mount_rejected_and_fresh_token_usable);
-	result += RunOne("test_pipeline_and_control_disconnect", test_pipeline_and_control_disconnect);
 	result += RunOne("test_plane_failure_faults_every_leaf", test_plane_failure_faults_every_leaf);
+	result += RunOne("test_tls_and_control_disconnect", test_tls_and_control_disconnect);
 
 	// -------------------
 	// Protocol
 	// -------------------
-	result += RunOne("test_mismatched_control_pipeline_denies_mount", test_mismatched_control_pipeline_denies_mount);
+	result += RunOne("test_plaintext_control_denied_by_tls_server", test_plaintext_control_denied_by_tls_server);
 
 	// -------------------
 	// Reader
@@ -1534,6 +1653,18 @@ int main() {
 	result += RunOne("test_empty_file_eof", test_empty_file_eof);
 	result += RunOne("test_large_pattern_reader", test_large_pattern_reader);
 	result += RunOne("test_sixteen_peers_with_eight_readers", test_sixteen_peers_with_eight_readers);
+
+	// -------------------
+	// TLS
+	// -------------------
+	result += RunOne("test_tls_auxiliary_plaintext_rejected", test_tls_auxiliary_plaintext_rejected);
+	result += RunOne("test_tls_auxiliary_stall_expires", test_tls_auxiliary_stall_expires);
+	result += RunOne("test_tls_configuration_cannot_downgrade_live_channels", test_tls_configuration_cannot_downgrade_live_channels);
+	result += RunOne("test_tls_current_time_default_and_fixed_opt_in", test_tls_current_time_default_and_fixed_opt_in);
+	result += RunOne("test_tls_heartbeat_read_write_roundtrip", test_tls_heartbeat_read_write_roundtrip);
+	result += RunOne("test_tls_mtls_rejects_missing_identity", test_tls_mtls_rejects_missing_identity);
+	result += RunOne("test_tls_primary_pending_limit", test_tls_primary_pending_limit);
+	result += RunOne("test_tls_primary_stall_isolation", test_tls_primary_stall_isolation);
 
 	// -------------------
 	// Writer

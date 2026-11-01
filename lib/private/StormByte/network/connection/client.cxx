@@ -39,7 +39,6 @@
  */
 
 #include <StormByte/network/connection/client.hxx>
-#include <StormByte/safe/unique_lock.hxx>
 
 #include <utility>
 
@@ -54,10 +53,7 @@ Client::Client(StormByte::Safe::Shared<Network::Socket::Client> socket, Buffer::
 Client::Client(Client&& other) noexcept:
 	m_socket(std::move(other.m_socket)),
 	m_in_pipeline(std::move(other.m_in_pipeline)),
-	m_out_pipeline(std::move(other.m_out_pipeline)),
-	m_file_input(std::move(other.m_file_input)),
-	m_file_output(std::move(other.m_file_output)),
-	m_configured(std::exchange(other.m_configured, false))
+	m_out_pipeline(std::move(other.m_out_pipeline))
 {}
 
 Client::~Client() noexcept = default;
@@ -67,36 +63,12 @@ Client& Client::operator=(Client&& other) noexcept {
 		m_socket = std::move(other.m_socket);
 		m_in_pipeline = std::move(other.m_in_pipeline);
 		m_out_pipeline = std::move(other.m_out_pipeline);
-		m_file_input = std::move(other.m_file_input);
-		m_file_output = std::move(other.m_file_output);
-		m_configured = std::exchange(other.m_configured, false);
 	}
 	return *this;
 }
 
 Client::Pointer Client::Create(StormByte::Safe::Shared<Network::Socket::Client> socket, Buffer::Pipeline input, Buffer::Pipeline output) noexcept {
 	return StormByte::Safe::MakeShared<Client>(std::move(socket), std::move(input), std::move(output));
-}
-
-bool Client::ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output) {
-	StormByte::Safe::UniqueLock lock(m_configuration_mutex);
-	if (m_configured)
-		return false;
-	Buffer::Pipeline file_input(input);
-	Buffer::Pipeline file_output(output);
-	m_in_pipeline = std::move(input);
-	m_out_pipeline = std::move(output);
-	m_file_input = std::move(file_input);
-	m_file_output = std::move(file_output);
-	m_configured = true;
-	return true;
-}
-
-StormByte::Safe::Pair<StormByte::Buffer::Pipeline, StormByte::Buffer::Pipeline> Client::FilePipelines() {
-	StormByte::Safe::UniqueLock lock(m_configuration_mutex);
-	StormByte::Safe::Pair<StormByte::Buffer::Pipeline, StormByte::Buffer::Pipeline> result{m_file_input, m_file_output};
-	m_configured = true;
-	return result;
 }
 
 StormByte::Buffer::Pipeline& Client::InputPipeline() noexcept {

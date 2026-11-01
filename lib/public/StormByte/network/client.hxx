@@ -40,6 +40,7 @@
 
 #pragma once
 
+#include <StormByte/crypto/tls/session.hxx>
 #include <StormByte/network/client_telemetry.hxx>
 #include <StormByte/network/discovery.hxx>
 #include <StormByte/network/endpoint.hxx>
@@ -75,18 +76,29 @@ namespace StormByte {
 		}
 
 		/**
+		 * @namespace StormByte::Network::Detail
+		 * @brief Network-owned endpoint implementation state.
+		 */
+		namespace Detail {
+			/**
+			 * @brief Forward declaration of copied TLS configuration.
+			 */
+			class TLSConfiguration;
+		}
+
+		/**
 		 * @class Client
 		 * @brief Abstract application client.
 		 *
-		 * Derive and use protected Send() for request/response. ConfigurePipelines
-		 * installs one connection's transformation pair after application negotiation.
+		 * Derive and use protected Send() for request/response. ConfigureTLS enables
+		 * authenticated TLS before connecting, including every remote-file channel.
 		 *
 		 * @note Inheritance-oriented. Not for direct generic use without a subclass.
 			 * @details All owned fields use Safe handles; construction, moves,
 			 * assignment and destruction run inside Network. Allocate an exact derived
 			 * type through its provider's Safe factory when sharing ownership across
 			 * modules; the base registration does not certify derived state. Keep Base,
-			 * Network, logger, packet, pipeline and callback providers loaded until
+			 * Network, Crypto, logger, packet and callback providers loaded until
 			 * their objects are released. Serialize client use, moves and destruction.
 			 * Opcode UUIDs and Connect addresses are synchronous borrowed views.
 		 */
@@ -140,6 +152,24 @@ namespace StormByte {
 				bool Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) override;
 
 				/**
+				 * @brief Require TLS for subsequent application and remote-file connections.
+				 * @param configuration Borrowed Crypto inputs, deeply copied during this call.
+				 * @param refresh_validation_time Use current time for each new session by default;
+				 * false explicitly preserves the supplied instant for offline validation.
+				 * @return False when connected or configuration validation fails; no state changes.
+				 * @details Requires an explicit expected server identity. Retained across reconnects.
+				 * Externally serialize configuration, connection, moves and destruction.
+				 */
+				bool ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
+					bool refresh_validation_time = true) noexcept;
+
+				/**
+				 * @brief Restore plaintext for future connections while disconnected.
+				 * @return False while an application or file channel remains attached.
+				 */
+				bool DisableTLS() noexcept;
+
+				/**
 				 * @brief Disconnect if connected.
 				 */
 				void Disconnect() noexcept override;
@@ -171,16 +201,6 @@ namespace StormByte {
 
 
 			protected:
-				/**
-				 * @brief Configure this connection exactly once, before its first file plane.
-				 * @param input Pipeline decoding incoming application and file messages.
-				 * @param output Pipeline encoding outgoing application and file messages.
-				 * @return False if disconnected, already configured, sealed or copying fails.
-				 * @details Starts with no-op pipelines. Call only between Send operations;
-				 * externally serialize client use. File planes receive independent copies.
-				 */
-				bool ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output) noexcept;
-
 				/**
 				 * @brief Admit a received opcode before transformation and deserialization.
 				 * @param uuid Local connection identity, borrowed during the call.
@@ -236,6 +256,7 @@ namespace StormByte {
 				RemoteFileWriterHandle CreateRemoteFileWriter(const RemoteFileMount& mount) noexcept;
 
 			private:
+				Safe::Shared<const Detail::TLSConfiguration> m_tls_configuration; ///< Immutable TLS inputs, not session state.
 				Safe::Shared<Connection::Client> m_connection;					///< Active framed connection.
 				Safe::String m_remote_address;								///< Address used for private file channels.
 				Connection::Protocol m_protocol{Connection::Protocol::IPv4};	///< File-channel address family.

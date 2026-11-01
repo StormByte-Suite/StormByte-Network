@@ -103,7 +103,7 @@ namespace StormByte {
 			};
 
 			/**
-			 * @brief Connection retained for synchronized pipeline configuration.
+			 * @brief Connection retained for synchronized remote-file mount ownership checks.
 			 * @details Aggregate construction, copying, movement, assignment and
 			 * destruction operate only on a Base-owned shared handle. Connection
 			 * construction and final destruction remain in Network through its

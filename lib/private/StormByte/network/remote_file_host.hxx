@@ -40,6 +40,7 @@
 
 #pragma once
 
+#include <StormByte/network/tls_configuration.hxx>
 #include <StormByte/network/detail/remote_file_records.hxx>
 #include <StormByte/network/remote_file_mount.hxx>
 #include <StormByte/network/remote_file_protocol.hxx>
@@ -186,10 +187,25 @@ namespace StormByte {
 				 * @param timeout_seconds Heartbeat deadline in seconds.
 				 * @param registry Shared server-wide capability registry.
 				 * @param logger Shared diagnostic logger.
+				 * @param tls_configuration Immutable primary TLS inputs, or empty for plaintext.
 				 */
 				Host(Connection::Protocol protocol, Safe::String bind_address, Buffer::Pipeline input,
 					Buffer::Pipeline output, std::uint16_t timeout_seconds,
-					Safe::Shared<MountRegistry> registry, Safe::Shared<Logger::Log> logger);
+					Safe::Shared<MountRegistry> registry, Safe::Shared<Logger::Log> logger,
+					Safe::Shared<const TLSConfiguration> tls_configuration = {});
+
+				/**
+				 * @brief Incrementally authenticate or advance the accepted TLS channel.
+				 * @param readable Socket read readiness.
+				 * @return False on any terminal failure.
+				 */
+				bool PumpTLS(bool readable) noexcept;
+
+				/**
+				 * @brief Observe admission to the protected file protocol.
+				 * @return True for plaintext or authenticated TLS.
+				 */
+				bool TLSReady() const noexcept;
 
 				/**
 				 * @brief Copy construction is disabled for live peer state.
@@ -357,6 +373,7 @@ namespace StormByte {
 				StormByte::Expected<bool, ConnectionError> FlushOutput() noexcept;
 
 				private:
+				Safe::Shared<const TLSConfiguration> m_tls_configuration; ///< Inherited immutable TLS inputs.
 				/**
 				 * @brief Serialize and transform one bounded response.
 				 * @param response Response to queue.

@@ -11,6 +11,7 @@ if(ENABLE_TEST)
 		../lib/private/StormByte/network/socket/client.cxx
 		../lib/private/StormByte/network/socket/operation.cxx
 		../lib/private/StormByte/network/socket/socket.cxx
+		../lib/private/StormByte/network/socket/tls.cxx
 	)
 	target_link_libraries(TransportTest StormByte::Network)
 	if(WIN32)
@@ -74,13 +75,6 @@ if(ENABLE_TEST)
 	add_test(NAME DiscoveryTest COMMAND DiscoveryTest)
 	set_tests_properties(DiscoveryTest PROPERTIES TIMEOUT 30)
 
-	add_executable(HandshakeTest handshake_test.cxx)
-	target_link_libraries(HandshakeTest StormByte::Network)
-	if(WIN32)
-		target_link_libraries(HandshakeTest ws2_32)
-	endif()
-	add_test(NAME HandshakeTest COMMAND HandshakeTest)
-	set_tests_properties(HandshakeTest PROPERTIES TIMEOUT 30)
 	# Combined server/client socket test (multi-client)
 	# It is a private class, keep for internal testing only
 	# add_executable(SocketMultiTest socket_multi_test.cxx)
@@ -90,6 +84,7 @@ if(ENABLE_TEST)
 	# Client/Server interaction test
 	add_executable(ClientServerTest client_server_test.cxx)
 	target_link_libraries(ClientServerTest StormByte::Network)
+	target_compile_definitions(ClientServerTest PRIVATE TLS_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tls")
 	if(WIN32)
 		target_link_libraries(ClientServerTest ws2_32)
 	endif()
@@ -98,6 +93,7 @@ if(ENABLE_TEST)
 
 	add_executable(RemoteFileTest remote_file_test.cxx)
 	target_link_libraries(RemoteFileTest StormByte::Network)
+	target_compile_definitions(RemoteFileTest PRIVATE TLS_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tls")
 	if(WIN32)
 		target_link_libraries(RemoteFileTest ws2_32)
 	endif()

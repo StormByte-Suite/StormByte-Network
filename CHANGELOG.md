@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Breaking:** remove protected `Client::ConfigurePipelines` and
+  `Server::ConfigureClientPipelines`. Derived consumers, including
+  Alchemist/Alchemy and other applications, must migrate and rebuild; their
+  application packets, opcodes, serialization and handlers are unchanged.
+- Add public pre-connect `ConfigureTLS`/`DisableTLS` with validated, deeply
+  copied Crypto TLS identity, custom roots, policy, ALPN, revocation evidence
+  and optional mTLS inputs. Retain configuration across reconnects and moves.
+  Refresh validation time for each new session by default; an explicit
+  `refresh_validation_time=false` opts into the supplied fixed instant for
+  deterministic offline or fixed-time revocation-evidence validation.
+  Plaintext remains supported only when TLS is unconfigured; configured
+  connections fail closed with no plaintext fallback.
+- Protect all remote-file auxiliary traffic with independent TLS sessions
+  inheriting primary configuration, including file bytes, tokens, framing,
+  metadata, control operations and heartbeat/release exchanges.
+- Advance server TLS handshakes and record I/O incrementally without blocking
+  the event loop, cap pending primary handshakes at 64 and enforce ten-second
+  handshake deadlines. Admit callbacks and packet dispatch only after
+  authenticated success; authenticate file channels before token processing.
+- Replace the client/server XOR fixture with real offline Crypto TLS and
+  remove the obsolete application-handshake suite and README example.
 - Require StormByte-Crypto 2.3.0 for TLS integration, using its published binary
   release in bundled builds and the Crypto component in system builds.
 - Add `WITH_NGHTTP2=BUNDLED|SYSTEM`; bundled builds use the source submodule
@@ -27,7 +48,7 @@ StormByte Network is the C++26 networking layer of the StormByte suite.
 
 It depends on [StormByte Base](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2) 2.2.2, [StormByte Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5) 2.0.5, [StormByte Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5) 2.0.5, and [StormByte System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2) 2.1.2. Each is its own archive. This repository is not Base, Buffer, Config, Crypto, Database, Logger, Multimedia or System.
 
-Inherit `Client` or `Server`, define packets, and attach Buffer pipelines.
+Inherit `Client` or `Server`, define packets, and optionally configure Crypto TLS.
 IPv4 and IPv6, framed request/response, POSIX and Winsock stay behind the public API.
 
 ## [Unreleased]

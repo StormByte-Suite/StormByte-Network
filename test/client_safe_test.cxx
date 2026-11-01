@@ -102,11 +102,6 @@ class ClientFixture final: public StormByte::Network::Client {
 		using Client::AllowOutgoingOpcode;
 
 		/**
-		 * @brief Expose one-time public pipeline configuration for offline checks.
-		 */
-		using Client::ConfigurePipelines;
-
-		/**
 		 * @brief Expose the public reader factory without private construction.
 		 */
 		using Client::CreateRemoteFileReader;
@@ -174,7 +169,8 @@ int test_offline_operations() {
 	ASSERT_NOT_NULL(client.Telemetry().get());
 	ASSERT_TRUE(client.AllowIncomingOpcode("offline", Network::Transport::Packet::PROCESS_THRESHOLD));
 	ASSERT_TRUE(client.AllowOutgoingOpcode("offline", Network::Transport::Packet::PROCESS_THRESHOLD));
-	ASSERT_FALSE(client.ConfigurePipelines({}, {}));
+	ASSERT_FALSE(client.ConfigureTLS(Crypto::TLS::ClientConfiguration{}));
+	ASSERT_TRUE(client.DisableTLS());
 	EmptyPacket packet;
 	ASSERT_NULL(client.Send(packet).get());
 	ASSERT_EQUAL(Network::Connection::Status::Disconnected, client.Status());
@@ -185,6 +181,9 @@ int test_public_signatures() {
 	using Client = Network::Client;
 	static_assert(Type::SameAs<decltype(&Client::Connect), bool (Client::*)(const Network::Connection::Protocol&,
 		std::string_view, const unsigned short&)>);
+	static_assert(Type::SameAs<decltype(&Client::ConfigureTLS),
+		bool (Client::*)(const Crypto::TLS::ClientConfiguration&, bool) noexcept>);
+	static_assert(Type::SameAs<decltype(&Client::DisableTLS), bool (Client::*)() noexcept>);
 	static_assert(Type::SameAs<decltype(&Client::Disconnect), void (Client::*)() noexcept>);
 	static_assert(Type::SameAs<decltype(&Client::Status), Network::Connection::Status (Client::*)() const noexcept>);
 	static_assert(Type::SameAs<decltype(&Client::Telemetry), Safe::Shared<Network::ClientTelemetry> (Client::*)() const noexcept>);

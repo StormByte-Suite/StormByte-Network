@@ -38,6 +38,8 @@
  * SPDX-License-Identifier: LGPL-3.0-or-later OR LicenseRef-StormByte-Commercial
  */
 
+#include "tls_fixture.hxx"
+
 #include <StormByte/logger/threaded_log.hxx>
 #include <StormByte/network/client.hxx>
 #include <StormByte/network/remote_file.hxx>
@@ -551,77 +553,12 @@ namespace Test {
 	using ExpectedRandomNumber = NetExpected<int>;
 	using ExpectedLargeData = NetExpected<std::string>;
 
-	/**
-	 * @brief XOR transform callable for framed test payloads.
-	 */
-	struct XorPipe final {
-		public:
-			/**
-			 * @brief Select the reversible test transform.
-			 * @param mask XOR mask; this fixture is not encryption.
-			 */
-			explicit XorPipe(std::byte mask = std::byte{0xAB}):
-				m_mask(mask) {
-			}
-
-			/**
-			 * @brief Transform input bursts, failing or closing the output before returning.
-			 * @param in Borrowed input stream.
-			 * @param out Borrowed output stream.
-			 * @param log Borrowed logger for stage lifecycle and write failures.
-			 */
-			void operator()(const Buf::PipeInput& in, const Buf::PipeOutput& out,
-				const StormByte::Safe::Shared<Log>& log) const {
-				log << Level::Debug << "XOR Pipe: Starting..." << std::endl;
-				constexpr StormByte::ByteSize max_chunk{10 * 1024 * 1024};
-
-				while (!in.EoF()) {
-					StormByte::Safe::Binary data;
-
-					// Blocks until ≥1 byte or EoF/error (no yield spin)
-					if (!in.Read(StormByte::ByteSize{1}, data) || data.empty()) {
-						if (in.EoF()) {
-							break;
-						}
-
-						continue;
-					}
-
-					// Non-blocking grab of the rest of the current burst (capped)
-					const StormByte::ByteSize extra = std::min(in.Available(), max_chunk - data.size());
-					if (extra > StormByte::ByteSize{0}) {
-						StormByte::Safe::Binary more;
-						if (in.Read(extra, more) && !more.empty()) {
-							data.append(std::move(more));
-						}
-					}
-
-					for (auto& byte: data) {
-						byte ^= m_mask;
-					}
-
-					if (!out.Write(std::move(data))) {
-						log << Level::Error << "XOR Pipe: Write failed" << std::endl;
-						out.SetError();
-						return;
-					}
-				}
-
-				out.Close();
-				log << Level::Debug << "XOR Pipe: Finished." << std::endl;
-			}
-
-		private:
-			/**
-			 * @brief Reversible test mask shared by input and output transformations.
-			 */
-			std::byte m_mask;
-	};
-
 	class Client: public Net::Client {
 		public:
 			Client(StormByte::Safe::Shared<Log> logger) noexcept:
 				Net::Client(DeserializeFunction(), logger) {
+				if (!TLSFixture::Configure(*this))
+					std::terminate();
 			}
 
 			~Client() noexcept = default;
@@ -632,39 +569,22 @@ namespace Test {
 			using Net::Client::Send;
 
 			/**
-			 * @brief Select the output mask before connecting the test peer.
-			 * @param mask Reversible test mask, not encryption.
+			 * @brief Select a deliberately invalid expected identity.
 			 */
-			void OutputMask(std::byte mask) noexcept {
-				m_output_mask = mask;
+			void RejectIdentity() noexcept {
+				if (!TLSFixture::Configure(*this, "wrong.example"))
+					std::terminate();
 			}
 
 			/**
-			 * @brief Install the fixture's XOR pair explicitly after transport connection.
+			 * @brief Authenticate the configured TLS transport before packet traffic.
 			 * @param protocol Address family.
 			 * @param address Remote address.
 			 * @param port Listener port.
-			 * @return Whether connection and one-time configuration succeeded.
+			 * @return Whether the TLS connection succeeded.
 			 */
 			bool Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) override {
-				if (!Net::Client::Connect(protocol, address, port))
-					return false;
-				if (ConfigurePipelines(InputPipeline(), OutputPipeline()))
-					return true;
-				Disconnect();
-				return false;
-			}
-
-			Pipeline InputPipeline() const noexcept {
-				Pipeline pipeline;
-				pipeline.Add(Buf::Pipe{XorPipe{}});
-				return pipeline;
-			}
-
-			Pipeline OutputPipeline() const noexcept {
-				Pipeline pipeline;
-				pipeline.Add(Buf::Pipe{XorPipe{m_output_mask}});
-				return pipeline;
+				return Net::Client::Connect(protocol, address, port);
 			}
 
 			ExpectedNameList RequestNameList(const std::size_t& amount) noexcept {
@@ -769,11 +689,6 @@ namespace Test {
 				return answer_packet->GetSum();
 			}
 
-		private:
-			/**
-			 * @brief Output mask fixed before connection configuration.
-			 */
-			std::byte m_output_mask{0xAB};
 	};
 
 	/**
@@ -813,6 +728,8 @@ namespace Test {
 		public:
 			Server(StormByte::Safe::Shared<Log> logger) noexcept:
 				Net::Server(DeserializeFunction(), logger) {
+				if (!TLSFixture::Configure(*this))
+					std::terminate();
 			}
 
 			~Server() noexcept override {
@@ -822,31 +739,20 @@ namespace Test {
 			/**
 			 * @brief Select deliberate reply failure before starting the server.
 			 * @param mode Zero for normal, one for unknown opcode, two for corrupt bytes,
-			 * three for a valid payload transformed with an incompatible test mask.
+			 * three for another malformed payload over authenticated TLS.
 			 */
 			void InvalidReplyMode(unsigned int mode) noexcept {
 				m_invalid_reply = mode;
 			}
 
 			/**
-			 * @brief Install the fixture pair independently for every accepted UUID.
+			 * @brief Admit only successfully authenticated sessions.
 			 * @param uuid New connection identity.
-			 * @return Whether the fixture configuration was installed.
+			 * @return True for authenticated fixture sessions.
 			 */
 			bool OnClientConnected(std::string_view uuid) noexcept override {
-				return ConfigureClientPipelines(uuid, InputPipeline(), OutputPipeline());
-			}
-
-			Pipeline InputPipeline() const noexcept {
-				Pipeline pipeline;
-				pipeline.Add(Buf::Pipe{XorPipe{}});
-				return pipeline;
-			}
-
-			Pipeline OutputPipeline() const noexcept {
-				Pipeline pipeline;
-				pipeline.Add(Buf::Pipe{XorPipe{m_invalid_reply == 3 ? std::byte{0xCD} : std::byte{0xAB}}});
-				return pipeline;
+				(void)uuid;
+				return true;
 			}
 
 		private:
@@ -857,7 +763,7 @@ namespace Test {
 
 			PacketPointer ProcessClientPacket(std::string_view client_uuid, PacketPointer packet) noexcept override {
 				(void)client_uuid;
-				if (m_invalid_reply == 1 || m_invalid_reply == 2)
+				if (m_invalid_reply >= 1 && m_invalid_reply <= 3)
 					return PacketPointer::MakePointer<InvalidReply>(m_invalid_reply == 1);
 				switch (static_cast<Packet::Opcode>(packet->Opcode())) {
 					case Packet::Opcode::C_MSG_ASKNAMELIST: {
@@ -1584,14 +1490,17 @@ int test_slow_handler_does_not_block_other_clients() {
 	});
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	const auto start = std::chrono::steady_clock::now();
-	ASSERT_TRUE(fast_client.RequestPing());
+	const bool fast_result = fast_client.RequestPing();
 	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
 		std::chrono::steady_clock::now() - start).count();
-	ASSERT_TRUE(elapsed < 300);
 	if (slow_thread.joinable()) {
 		slow_thread.join();
 	}
 
+	if (elapsed >= 300)
+		std::cerr << "Fast TLS peer latency: " << elapsed << " ms\n";
+	ASSERT_TRUE(fast_result);
+	ASSERT_TRUE(elapsed < 300);
 	ASSERT_TRUE(slow_result.load());
 	slow_client.Disconnect();
 	fast_client.Disconnect();
@@ -1770,26 +1679,6 @@ int test_factory_failure_disconnects_only_server_peer() {
 	ASSERT_EQUAL(SB::Size{0}, server.Telemetry()->PacketsDispatched());
 	const auto echoed = legitimate.RequestEchoText("server_still_usable");
 	ASSERT_TRUE(echoed && *echoed == "server_still_usable");
-	legitimate.Disconnect();
-	server.Disconnect();
-	RETURN_TEST(0);
-}
-
-int test_mismatched_pipeline_disconnects_only_peer() {
-	::Test::Server server(logger);
-	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	::Test::Client legitimate(logger);
-	ASSERT_TRUE(legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	::Test::Client peer(logger);
-	peer.OutputMask(std::byte{0xCD});
-	ASSERT_TRUE(peer.Connect(Connection::Protocol::IPv4, HOST, PORT));
-	ASSERT_FALSE(peer.RequestEchoText("untrusted client").has_value());
-	ASSERT_EQUAL(Connection::Status::Disconnected, peer.Status());
-	ASSERT_EQUAL(SB::Size{1}, peer.Telemetry()->RequestsWithoutResponse());
-	ASSERT_EQUAL(SB::Size{0}, server.Telemetry()->PacketsDispatched());
-	ASSERT_EQUAL(Connection::Status::Connected, server.Status());
-	const auto echoed = legitimate.RequestEchoText("legitimate client");
-	ASSERT_TRUE(echoed && *echoed == "legitimate client");
 	legitimate.Disconnect();
 	server.Disconnect();
 	RETURN_TEST(0);
@@ -1990,6 +1879,25 @@ int test_request_random_number() {
 	ASSERT_TRUE(n >= 0 && n < 100);
 	logger << Level::Info << fn_name << ": Received random number: " << n << std::endl;
 	client.Disconnect();
+	server.Disconnect();
+	RETURN_TEST(0);
+}
+
+int test_tls_identity_rejection_isolates_peer() {
+	::Test::Server server(logger);
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	::Test::Client legitimate(logger);
+	ASSERT_TRUE(legitimate.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	::Test::Client peer(logger);
+	peer.RejectIdentity();
+	ASSERT_FALSE(peer.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_EQUAL(Connection::Status::Disconnected, peer.Status());
+	ASSERT_EQUAL(SB::Size{0}, peer.Telemetry()->RequestsWithoutResponse());
+	ASSERT_EQUAL(SB::Size{0}, server.Telemetry()->PacketsDispatched());
+	ASSERT_EQUAL(Connection::Status::Connected, server.Status());
+	const auto echoed = legitimate.RequestEchoText("legitimate client");
+	ASSERT_TRUE(echoed && *echoed == "legitimate client");
+	legitimate.Disconnect();
 	server.Disconnect();
 	RETURN_TEST(0);
 }
@@ -2261,7 +2169,6 @@ int main() {
 	// -------------------
 	result += test_factory_failure_disconnects_client();
 	result += test_factory_failure_disconnects_only_server_peer();
-	result += test_mismatched_pipeline_disconnects_only_peer();
 	result += test_network_exception_string_view();
 	result += test_ordered_batch_requests();
 	result += test_request_additional_commands();
@@ -2269,6 +2176,7 @@ int main() {
 	result += test_request_large_data_echoed();
 	result += test_request_name_list();
 	result += test_request_random_number();
+	result += test_tls_identity_rejection_isolates_peer();
 
 	// -------------------
 	// Remote File

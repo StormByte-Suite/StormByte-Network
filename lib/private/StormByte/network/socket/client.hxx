@@ -40,14 +40,17 @@
 
 #pragma once
 
+#include <StormByte/crypto/tls/session.hxx>
 #include <StormByte/buffer/consumer.hxx>
 #include <StormByte/network/connection/resolver.hxx>
 #include <StormByte/network/socket/operation.hxx>
 #include <StormByte/network/socket/socket.hxx>
 #include <StormByte/network/typedefs.hxx>
 #include <StormByte/safe/binary.hxx>
+#include <StormByte/safe/mutex.hxx>
 #include <StormByte/safe/pointers.hxx>
 
+#include <chrono>
 #include <span>
 #include <string_view>
 
@@ -111,6 +114,51 @@ namespace StormByte {
 						 * @return Shared client handle, or empty when allocation fails.
 					 */
 					static Pointer Create(const Connection::Protocol& protocol, StormByte::Safe::Shared<Logger::Log> logger) noexcept;
+
+					/**
+					 * @brief Attach an independent Crypto session before any application I/O.
+					 * @param session Newly configured, handshaking session.
+					 * @param synchronous Whether to complete the bounded handshake in this call.
+					 * @return False on setup, authentication or transport failure.
+					 */
+					bool StartTLS(Crypto::TLS::Session session, bool synchronous) noexcept;
+
+					/**
+					 * @brief Advance TLS with at most one native read and write, never waiting.
+					 * @param readable Native read readiness.
+					 * @return False on authentication, deadline or transport failure.
+					 */
+					bool PumpTLS(bool readable) noexcept;
+
+					/**
+					 * @brief Observe successful TLS authentication (or an unconfigured channel).
+					 * @return True when application I/O may proceed.
+					 */
+					bool TLSReady() const noexcept;
+
+					/**
+					 * @brief Observe queued ciphertext requiring writable polling.
+					 * @return True when TLS protocol or application output remains pending.
+					 */
+					bool TLSHasOutput() const noexcept;
+
+					/**
+					 * @brief Observe pending-handshake deadline expiry.
+					 * @return True after ten seconds without authentication.
+					 */
+					bool TLSExpired() const noexcept;
+
+					/**
+					 * @brief Observe decrypted bytes retained for incremental processing.
+					 * @return True when buffered TLS application bytes may remain.
+					 */
+					bool TLSBuffered() const noexcept;
+
+					/**
+					 * @brief Observe immutable transport mode after channel construction.
+					 * @return True when this channel requires TLS.
+					 */
+					bool UsingTLS() const noexcept;
 
 					/**
 					 * @brief Construct with protocol and logger.
@@ -283,6 +331,14 @@ namespace StormByte {
 					bool Ping() noexcept;
 
 				private:
+					Crypto::TLS::Session m_tls; ///< Independent Crypto-owned engine.
+					Safe::Mutex m_tls_mutex; ///< Serializes engine steps, never socket waits.
+					bool m_tls_enabled{false}; ///< Fail-closed TLS mode.
+					bool m_tls_buffered{false}; ///< Crypto may retain plaintext.
+					bool m_tls_pending{false}; ///< Crypto output may need draining.
+					Safe::Binary m_tls_output; ///< Unsent ciphertext, bounded to one record chunk.
+					ByteSize m_tls_offset{0}; ///< Sent ciphertext prefix.
+					std::chrono::steady_clock::time_point m_tls_deadline{}; ///< Pending-handshake deadline.
 					friend class StormByte::Network::Detail::Session;
 					friend class StormByte::Network::Detail::RemoteFile::Host;
 
@@ -298,9 +354,11 @@ namespace StormByte {
 					/**
 					 * @brief Attempt one non-blocking read without waiting.
 					 * @param would_block Set when the socket needs POLLIN/select.
+					 * @param maximum Maximum plaintext bytes for a TLS read.
 					 * @return Bytes read or hard error.
 					 */
-					Expected<StormByte::Safe::Binary, ConnectionError> TryRead(bool& would_block) noexcept;
+					Expected<StormByte::Safe::Binary, ConnectionError> TryRead(bool& would_block,
+						ByteSize maximum = ByteSize{16384}) noexcept;
 
 					/**
 					 * @brief Single recv with flags.

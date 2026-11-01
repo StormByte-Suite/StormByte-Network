@@ -88,6 +88,17 @@ namespace StormByte {
 			~Session() noexcept;
 
 			/**
+			 * @brief Whether the authenticated-connect callback has run.
+			 * @return True after admission, or for an unconfigured plaintext connection.
+			 */
+			bool Authenticated() const noexcept;
+
+			/**
+			 * @brief Mark successful TLS admission before dispatch.
+			 */
+			void SetAuthenticated() noexcept;
+
+			/**
 			 * @brief Borrow the client UUID.
 			 * @return Session-owned UUID.
 			 */
@@ -221,6 +232,7 @@ namespace StormByte {
 			StormByte::ByteSize m_bytes_needed = FRAME_HEADER_SIZE; ///< Remaining bytes.
 			ParsePhase m_phase = ParsePhase::Header; ///< Current parser phase.
 			bool m_closed = false; ///< Terminal state.
+			bool m_authenticated = false; ///< Authenticated connect callback was issued.
 
 			bool m_close_after_reply{false}; ///< Reply-draining state owned by the event loop.
 			bool m_in_flight = false; ///< Request executing in pool.

@@ -116,11 +116,6 @@ class ServerFixture final: public StormByte::Network::Server {
 		using Server::AllowOutgoingOpcode;
 
 		/**
-		 * @brief Expose application session pipeline configuration.
-		 */
-		using Server::ConfigureClientPipelines;
-
-		/**
 		 * @brief Expose application session disconnection.
 		 */
 		using Server::DisconnectClient;
@@ -248,8 +243,8 @@ int test_null_configuration() {
 int test_offline_operations() {
 	ServerFixture server;
 	auto retained = server.Telemetry();
-	ASSERT_FALSE(server.ConfigureClientPipelines("", {}, {}));
-	ASSERT_FALSE(server.ConfigureClientPipelines("missing-session", {}, {}));
+	ASSERT_FALSE(server.ConfigureTLS(Crypto::TLS::ServerConfiguration{}));
+	ASSERT_TRUE(server.DisableTLS());
 	server.DisconnectClient("");
 	server.DisconnectClient("missing-session");
 	server.DisconnectClientAfterReply("");
@@ -263,6 +258,9 @@ int test_public_signatures() {
 	using Server = Network::Server;
 	static_assert(Type::SameAs<decltype(&Server::Connect), bool (Server::*)(const Network::Connection::Protocol&,
 		std::string_view, const unsigned short&)>);
+	static_assert(Type::SameAs<decltype(&Server::ConfigureTLS),
+		bool (Server::*)(const Crypto::TLS::ServerConfiguration&, bool) noexcept>);
+	static_assert(Type::SameAs<decltype(&Server::DisableTLS), bool (Server::*)() noexcept>);
 	static_assert(Type::SameAs<decltype(&Server::Disconnect), void (Server::*)() noexcept>);
 	static_assert(Type::SameAs<decltype(&Server::Status), Network::Connection::Status (Server::*)() const noexcept>);
 	static_assert(Type::SameAs<decltype(&Server::Telemetry), Safe::Shared<Network::ServerTelemetry> (Server::*)() const noexcept>);

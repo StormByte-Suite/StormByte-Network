@@ -40,8 +40,11 @@
 
 #include <StormByte/network/connection/handler.hxx>
 #include <StormByte/network/socket/client.hxx>
+#include <StormByte/network/socket/tls.hxx>
+#include <StormByte/safe/unique_lock.hxx>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <span>
 #include <utility>
@@ -110,17 +113,138 @@ Socket::Client::Client(const Connection::Protocol& protocol, StormByte::Safe::Sh
 	m_logger << Logger::Level::LowLevel << "Created client socket with UUID: " << std::string_view{m_UUID} << std::endl;
 }
 
-Socket::Client::Client(Client&& other) noexcept = default;
+Socket::Client::Client(Client&& other) noexcept:
+	Socket(std::move(other)), m_tls(std::move(other.m_tls)),
+	m_tls_enabled(std::exchange(other.m_tls_enabled, false)),
+	m_tls_buffered(std::exchange(other.m_tls_buffered, false)),
+	m_tls_pending(std::exchange(other.m_tls_pending, false)),
+	m_tls_output(std::move(other.m_tls_output)), m_tls_offset(other.m_tls_offset),
+	m_tls_deadline(other.m_tls_deadline) {}
 
 Socket::Client::~Client() noexcept = default;
 
-Socket::Client& Socket::Client::operator=(Client&& other) noexcept = default;
+Socket::Client& Socket::Client::operator=(Client&& other) noexcept {
+	if (this != &other) {
+		Socket::operator=(std::move(other));
+		m_tls = std::move(other.m_tls);
+		m_tls_enabled = std::exchange(other.m_tls_enabled, false);
+		m_tls_buffered = std::exchange(other.m_tls_buffered, false);
+		m_tls_pending = std::exchange(other.m_tls_pending, false);
+		m_tls_output = std::move(other.m_tls_output);
+		m_tls_offset = other.m_tls_offset;
+		m_tls_deadline = other.m_tls_deadline;
+	}
+	return *this;
+}
 
 Socket::Client::Pointer Socket::Client::Create(const Connection::Protocol& protocol, Safe::Shared<Logger::Log> logger) noexcept {
 	try {
 		return Safe::MakeShared<Client>(protocol, std::move(logger));
 	} catch (...) {
 		return {};
+	}
+}
+
+bool Socket::Client::StartTLS(Crypto::TLS::Session session, bool synchronous) noexcept {
+	if (m_tls_enabled || session.Status() != Crypto::TLS::State::Handshaking)
+		return false;
+	m_tls_enabled = true;
+	m_tls_pending = true;
+	m_tls = std::move(session);
+	m_tls_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+	try {
+		if (synchronous) {
+			if (TLS::Handshake(*this, m_tls, {m_tls_deadline}).state != OperationState::Complete)
+				return false;
+			m_tls_pending = false;
+		}
+		else if (!PumpTLS(false))
+			return false;
+		return true;
+	} catch (...) {
+		m_logger << Logger::Level::Error << "Failed to initialize TLS handshake." << std::endl;
+		Disconnect();
+		return false;
+	}
+}
+
+bool Socket::Client::TLSReady() const noexcept {
+	return !m_tls_enabled || (m_tls.HandshakeComplete() && m_tls.Status() == Crypto::TLS::State::Open);
+}
+
+bool Socket::Client::TLSHasOutput() const noexcept {
+	return m_tls_enabled && (!m_tls_output.empty() || m_tls_pending);
+}
+
+bool Socket::Client::TLSExpired() const noexcept {
+	return m_tls_enabled && !m_tls.HandshakeComplete() && std::chrono::steady_clock::now() >= m_tls_deadline;
+}
+
+bool Socket::Client::TLSBuffered() const noexcept {
+	return m_tls_enabled && m_tls_buffered;
+}
+
+bool Socket::Client::UsingTLS() const noexcept {
+	return m_tls_enabled;
+}
+
+bool Socket::Client::PumpTLS(bool readable) noexcept {
+	if (!m_tls_enabled)
+		return true;
+	try {
+		if (TLSExpired() || m_tls.Status() == Crypto::TLS::State::Failed)
+			return false;
+		if (readable) {
+			std::array<std::byte, 16384> encrypted{};
+			const auto received = ReadSome(encrypted);
+			if (received.state == OperationState::Complete) {
+				auto input = std::span<const std::byte>(encrypted).first(static_cast<std::size_t>(received.bytes));
+				auto fed = m_tls.FeedEncrypted(input);
+				if (!fed || *fed != input.size())
+					return false;
+				m_tls_buffered = m_tls.HandshakeComplete();
+				m_tls_pending = true;
+			}
+			else if (received.state != OperationState::WouldBlock)
+				return false;
+		}
+		if (m_tls_output.empty()) {
+			m_tls_output.resize(ByteSize{16384});
+			auto drained = m_tls.DrainEncrypted(m_tls_output.span());
+			if (!drained)
+				return false;
+			m_tls_output.resize(ByteSize{*drained});
+			m_tls_pending = *drained != 0;
+			m_tls_offset = 0;
+		}
+		if (!m_tls_output.empty()) {
+			const auto remaining = m_tls_output.span().subspan(static_cast<std::size_t>(m_tls_offset));
+#ifdef LINUX
+			const int flags = MSG_NOSIGNAL;
+#else
+			const int flags = 0;
+#endif
+			const int written = static_cast<int>(::send(m_handle,
+				reinterpret_cast<const char*>(remaining.data()), static_cast<int>(remaining.size()), flags));
+			if (written > 0) {
+				m_tls_offset += ByteSize{written};
+				if (m_tls_offset == m_tls_output.size())
+					m_tls_output.clear();
+			}
+			else {
+				const int error = Connection::Handler::Instance().LastErrorCode();
+#ifdef WINDOWS
+				if (error != WSAEWOULDBLOCK && error != WSAEINTR)
+#else
+				if (error != EAGAIN && error != EWOULDBLOCK && error != EINTR)
+#endif
+					return false;
+			}
+		}
+		return m_tls.Status() == Crypto::TLS::State::Handshaking || m_tls.Status() == Crypto::TLS::State::Open;
+	} catch (...) {
+		m_logger << Logger::Level::Error << "Failed to advance incremental TLS transport." << std::endl;
+		return false;
 	}
 }
 
@@ -298,6 +422,34 @@ ExpectedVoid Socket::Client::Send(const Safe::Binary& data) noexcept {
 }
 
 ExpectedVoid Socket::Client::Send(std::span<const std::byte> data) noexcept {
+	if (m_tls_enabled) {
+		try {
+			while (!data.empty()) {
+				bool blocked = false;
+				auto written = TryWrite(data, blocked);
+				if (!written)
+					return Unexpected(written.error());
+				data = data.subspan(static_cast<std::size_t>(*written));
+				if (blocked && WaitForWritable(m_handle) < 0)
+					return Unexpected<ConnectionError>("TLS write wait failed");
+			}
+			for (;;) {
+				{
+					Safe::UniqueLock lock(m_tls_mutex);
+					if (!PumpTLS(false))
+						return Unexpected<ConnectionError>("TLS output failed");
+					if (!TLSHasOutput())
+						return {};
+				}
+				if (WaitForWritable(m_handle) < 0)
+					return Unexpected<ConnectionError>("TLS output wait failed");
+			}
+		} catch (...) {
+			m_logger << Logger::Level::Error << "Failed to send TLS application bytes." << std::endl;
+			Disconnect();
+		}
+		return Unexpected<ConnectionError>("TLS write failed");
+	}
 	if (m_status.load(Safe::MemoryOrder::Acquire) != Connection::Status::Connected) {
 		return Unexpected<ConnectionError>("Failed to send: Client is not connected");
 	}
@@ -488,6 +640,8 @@ ExpectedBuffer Socket::Client::Peek(const ByteSize& size) const noexcept {
 }
 
 ExpectedBuffer Socket::Client::ReadOnce(const ByteSize& size, int flags) noexcept {
+	if (m_tls_enabled)
+		return Unexpected<ConnectionError>("TLS does not support raw peek");
 	if (size == 0) {
 		return Unexpected<ConnectionError>("Read failed: size must be greater than 0");
 	}
@@ -535,6 +689,41 @@ ExpectedBuffer Socket::Client::ReadOnce(const ByteSize& size, int flags) noexcep
 
 ExpectedVoid Socket::Client::ReceiveLoop(const ByteSize& max_size, Safe::Binary& out,
 	const unsigned short& timeout_seconds, bool require_exact) noexcept {
+	if (m_tls_enabled) {
+		try {
+			OperationControl control;
+			if (timeout_seconds != 0)
+				control.deadline = std::chrono::steady_clock::now() + std::chrono::seconds{timeout_seconds};
+			ByteSize total{0};
+			if (require_exact && max_size == 0)
+				return {};
+			for (;;) {
+				if (control.Check() != OperationState::Complete)
+					return Unexpected<ConnectionError>("TLS read timed out");
+				bool blocked = false;
+				auto read = TryRead(blocked, max_size > 0 ? max_size - total : ByteSize{16384});
+				if (!read)
+					return Unexpected(read.error());
+				if (blocked) {
+					OperationControl step{std::min(control.deadline,
+						std::chrono::steady_clock::now() + std::chrono::milliseconds{50})};
+					auto waited = WaitReadable(m_handle, step);
+					if (waited.state != OperationState::Complete && waited.state != OperationState::TimedOut)
+						return Unexpected<ConnectionError>("TLS read wait failed");
+					continue;
+				}
+				out.append(read->span());
+				total += read->size();
+				if (max_size == 0 || total >= max_size)
+					break;
+			}
+			return {};
+		} catch (...) {
+			m_logger << Logger::Level::Error << "Failed to receive TLS application bytes." << std::endl;
+			Disconnect();
+			return Unexpected<ConnectionError>("TLS read failed");
+		}
+	}
 	if (!HasHandle()) {
 		return Unexpected<ConnectionError>("Receive failed: Invalid socket handle");
 	}
@@ -667,6 +856,8 @@ ExpectedVoid Socket::Client::ReceiveInto(const ByteSize& max_size, Safe::Binary&
 }
 
 ExpectedVoid Socket::Client::Write(std::span<const std::byte> data, const ByteSize& size) noexcept {
+	if (m_tls_enabled)
+		return Send(data.first(static_cast<std::size_t>(std::min(size, ByteSize{data.size()}))));
 	m_logger << Logger::Level::LowLevel << "Starting to write data..." << std::endl;
 	if (m_status.load(Safe::MemoryOrder::Acquire) != Connection::Status::Connected) {
 		m_logger << Logger::Level::LowLevel << "Failed to write: Client is not connected" << std::endl;
@@ -726,6 +917,27 @@ ExpectedVoid Socket::Client::Write(std::span<const std::byte> data, const ByteSi
 
 StormByte::Expected<ByteSize, ConnectionError> Socket::Client::TryWrite(
 	std::span<const std::byte> data, bool& would_block) noexcept {
+	if (m_tls_enabled) {
+		would_block = false;
+		try {
+			Safe::UniqueLock lock(m_tls_mutex);
+			if (!PumpTLS(false) || !TLSReady())
+				return Unexpected<ConnectionError>("TLS stream is not authenticated");
+			if (TLSHasOutput()) {
+				would_block = true;
+				return ByteSize{0};
+			}
+			auto written = m_tls.WritePlaintext(data.first(std::min(data.size(), std::size_t{16384})));
+			m_tls_pending = true;
+			if (!written || !PumpTLS(false))
+				return Unexpected<ConnectionError>("TLS write failed");
+			would_block = *written == 0;
+			return ByteSize{*written};
+		} catch (...) {
+			m_logger << Logger::Level::Error << "Failed to allocate or encrypt TLS output." << std::endl;
+			return Unexpected<ConnectionError>("TLS write allocation failed");
+		}
+	}
 	would_block = false;
 	if (m_status.load(Safe::MemoryOrder::Acquire) != Connection::Status::Connected || !HasHandle()) {
 		return Unexpected<ConnectionError>("Failed to write: Client is not connected");
@@ -758,7 +970,38 @@ StormByte::Expected<ByteSize, ConnectionError> Socket::Client::TryWrite(
 	return Unexpected<ConnectionError>("Failed to write: {}", std::string_view{Connection::Handler::Instance().LastError()});
 }
 
-StormByte::Expected<Safe::Binary, ConnectionError> Socket::Client::TryRead(bool& would_block) noexcept {
+StormByte::Expected<Safe::Binary, ConnectionError> Socket::Client::TryRead(bool& would_block, ByteSize maximum) noexcept {
+	if (m_tls_enabled) {
+		would_block = false;
+		try {
+			Safe::UniqueLock lock(m_tls_mutex);
+			if (!TLSReady())
+				return Unexpected<ConnectionError>("TLS stream is not authenticated");
+			Safe::Binary data;
+			data.resize(std::min(maximum, ByteSize{16384}));
+			auto read = m_tls.ReadPlaintext(data.span());
+			m_tls_pending = true;
+			if (!read)
+				return Unexpected<ConnectionError>("TLS read failed");
+			if (*read == 0) {
+				m_tls_buffered = false;
+				if (!PumpTLS(true))
+					return Unexpected<ConnectionError>("TLS transport failed or truncated");
+				read = m_tls.ReadPlaintext(data.span());
+				if (!read)
+					return Unexpected<ConnectionError>("TLS read failed");
+			}
+			if (*read == 0 && m_tls.Status() != Crypto::TLS::State::Open)
+				return Unexpected<ConnectionError>("TLS stream closed");
+			data.resize(ByteSize{*read});
+			m_tls_buffered = *read != 0;
+			would_block = *read == 0;
+			return data;
+		} catch (...) {
+			m_logger << Logger::Level::Error << "Failed to allocate or decrypt TLS input." << std::endl;
+			return Unexpected<ConnectionError>("TLS read allocation failed");
+		}
+	}
 	would_block = false;
 	if (m_status.load(Safe::MemoryOrder::Acquire) != Connection::Status::Connected || !HasHandle()) {
 		return Unexpected<ConnectionError>("Failed to read: Client is not connected");

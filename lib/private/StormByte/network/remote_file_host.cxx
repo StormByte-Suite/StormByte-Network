@@ -285,7 +285,9 @@ namespace StormByte::Network::Detail::RemoteFile {
 
 	Host::Host(Connection::Protocol protocol, Safe::String bind_address, Buffer::Pipeline input,
 		Buffer::Pipeline output, const std::uint16_t timeout_seconds,
-		Safe::Shared<MountRegistry> registry, StormByte::Safe::Shared<StormByte::Logger::Log> logger):
+		Safe::Shared<MountRegistry> registry, StormByte::Safe::Shared<StormByte::Logger::Log> logger,
+		Safe::Shared<const TLSConfiguration> tls_configuration):
+		m_tls_configuration(std::move(tls_configuration)),
 		m_protocol(protocol), m_bind_address(std::move(bind_address)), m_input(std::move(input)),
 		m_output(std::move(output)), m_timeout_seconds(timeout_seconds), m_registry(std::move(registry)),
 		m_logger(std::move(logger)), m_last_activity(std::chrono::steady_clock::now()) {}
@@ -374,6 +376,8 @@ namespace StormByte::Network::Detail::RemoteFile {
 	}
 
 	bool Host::HasBufferedFrame() const noexcept {
+		if (m_active_client && m_active_client->TLSBuffered())
+			return true;
 		if (m_input_buffer.size() < ByteSize{sizeof(std::uint64_t)}) return false;
 		const auto expected_size = Serializable<std::uint64_t>::Deserialize(
 			std::span<const std::byte>{m_input_buffer.data(), sizeof(std::uint64_t)});
@@ -383,7 +387,8 @@ namespace StormByte::Network::Detail::RemoteFile {
 
 	bool Host::HasOutput() const noexcept {
 		std::scoped_lock lock(m_mutex);
-		return !m_output_buffer.empty() || !m_output_queue.empty();
+		return (m_active_client && m_active_client->TLSHasOutput())
+			|| !m_output_buffer.empty() || !m_output_queue.empty();
 	}
 
 	void Host::SetTaskBlocked(const bool blocked) noexcept {
@@ -392,6 +397,8 @@ namespace StormByte::Network::Detail::RemoteFile {
 	}
 
 	bool Host::Expired() const noexcept {
+		if (m_active_client && m_active_client->TLSExpired())
+			return true;
 		return m_port != 0 && std::chrono::steady_clock::now() - m_last_activity
 			>= std::chrono::seconds{m_timeout_seconds};
 	}
@@ -401,14 +408,37 @@ namespace StormByte::Network::Detail::RemoteFile {
 		auto accepted = m_listener->Accept();
 		if (!accepted) return false;
 		m_active_client = std::move(accepted.value());
+		if (m_tls_configuration) {
+			try {
+				auto tls = m_tls_configuration->Create();
+				if (!tls || !m_active_client->StartTLS(std::move(tls.value()), false)) {
+					Stop();
+					return false;
+				}
+			} catch (...) {
+				m_logger << Logger::Level::Error << "Failed to initialize auxiliary TLS handshake." << std::endl;
+				Stop();
+				return false;
+			}
+		}
 		m_accepted = true;
 		m_last_activity = std::chrono::steady_clock::now();
 		return true;
 	}
 
+	bool Host::PumpTLS(bool readable) noexcept {
+		return m_active_client && m_active_client->PumpTLS(readable);
+	}
+
+	bool Host::TLSReady() const noexcept {
+		return m_active_client && m_active_client->TLSReady();
+	}
+
 	StormByte::Network::ExpectedVoid Host::ReadReady() noexcept {
 		if (!m_active_client || Finished()) return Unexpected<ConnectionError>("Peer data plane is not connected");
-		if (!HasBufferedFrame()) {
+		if (!TLSReady()) return Unexpected<ConnectionError>("Peer data plane is not authenticated");
+		if (m_input_buffer.size() < ByteSize{sizeof(std::uint64_t)} || !HasBufferedFrame()
+			|| m_active_client->TLSBuffered()) {
 			bool would_block = false;
 			auto received = m_active_client->TryRead(would_block);
 			if (!received) return Unexpected(received.error());

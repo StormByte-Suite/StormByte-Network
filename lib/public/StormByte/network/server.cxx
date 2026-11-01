@@ -44,6 +44,7 @@
 #include <StormByte/network/server.hxx>
 #include <StormByte/network/session.hxx>
 #include <StormByte/network/socket/server.hxx>
+#include <StormByte/network/tls_configuration.hxx>
 #include <StormByte/network/worker_pool.hxx>
 #include <StormByte/safe/function.hxx>
 #include <StormByte/uuid.hxx>
@@ -212,6 +213,7 @@ Server&& Server::StopForMove(Server& other) noexcept {
 }
 
 void Server::MoveStoppedState(Server& other) noexcept {
+	m_tls_configuration = std::move(other.m_tls_configuration);
 	m_protocol = other.m_protocol;
 	m_bind_address = std::move(other.m_bind_address);
 	m_remote_file_registry = std::move(other.m_remote_file_registry);
@@ -397,9 +399,9 @@ RemoteFileMount Server::MountRemoteFileReader(std::string_view client_uuid,
 				const auto connection = m_configurable_connections.find(uuid);
 				if (connection == m_configurable_connections.end())
 					return RemoteFileMount::Failed();
-				Safe::Pair<Buffer::Pipeline, Buffer::Pipeline> pipelines = connection->second.connection->FilePipelines();
 				host = Safe::MakeShared<Detail::RemoteFile::Host>(m_protocol, m_bind_address,
-					std::move(pipelines.first), std::move(pipelines.second), maximum_timeout_seconds, m_remote_file_registry, m_logger);
+					Buffer::Pipeline{}, Buffer::Pipeline{}, maximum_timeout_seconds, m_remote_file_registry, m_logger,
+					m_tls_configuration);
 				if (!host->Start()) return RemoteFileMount::Failed();
 				m_remote_planes.emplace(uuid, Detail::RemotePlaneRegistration{host});
 				started_plane = true;
@@ -489,9 +491,9 @@ RemoteFileMount Server::MountRemoteFileWriter(std::string_view client_uuid,
 				const auto connection = m_configurable_connections.find(uuid);
 				if (connection == m_configurable_connections.end())
 					return RemoteFileMount::Failed();
-				Safe::Pair<Buffer::Pipeline, Buffer::Pipeline> pipelines = connection->second.connection->FilePipelines();
 				host = Safe::MakeShared<Detail::RemoteFile::Host>(m_protocol, m_bind_address,
-					std::move(pipelines.first), std::move(pipelines.second), maximum_timeout_seconds, m_remote_file_registry, m_logger);
+					Buffer::Pipeline{}, Buffer::Pipeline{}, maximum_timeout_seconds, m_remote_file_registry, m_logger,
+					m_tls_configuration);
 				if (!host->Start()) return RemoteFileMount::Failed();
 				m_remote_planes.emplace(uuid, Detail::RemotePlaneRegistration{host});
 				started_plane = true;
@@ -644,10 +646,14 @@ void Server::DisconnectClientOnLoop(std::string_view uuid) noexcept {
 		m_telemetry->RecordConnectionClosed();
 	session->Close();
 	if (session->Client() && session->Client()->Socket()) {
-		session->Client()->Socket()->Disconnect();
+		if (m_socket_server)
+			m_socket_server->DisconnectClient(session_uuid);
+		else
+			session->Client()->Socket()->Disconnect();
 		m_logger << Logger::Level::LowLevel << "Disconnected client: " << session_uuid << std::endl;
 	}
-	OnClientDisconnected(session_uuid);
+	if (session->Authenticated())
+		OnClientDisconnected(session_uuid);
 }
 
 void Server::DisconnectClientAfterReply(std::string_view uuid) noexcept {
@@ -663,17 +669,27 @@ bool Server::OnClientConnected(std::string_view) noexcept {
 	return true;
 }
 
-bool Server::ConfigureClientPipelines(std::string_view uuid, Buffer::Pipeline input, Buffer::Pipeline output) noexcept {
+bool Server::ConfigureTLS(const Crypto::TLS::ServerConfiguration& configuration,
+	bool refresh_validation_time) noexcept {
 	try {
-		std::scoped_lock lock(m_remote_file_mutex);
-		const Safe::String key{uuid};
-		const auto connection = m_configurable_connections.find(key);
-		return connection != m_configurable_connections.end()
-			&& !m_remote_planes.contains(key)
-			&& connection->second.connection->ConfigurePipelines(std::move(input), std::move(output));
+		if (Status() != Connection::Status::Disconnected || m_socket_server || m_pool || m_accept_thread.joinable())
+			return false;
+		auto snapshot = Safe::MakeShared<Detail::TLSConfiguration>(configuration, refresh_validation_time);
+		if (!snapshot->Create())
+			return false;
+		m_tls_configuration = std::move(snapshot);
+		return true;
 	} catch (...) {
+		m_logger << Logger::Level::Error << "Failed to copy or validate server TLS configuration." << std::endl;
 		return false;
 	}
+}
+
+bool Server::DisableTLS() noexcept {
+	if (Status() != Connection::Status::Disconnected || m_socket_server || m_pool || m_accept_thread.joinable())
+		return false;
+	m_tls_configuration.reset();
+	return true;
 }
 
 bool Server::AllowIncomingOpcode(std::string_view, Transport::Packet::OpcodeType) const noexcept {
@@ -696,10 +712,25 @@ void Server::AcceptOneClient() noexcept {
 
 			return;
 		}
+		if (m_tls_configuration) {
+			Size pending{0};
+			for (const auto& entry: m_sessions)
+				if (!entry.second.session->Client()->Socket()->TLSReady())
+					++pending;
+			if (pending >= Size{64}) {
+				m_socket_server->DisconnectClient(expected_client.value()->UUID());
+				return;
+			}
+			auto tls = m_tls_configuration->Create();
+			if (!tls || !expected_client.value()->StartTLS(std::move(tls.value()), false)) {
+				m_socket_server->DisconnectClient(expected_client.value()->UUID());
+				return;
+			}
+		}
 #ifdef WINDOWS
 		if (m_sessions.size() >= Size{FD_SETSIZE - 2}) {
 			m_logger << Logger::Level::Warning << "Windows select client limit reached; closing accepted client" << std::endl;
-			expected_client.value()->Disconnect();
+			m_socket_server->DisconnectClient(expected_client.value()->UUID());
 			return;
 		}
 #endif
@@ -714,7 +745,7 @@ void Server::AcceptOneClient() noexcept {
 		(void)position;
 		if (inserted && m_telemetry)
 			m_telemetry->RecordConnectionAccepted();
-		if (inserted && !OnClientConnected(client_uuid)) {
+		if (inserted && !m_tls_configuration && !OnClientConnected(client_uuid)) {
 			DisconnectClientOnLoop(client_uuid);
 			return;
 		}
@@ -868,11 +899,28 @@ void Server::AcceptClients() noexcept {
 }
 
 void Server::ProcessSession(const Safe::Shared<Detail::Session>& session, bool readable, bool writable) noexcept {
-	if (!session || session->Closed() || session->InFlight() || !session->Client() || !m_pool) {
+	if (!session || session->Closed() || !session->Client() || !m_pool) {
 		return;
 	}
 
 	try {
+		auto& socket = *session->Client()->Socket();
+		if (!socket.PumpTLS(readable && session->CanRead())) {
+			DisconnectClient(session->UUID());
+			return;
+		}
+		if (!socket.TLSReady())
+			return;
+		if (session->InFlight())
+			return;
+		if (!session->Authenticated()) {
+			session->SetAuthenticated();
+			if (!OnClientConnected(session->UUID())) {
+				DisconnectClient(session->UUID());
+				return;
+			}
+		}
+		readable = readable || socket.TLSBuffered();
 		if (writable && session->HasOutput()) {
 			auto flushed = session->FlushOutput();
 			if (!flushed) {
@@ -948,6 +996,12 @@ void Server::ProcessRemotePlane(const Safe::Shared<Detail::RemoteFile::Host>& ho
 			(void)host->AcceptReady();
 		return;
 	}
+	if (!host->PumpTLS(readable)) {
+		host->Stop();
+		return;
+	}
+	if (!host->TLSReady())
+		return;
 	if (writable && host->HasOutput()) {
 		auto flushed = host->FlushOutput();
 		if (!flushed) {
@@ -955,7 +1009,7 @@ void Server::ProcessRemotePlane(const Safe::Shared<Detail::RemoteFile::Host>& ho
 			return;
 		}
 	}
-	if (readable && host->CanRead()) {
+	if ((readable || host->HasBufferedFrame()) && host->CanRead()) {
 		if (!host->ReadReady()) {
 			host->Stop();
 			return;

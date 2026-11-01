@@ -47,9 +47,18 @@ namespace StormByte::Network::Detail {
 	using StormByte::Safe::Binary;
 
 	Session::Session(Safe::String uuid, Safe::Shared<Connection::Client> client) noexcept:
-	m_uuid(std::move(uuid)), m_client(std::move(client)) {}
+	m_uuid(std::move(uuid)), m_client(std::move(client)),
+	m_authenticated(m_client->Socket()->TLSReady()) {}
 
 	Session::~Session() noexcept = default;
+
+	bool Session::Authenticated() const noexcept {
+		return m_authenticated;
+	}
+
+	void Session::SetAuthenticated() noexcept {
+		m_authenticated = true;
+	}
 
 	SessionOutputStream::SessionOutputStream() = default;
 
@@ -110,6 +119,8 @@ namespace StormByte::Network::Detail {
 	}
 
 	bool Session::ReadyForProcessing() const noexcept {
+		if (m_client->Socket()->TLSExpired() || (CanRead() && m_client->Socket()->TLSBuffered()))
+			return true;
 		if (m_close_after_reply && !m_closed && !m_in_flight)
 			return m_output_frames.empty();
 		return !m_closed && !m_close_after_reply && !m_in_flight && !m_task_blocked && !m_ready_frames.empty();
@@ -137,6 +148,8 @@ namespace StormByte::Network::Detail {
 	}
 
 	bool Session::HasOutput() noexcept {
+		if (m_client->Socket()->TLSHasOutput())
+			return true;
 		return !m_output_frames.empty() && PrepareOutput();
 	}
 

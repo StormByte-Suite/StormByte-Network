@@ -43,8 +43,6 @@
 #include <StormByte/buffer/pipeline.hxx>
 #include <StormByte/network/socket/client.hxx>
 #include <StormByte/network/transport/frame.hxx>
-#include <StormByte/safe/mutex.hxx>
-#include <StormByte/safe/pair.hxx>
 #include <StormByte/safe/pointers.hxx>
 
 /**
@@ -128,20 +126,6 @@ namespace StormByte {
 					static Pointer Create(StormByte::Safe::Shared<Network::Socket::Client> socket, Buffer::Pipeline input = {}, Buffer::Pipeline output = {}) noexcept;
 
 					/**
-					 * @brief Install one complete pair before any file plane is created.
-					 * @param input Incoming transformation pipeline.
-					 * @param output Outgoing transformation pipeline.
-					 * @return False after configuration or sealing, without replacing state.
-					 */
-					bool ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output);
-
-					/**
-					 * @brief Copy independent pipeline templates and seal configuration.
-					 * @return Input and output templates for one file plane.
-					 */
-					StormByte::Safe::Pair<Buffer::Pipeline, Buffer::Pipeline> FilePipelines();
-
-					/**
 					 * @brief Borrow the input pipeline.
 					 * @return Pipeline requiring externally serialized access.
 					 */
@@ -185,10 +169,6 @@ namespace StormByte {
 					StormByte::Safe::Shared<Network::Socket::Client> m_socket;	///< Safe socket owner.
 					Buffer::Pipeline m_in_pipeline;							///< Input pipeline.
 					Buffer::Pipeline m_out_pipeline;							///< Output pipeline.
-					Buffer::Pipeline m_file_input;							///< Independent file input template.
-					Buffer::Pipeline m_file_output;							///< Independent file output template.
-					StormByte::Safe::Mutex m_configuration_mutex;				///< Protects configuration and sealing.
-					bool m_configured{false};								///< Configuration succeeded or was sealed.
 			};
 		}
 	}

@@ -44,6 +44,7 @@
 #include <StormByte/network/socket/client.hxx>
 #include <StormByte/network/transport/frame.hxx>
 #include <StormByte/network/transport/packet.hxx>
+#include <StormByte/network/tls_configuration.hxx>
 #include <StormByte/safe/function.hxx>
 
 #include <memory>
@@ -95,6 +96,7 @@ Client::~Client() noexcept {
 
 Client::Client(Client&& other) noexcept:
 	Endpoint(std::move(other)),
+	m_tls_configuration(std::move(other.m_tls_configuration)),
 	m_connection(std::move(other.m_connection)),
 	m_remote_address(std::move(other.m_remote_address)),
 	m_protocol(other.m_protocol),
@@ -111,6 +113,7 @@ Client& Client::operator=(Client&& other) noexcept {
 			m_remote_file_plane->Stop();
 	}
 	Endpoint::operator=(std::move(other));
+	m_tls_configuration = std::move(other.m_tls_configuration);
 	m_connection = std::move(other.m_connection);
 	m_remote_address = std::move(other.m_remote_address);
 	m_protocol = other.m_protocol;
@@ -136,6 +139,14 @@ bool Client::Connect(const Connection::Protocol& protocol, std::string_view addr
 			m_logger << Logger::Level::Error << "Failed to connect to " << std::string_view{address} << ":" << port
 					<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
 			return false;
+		}
+		if (m_tls_configuration) {
+			auto session = m_tls_configuration->Create();
+			if (!session || !socket->StartTLS(std::move(session.value()), true)) {
+				socket->Disconnect();
+				m_telemetry->RecordConnectionFailed();
+				return false;
+			}
 		}
 
 		auto connection = Safe::MakeShared<Connection::Client>(std::move(socket), Buffer::Pipeline{}, Buffer::Pipeline{});
@@ -200,14 +211,29 @@ PacketPointer Client::Send(const Transport::Packet& packet) noexcept {
 	return response;
 }
 
-bool Client::ConfigurePipelines(Buffer::Pipeline input, Buffer::Pipeline output) noexcept {
+bool Client::ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
+	bool refresh_validation_time) noexcept {
 	try {
 		std::scoped_lock lock(m_remote_file_mutex);
-		return m_connection && !m_remote_file_plane
-			&& m_connection->ConfigurePipelines(std::move(input), std::move(output));
+		if (m_connection || m_remote_file_plane)
+			return false;
+		auto snapshot = Safe::MakeShared<Detail::TLSConfiguration>(configuration, refresh_validation_time);
+		if (!snapshot->Create())
+			return false;
+		m_tls_configuration = std::move(snapshot);
+		return true;
 	} catch (...) {
+		m_logger << Logger::Level::Error << "Failed to copy or validate client TLS configuration." << std::endl;
 		return false;
 	}
+}
+
+bool Client::DisableTLS() noexcept {
+	std::scoped_lock lock(m_remote_file_mutex);
+	if (m_connection || m_remote_file_plane)
+		return false;
+	m_tls_configuration.reset();
+	return true;
 }
 
 bool Client::AllowIncomingOpcode(std::string_view, Transport::Packet::OpcodeType) const noexcept {
@@ -237,10 +263,16 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 		if (!plane) {
 			if (!m_connection)
 				return {};
-			Safe::Pair<Buffer::Pipeline, Buffer::Pipeline> pipelines = m_connection->FilePipelines();
 			auto socket = Socket::Client::Create(m_protocol, m_logger);
 			if (!socket || !socket->Connect(m_remote_address, mount.Port()))
 				return {};
+			if (m_tls_configuration) {
+				auto session = m_tls_configuration->Create();
+				if (!session || !socket->StartTLS(std::move(session.value()), true)) {
+					socket->Disconnect();
+					return {};
+				}
+			}
 			Safe::String local_address = socket->LocalAddress();
 			if (local_address.empty()) {
 				socket->Disconnect();
@@ -248,7 +280,7 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 			}
 			auto device = Detail::RemoteFile::CreateNetworkDevice(local_address);
 			plane = Safe::MakeShared<Detail::RemoteFile::DataPlane>(std::move(socket),
-				std::move(pipelines.first), std::move(pipelines.second), mount.MaximumTimeoutSeconds(), m_logger,
+				Buffer::Pipeline{}, Buffer::Pipeline{}, mount.MaximumTimeoutSeconds(), m_logger,
 				std::move(local_address), std::move(device), mount.Port());
 		}
 
@@ -294,10 +326,16 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 		if (!plane) {
 			if (!m_connection)
 				return {};
-			Safe::Pair<Buffer::Pipeline, Buffer::Pipeline> pipelines = m_connection->FilePipelines();
 			auto socket = Socket::Client::Create(m_protocol, m_logger);
 			if (!socket || !socket->Connect(m_remote_address, mount.Port()))
 				return {};
+			if (m_tls_configuration) {
+				auto session = m_tls_configuration->Create();
+				if (!session || !socket->StartTLS(std::move(session.value()), true)) {
+					socket->Disconnect();
+					return {};
+				}
+			}
 			Safe::String local_address = socket->LocalAddress();
 			if (local_address.empty()) {
 				socket->Disconnect();
@@ -305,7 +343,7 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 			}
 			auto device = Detail::RemoteFile::CreateNetworkDevice(local_address);
 			plane = Safe::MakeShared<Detail::RemoteFile::DataPlane>(std::move(socket),
-				std::move(pipelines.first), std::move(pipelines.second), mount.MaximumTimeoutSeconds(), m_logger,
+				Buffer::Pipeline{}, Buffer::Pipeline{}, mount.MaximumTimeoutSeconds(), m_logger,
 				std::move(local_address), std::move(device), mount.Port());
 		}
 

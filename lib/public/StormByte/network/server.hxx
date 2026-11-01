@@ -40,6 +40,7 @@
 
 #pragma once
 
+#include <StormByte/crypto/tls/session.hxx>
 #include <StormByte/network/detail/server_state.hxx>
 #include <StormByte/network/discovery.hxx>
 #include <StormByte/network/endpoint.hxx>
@@ -99,6 +100,10 @@ namespace StormByte {
 		 */
 		namespace Detail {
 			/**
+			 * @brief Forward declaration of copied TLS configuration.
+			 */
+			class TLSConfiguration;
+			/**
 			 * @class Session
 			 * @brief Forward declaration of a client parser session.
 			 */
@@ -133,7 +138,8 @@ namespace StormByte {
 		 * @class Server
 		 * @brief Abstract application server.
 		 *
-		 * Listen socket and single-threaded event loop. Implement ProcessClientPacket(); override pipelines as needed.
+		 * Listen socket and single-threaded event loop. Implement ProcessClientPacket();
+		 * optionally require TLS before starting the listener.
 		 *
 		 * @note Inheritance-oriented. Subclass required.
 		 */
@@ -189,6 +195,25 @@ namespace StormByte {
 				bool Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) override;
 
 				/**
+				 * @brief Require TLS for new application and remote-file connections.
+				 * @param configuration Borrowed identity, mTLS roots and policy copied synchronously.
+				 * @param refresh_validation_time Use current time for each new session by default;
+				 * false explicitly preserves the supplied client-certificate validation instant.
+				 * @return False while running or when validation fails, without replacing state.
+				 * @details Each accepted channel owns an independent incremental TLS session.
+				 * OnClientConnected runs only after successful TLS authentication.
+				 * Externally serialize configuration, connection, moves and destruction.
+				 */
+				bool ConfigureTLS(const Crypto::TLS::ServerConfiguration& configuration,
+					bool refresh_validation_time = true) noexcept;
+
+				/**
+				 * @brief Restore plaintext while the server is stopped.
+				 * @return False unless disconnected.
+				 */
+				bool DisableTLS() noexcept;
+
+				/**
 				 * @brief Stop accept, disconnect clients and close the listener.
 				 */
 				void Disconnect() noexcept override;
@@ -221,20 +246,6 @@ namespace StormByte {
 
 
 			protected:
-				/**
-				 * @brief Install one pipeline pair for a single application session.
-				 * @param uuid Server-assigned session identity.
-				 * @param input Incoming transformation pipeline.
-				 * @param output Outgoing transformation pipeline.
-				 * @return False for missing sessions, repeated configuration, existing file
-				 * planes or failed pipeline copies. No partial configuration is installed.
-				 * @details Call from that session's packet handler or OnClientConnected,
-				 * not from an unrelated thread. The session initially uses no-op pipelines.
-				 * New file planes receive independent copies of the configured templates.
-				 */
-				bool ConfigureClientPipelines(std::string_view uuid, Buffer::Pipeline input,
-					Buffer::Pipeline output) noexcept;
-
 				/**
 				 * @brief Admit an application opcode before its pipeline and factory run.
 				 * @param uuid Server-assigned session identity.
@@ -323,6 +334,7 @@ namespace StormByte {
 
 
 			private:
+				Safe::Shared<const Detail::TLSConfiguration> m_tls_configuration; ///< Immutable TLS snapshot.
 				/**
 				 * @brief Result category returned by a packet worker.
 				 */

@@ -303,12 +303,14 @@ namespace StormByte::Network::Detail::RemoteFile {
 					if (Failed())
 						return;
 				}
-				auto available = m_socket->WaitForData(100000);
-				if (!available || *available == Connection::Read::Result::Closed
-					|| *available == Connection::Read::Result::ShutdownRequest)
-					throw ConnectionError("Remote file peer disconnected");
-				if (*available == Connection::Read::Result::Timeout)
-					continue;
+				if (!m_socket->UsingTLS()) {
+					auto available = m_socket->WaitForData(100000);
+					if (!available || *available == Connection::Read::Result::Closed
+						|| *available == Connection::Read::Result::ShutdownRequest)
+						throw ConnectionError("Remote file peer disconnected");
+					if (*available == Connection::Read::Result::Timeout)
+						continue;
+				}
 				auto received = ReceivePayload(*m_socket, m_timeout_seconds);
 				if (!received)
 					throw ConnectionError(received.error()->what());
