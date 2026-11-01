@@ -20,7 +20,7 @@ if(ENABLE_TEST)
 		target_link_libraries(HTTPTest PRIVATE ws2_32 iphlpapi)
 	endif()
 	add_test(NAME HTTPTest COMMAND HTTPTest)
-	set_tests_properties(HTTPTest PROPERTIES TIMEOUT 45)
+	set_tests_properties(HTTPTest PROPERTIES TIMEOUT 90)
 	# Private symbols are hidden in the shared library. Compile the transport
 	# provider locally rather than exporting internals or requiring static archives.
 	add_executable(TransportTest

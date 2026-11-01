@@ -1103,9 +1103,12 @@ int main() {
 	const auto Run = [&](const char* name, int (*test)()) {
 		++count;
 		std::cout << name << ": starting" << std::endl;
+		const auto started = std::chrono::steady_clock::now();
 		try {
 			failures += test();
-			std::cout << name << ": passed" << std::endl;
+			const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::steady_clock::now() - started);
+			std::cout << name << ": passed (" << elapsed.count() << " ms)" << std::endl;
 		}
 		catch (const std::exception& error) {
 			++failures;
