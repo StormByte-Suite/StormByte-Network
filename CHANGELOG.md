@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Limit disposable TLS leaf certificates to 365 days for macOS native policy,
+  use bound non-listening loopback ports for connection-refusal tests, and
+  check resolver cancellation independently of thread scheduling latency.
+- Accept an explicit transport reset as a rejected mTLS connection in HTTP tests.
 - Use nghttp2's portable signed-size API for HTTP/2 on Windows and report
   native resolution failures and macOS TLS fixture policy rejections in CI.
 - Resolve numeric IPv4/IPv6 addresses without name-service lookup and give

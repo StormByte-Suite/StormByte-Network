@@ -74,6 +74,8 @@ certificates under `test/fixtures/tls`. The deliberately disposable server key i
 test data only; never use it as a credential or trust these certificates outside
 the test. The CA signing key was destroyed. Validation uses a fixed instant
 inside the certificates' validity, so tests do not expire with wall-clock time.
+Leaf certificates have 365-day validity to comply with macOS native TLS policy;
+the disposable CA certificates retain longer validity.
 OpenSSL's CLI was used only to generate these fixtures, not to build or run tests.
 The nine test cases cover fragmented TLS records, HTTP/2 and HTTP/1.1 ALPN
 selection (including a peer without ALPN), a byte-for-byte 512 KiB round trip,
@@ -481,7 +483,9 @@ mutual authentication. Offline keys under `test/fixtures/tls` are deliberately
 disposable test data, not production credentials. Their CA signing keys were
 destroyed. Most trust tests opt into fixed time; a separate test intentionally
 checks current-time validation and therefore requires a clock within the
-server fixture's 2026–2036 validity period. The mTLS client has a separate
+server fixture's validity period (2026-10-01 through 2027-10-01 UTC). Regenerate
+and re-sign the fixtures before that period ends to keep current-time tests valid.
+The mTLS client has a separate
 client-authentication EKU and disposable client CA.
 
 ## Contributing

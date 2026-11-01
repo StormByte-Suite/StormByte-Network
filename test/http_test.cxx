@@ -904,8 +904,9 @@ int test_https_mutual_authentication() {
 		if (identity)
 			Require(static_cast<bool>(result), "deep-copied mTLS identity");
 		else
-			Require(!result && (*result.error() == HT::Error::TLS || *result.error() == HT::Error::Truncated),
-				"missing mTLS identity must fail authentication or detect unnotified TLS EOF");
+			Require(!result && (*result.error() == HT::Error::TLS || *result.error() == HT::Error::Truncated ||
+				*result.error() == HT::Error::Transport),
+				"missing mTLS identity must fail authentication, detect unnotified TLS EOF or a socket reset");
 		fixture.Finish(!identity);
 	}
 	return 0;

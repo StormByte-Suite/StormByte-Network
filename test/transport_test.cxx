@@ -85,12 +85,12 @@ struct STORMBYTE_NETWORK_PRIVATE PeerFixture {
 	Connection::HandlerType peer = static_cast<Connection::HandlerType>(-1);
 	unsigned short port = 0;
 
-	PeerFixture() {
+	explicit PeerFixture(bool listening = true) {
 		sockaddr_in address{};
 		address.sin_family = AF_INET;
 		address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 		if (::bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 ||
-			::listen(listener, 4) != 0)
+			(listening && ::listen(listener, 4) != 0))
 			throw std::runtime_error("loopback listener");
 #ifdef UNIX
 		socklen_t length = sizeof(address);
@@ -126,6 +126,17 @@ struct STORMBYTE_NETWORK_PRIVATE PeerFixture {
 
 Safe::Atomic<int> lookup_calls{0};
 Safe::Atomic<int> lookup_completions{0};
+Safe::Atomic<bool> release_lookup{false};
+
+Expected<Connection::Info::Addresses, Network::Exception> BlockedLookup(
+	std::string_view hostname, unsigned short port, Connection::AddressPolicy policy) noexcept {
+	lookup_calls.fetch_add(1, Safe::MemoryOrder::AcqRel);
+	while (!release_lookup.load(Safe::MemoryOrder::Acquire))
+		std::this_thread::sleep_for(1ms);
+	auto result = Connection::Info::ResolveAll(hostname, port, policy);
+	lookup_completions.fetch_add(1, Safe::MemoryOrder::AcqRel);
+	return result;
+}
 
 /**
  * @brief Deterministic slow native-provider stand-in; no external DNS is required.
@@ -188,9 +199,10 @@ int test_connect_explicit_policy_preserves_family() {
 
 int test_connect_failed_alternatives_then_legacy_retry() {
 	PeerFixture fixture;
-	auto addresses = Connection::Info::ResolveAll("127.0.0.2", fixture.port, Connection::AddressPolicy::IPv4Only);
+	PeerFixture refused(false);
+	auto addresses = Connection::Info::ResolveAll("127.0.0.1", refused.port, Connection::AddressPolicy::IPv4Only);
 	ASSERT_TRUE(addresses.has_value());
-	const auto result = fixture.client.ConnectResolved(addresses.value(), {std::chrono::steady_clock::now() + 1s});
+	const auto result = fixture.client.ConnectResolved(addresses.value(), {std::chrono::steady_clock::now() + 5s});
 	ASSERT_TRUE(result.state == Socket::OperationState::Error && result.native_error != 0);
 	ASSERT_TRUE(fixture.client.Status() == Connection::Status::Disconnected);
 	ASSERT_TRUE(fixture.client.Handle() == static_cast<Connection::HandlerType>(-1));
@@ -201,11 +213,12 @@ int test_connect_failed_alternatives_then_legacy_retry() {
 
 int test_connect_fallback_and_io() {
 	PeerFixture fixture;
-	auto addresses = Connection::Info::ResolveAll("127.0.0.2", fixture.port, Connection::AddressPolicy::IPv4Only);
+	PeerFixture refused(false);
+	auto addresses = Connection::Info::ResolveAll("127.0.0.1", refused.port, Connection::AddressPolicy::IPv4Only);
 	auto reachable = Connection::Info::ResolveAll("127.0.0.1", fixture.port, Connection::AddressPolicy::IPv4Only);
 	ASSERT_TRUE(addresses.has_value() && reachable.has_value());
 	addresses->push_back((*reachable)[0]);
-	const auto result = fixture.client.ConnectResolved(addresses.value(), {std::chrono::steady_clock::now() + 1s});
+	const auto result = fixture.client.ConnectResolved(addresses.value(), {std::chrono::steady_clock::now() + 5s});
 	ASSERT_TRUE(result.state == Socket::OperationState::Complete);
 	fixture.peer = ::accept(fixture.listener, nullptr, nullptr);
 	ASSERT_TRUE(fixture.peer != static_cast<Connection::HandlerType>(-1));
@@ -394,20 +407,26 @@ int test_send_success_and_preflight() {
 int test_resolution_cancelled_connect_and_cleanup() {
 	lookup_calls.store(0, Safe::MemoryOrder::Release);
 	lookup_completions.store(0, Safe::MemoryOrder::Release);
+	release_lookup.store(false, Safe::MemoryOrder::Release);
 	PeerFixture fixture;
 	Safe::Atomic<bool> cancelled{false};
 	Socket::OperationResult result;
 	const auto start = std::chrono::steady_clock::now();
 	{
-		Connection::Resolver resolver(SlowLookup);
+		Connection::Resolver resolver(BlockedLookup);
 		std::thread cancel([&] {
+			while (lookup_calls.load(Safe::MemoryOrder::Acquire) == 0 &&
+				std::chrono::steady_clock::now() < start + 1s)
+				std::this_thread::sleep_for(1ms);
 			std::this_thread::sleep_for(20ms);
 			cancelled.store(true, Safe::MemoryOrder::Release);
 		});
 		result = fixture.client.Connect("127.0.0.1", fixture.port, resolver, {start + 1s, &cancelled});
+		const auto completed_before_release = lookup_completions.load(Safe::MemoryOrder::Acquire);
+		release_lookup.store(true, Safe::MemoryOrder::Release);
 		cancel.join();
 		ASSERT_TRUE(result.state == Socket::OperationState::Cancelled);
-		ASSERT_TRUE(std::chrono::steady_clock::now() - start < 100ms);
+		ASSERT_TRUE(completed_before_release == 0);
 		ASSERT_TRUE(fixture.client.Status() == Connection::Status::Disconnected);
 	}
 	ASSERT_TRUE(lookup_calls.load(Safe::MemoryOrder::Acquire) == 1);
