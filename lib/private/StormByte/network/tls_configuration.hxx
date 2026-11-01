@@ -116,9 +116,11 @@ namespace StormByte {
 
 			/**
 			 * @brief Construct one independent Crypto stream from the retained snapshot.
+			 * @param alpn Optional nonempty protocol list overriding the copied ALPN.
 			 * @return New session or explicit Crypto configuration failure.
 			 */
-			Expected<Crypto::TLS::Session, Crypto::TLS::SessionError> Create() const;
+			Expected<Crypto::TLS::Session, Crypto::TLS::SessionError> Create(
+				std::span<const std::byte> alpn = {}) const;
 
 		private:
 			Crypto::TLS::Role m_role; ///< Endpoint role.

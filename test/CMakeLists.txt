@@ -1,6 +1,26 @@
 option(ENABLE_TEST "Enable Unit Tests" OFF)
 if(ENABLE_TEST)
 	enable_testing()
+	add_executable(HTTPTest
+		http_test.cxx
+		../lib/private/StormByte/network/connection/handler.cxx
+		../lib/private/StormByte/network/connection/info.cxx
+		../lib/private/StormByte/network/connection/resolver.cxx
+		../lib/private/StormByte/network/socket/client.cxx
+		../lib/private/StormByte/network/socket/operation.cxx
+		../lib/private/StormByte/network/socket/server.cxx
+		../lib/private/StormByte/network/socket/socket.cxx
+		../lib/private/StormByte/network/socket/tls.cxx
+	)
+	get_property(_http_nghttp2 GLOBAL PROPERTY STORMBYTE_NETWORK_NGHTTP2_TARGET)
+	target_link_libraries(HTTPTest PRIVATE StormByte::Network "${_http_nghttp2}")
+	target_compile_definitions(HTTPTest PRIVATE
+		TLS_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tls")
+	if(WIN32)
+		target_link_libraries(HTTPTest PRIVATE ws2_32 iphlpapi)
+	endif()
+	add_test(NAME HTTPTest COMMAND HTTPTest)
+	set_tests_properties(HTTPTest PROPERTIES TIMEOUT 45)
 	# Private symbols are hidden in the shared library. Compile the transport
 	# provider locally rather than exporting internals or requiring static archives.
 	add_executable(TransportTest

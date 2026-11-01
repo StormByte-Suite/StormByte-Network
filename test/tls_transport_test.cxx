@@ -76,6 +76,17 @@ void Require(bool success, const char* message) {
 		throw std::runtime_error(message);
 }
 
+bool HandshakeSucceeded(Socket::Client& socket, CryptoTLS::Session& session,
+	const Socket::OperationControl& control) {
+	const auto result = Socket::TLS::Handshake(socket, session, control);
+	if (result.state != Socket::OperationState::Complete)
+		std::cerr << "TLS handshake failed: state=" << static_cast<int>(result.state)
+			<< ", native_error=" << result.native_error
+			<< ", tls_failure=" << result.tls_failure
+			<< ", tls_error=" << static_cast<int>(result.error) << std::endl;
+	return result.state == Socket::OperationState::Complete;
+}
+
 /**
  * @brief Load offline, deliberately disposable fixture bytes.
  * @param name Fixture file name.
@@ -105,7 +116,7 @@ void Close(Connection::HandlerType handle) {
 /**
  * @brief Native loopback peer with a fragmented Crypto TLS server, without OpenSSL linkage.
  */
-struct Fixture {
+struct STORMBYTE_NETWORK_PRIVATE Fixture {
 	std::vector<std::byte> ca_pem = LoadFixture("ca.pem");
 	std::vector<std::byte> server_pem = LoadFixture("server.pem");
 	std::vector<std::byte> key_pem = LoadFixture("server-test-key.pem");
@@ -343,8 +354,8 @@ int test_handshake_alpn_http1_and_no_selection() {
 		fixture.expected_protocol = absent ? "" : "http/1.1";
 		auto session = fixture.Client();
 		fixture.Start(0, false, true, true);
-		ASSERT_TRUE(Socket::TLS::Handshake(fixture.socket, session,
-			{std::chrono::steady_clock::now() + 2s}).state == Socket::OperationState::Complete);
+		ASSERT_TRUE(HandshakeSucceeded(fixture.socket, session,
+			{std::chrono::steady_clock::now() + 2s}));
 		ASSERT_TRUE(session.NegotiatedALPN() == fixture.expected_protocol);
 		fixture.socket.Disconnect();
 		fixture.Join();
@@ -408,8 +419,8 @@ int test_transfer_cancelled_operations_abandon_stream() {
 		Fixture fixture;
 		auto session = fixture.Client();
 		fixture.Start(0, false, true, true);
-		ASSERT_TRUE(Socket::TLS::Handshake(fixture.socket, session,
-			{std::chrono::steady_clock::now() + 2s}).state == Socket::OperationState::Complete);
+		ASSERT_TRUE(HandshakeSucceeded(fixture.socket, session,
+			{std::chrono::steady_clock::now() + 2s}));
 		Safe::Atomic<bool> cancelled{true};
 		const Socket::OperationControl control{std::chrono::steady_clock::now() - 1ms, &cancelled};
 		std::array<std::byte, 1> buffer{};
@@ -436,7 +447,7 @@ int test_transfer_fragmented_echo_alpn_and_shutdown() {
 		payload[index] = static_cast<std::byte>(index % 251);
 	fixture.Start(payload.size());
 	const Socket::OperationControl control{std::chrono::steady_clock::now() + 5s};
-	ASSERT_TRUE(Socket::TLS::Handshake(fixture.socket, session, control).state == Socket::OperationState::Complete);
+	ASSERT_TRUE(HandshakeSucceeded(fixture.socket, session, control));
 	ASSERT_TRUE(session.NegotiatedALPN() == "h2");
 	const auto sent = Socket::TLS::Write(fixture.socket, session, payload, control);
 	ASSERT_TRUE(sent.state == Socket::OperationState::Complete && sent.bytes == ByteSize{payload.size()});
@@ -480,8 +491,8 @@ int test_transfer_invalid_state_and_empty_destination() {
 		}
 		else {
 			fixture.Start(0, false, true, true);
-			ASSERT_TRUE(Socket::TLS::Handshake(fixture.socket, session,
-				{std::chrono::steady_clock::now() + 2s}).state == Socket::OperationState::Complete);
+			ASSERT_TRUE(HandshakeSucceeded(fixture.socket, session,
+				{std::chrono::steady_clock::now() + 2s}));
 			const auto result = Socket::TLS::Read(fixture.socket, session, {}, {});
 			ASSERT_TRUE(result.state == Socket::OperationState::Error && result.tls_failure);
 			fixture.Join();
@@ -497,8 +508,8 @@ int test_transfer_read_write_and_shutdown_deadlines() {
 		Fixture fixture;
 		auto session = fixture.Client();
 		fixture.Start(0, false, true, true);
-		ASSERT_TRUE(Socket::TLS::Handshake(fixture.socket, session,
-			{std::chrono::steady_clock::now() + 2s}).state == Socket::OperationState::Complete);
+		ASSERT_TRUE(HandshakeSucceeded(fixture.socket, session,
+			{std::chrono::steady_clock::now() + 2s}));
 		const auto start = std::chrono::steady_clock::now();
 		const Socket::OperationControl control{start + 50ms};
 		std::vector<std::byte> bytes(operation == 1 ? 8 * 1024 * 1024 : 1, std::byte{42});
@@ -527,7 +538,7 @@ int test_transfer_rejects_truncated_tcp_eof() {
 	auto session = fixture.Client();
 	fixture.Start(0, true);
 	const Socket::OperationControl control{std::chrono::steady_clock::now() + 2s};
-	ASSERT_TRUE(Socket::TLS::Handshake(fixture.socket, session, control).state == Socket::OperationState::Complete);
+	ASSERT_TRUE(HandshakeSucceeded(fixture.socket, session, control));
 	std::array<std::byte, 1> output{};
 	const auto result = Socket::TLS::Read(fixture.socket, session, output, control);
 	ASSERT_TRUE(result.state == Socket::OperationState::Error && result.truncated);

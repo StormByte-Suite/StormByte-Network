@@ -60,6 +60,21 @@
 using namespace StormByte::Network::Connection;
 using StormByte::Network::Exception;
 
+namespace {
+	/**
+	 * @brief Identify numeric IP literals without consulting name services.
+	 * @param hostname Owned host text.
+	 * @return True when the text is an IPv4 or IPv6 literal.
+	 */
+	bool IsNumericHost(const StormByte::Safe::String& hostname) noexcept {
+		in_addr ipv4{};
+		if (inet_pton(AF_INET, hostname.c_str(), &ipv4) == 1)
+			return true;
+		in6_addr ipv6{};
+		return inet_pton(AF_INET6, hostname.c_str(), &ipv6) == 1;
+	}
+}
+
 Info::Info(StormByte::Safe::Shared<sockaddr> sock_addr) noexcept:
 	m_sock_addr(std::move(sock_addr)), m_sock_addr_size(0), m_mtu(DEFAULT_MTU), m_ip(), m_port(0) {
 	Initialize();
@@ -103,7 +118,7 @@ StormByte::Expected<Info::Addresses, Exception> Info::ResolveAll(
 		(void)Handler::Instance();
 		const StormByte::Safe::String host{hostname};
 		const std::string service = std::to_string(port);
-		hints.ai_flags = AI_NUMERICSERV;
+		hints.ai_flags = AI_NUMERICSERV | (IsNumericHost(host) ? AI_NUMERICHOST : 0);
 		const int error = getaddrinfo(host.c_str(), service.c_str(), &hints, &result);
 		std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> guard(result, freeaddrinfo);
 		if (error != 0)
@@ -180,6 +195,7 @@ StormByte::Expected<StormByte::Safe::Shared<sockaddr>, Exception> Info::ResolveH
 	const StormByte::Safe::String owned_hostname{hostname};
 	hints.ai_family = ProtocolInt(protocol);
 	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = IsNumericHost(owned_hostname) ? AI_NUMERICHOST : 0;
 	(void)Handler::Instance();
 	int ret = getaddrinfo(owned_hostname.c_str(), nullptr, &hints, &res);
 	std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard(res, freeaddrinfo);

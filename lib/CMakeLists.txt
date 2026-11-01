@@ -30,6 +30,10 @@ if(BUILD_SHARED_LIBS)
 	)
 endif()
 
+if(WIN32)
+	target_compile_definitions(StormByte-Network PRIVATE FD_SETSIZE=128)
+endif()
+
 set_target_properties(StormByte-Network PROPERTIES
 	LINKER_LANGUAGE CXX
 	SOVERSION ${CMAKE_PROJECT_VERSION}

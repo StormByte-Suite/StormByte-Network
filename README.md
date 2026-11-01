@@ -61,8 +61,8 @@ cmake --install build-install
 The private socket adapter drives Crypto's TLS 1.3 buffer session without
 including or linking OpenSSL directly. DNS, connect, authentication and subsequent
 I/O can share one absolute deadline and a borrowed cancellation flag. Crypto
-validates peer identity and trust before application data is accepted; ALPN is
-available to the future HTTP/1.1 and HTTP/2 client.
+validates peer identity and trust before application data is accepted; the HTTP
+client negotiates HTTP/1.1 or HTTP/2 through ALPN.
 
 TLS failures, timeout and cancellation abandon the connection instead of
 replaying partially consumed plaintext/ciphertext. Bare TCP EOF is rejected as
@@ -144,6 +144,8 @@ Under `StormByte::Network`:
 | `Telemetry` / `ClientTelemetry` / `ServerTelemetry` | Base-clock measurements and retained per-client / aggregate-server snapshots |
 | `RemoteFileMount` | Public, versioned descriptor/result for an application-authorized file mount |
 | `BufferedRemoteFileReader` / `BufferedRemoteFileWriter` | Buffer file-like handles over private channels |
+| `HTTP::Client` / `HTTP::Request` / `HTTP::Response` | Bounded HTTP/1.1 and HTTP/2 requests over plain HTTP or authenticated HTTPS |
+| `HTTP::Header` / `HTTP::Options` / `HTTP::Error` | Duplicate-preserving fields, explicit limits/deadline/cancellation and typed failures |
 
 Sockets, frames and Winsock bootstrap are private.
 
@@ -152,6 +154,84 @@ Public polymorphic and callback types are `MAYBE_SAFE`: safe ownership does not 
 Packet payloads use `StormByte::Safe::Binary`. Header-defined state, public and private, uses Safe containers, shared/unique ownership, synchronization, atomics and threads; standard borrowed views and scalars remain permitted. There is no ownership bridge through `std::shared_ptr`. `StormByte::Size` represents element counts and `StormByte::ByteSize` represents byte lengths and offsets, with explicit conversions at numeric and wire/OS boundaries. Do not interpret a container's element count as a byte length without accounting for its element type.
 
 The exact `STORMBYTE_DECLARE_MAYBE_SAFE` macro registers complete public types and appropriate private types. It carries a provider lifecycle contract, not a blanket certification: fields and allocation paths must comply, each constructor, assignment and destructor must be implemented or explicitly deleted, and moved-from objects must remain valid for cleanup. A derived type needs its own review; the base declaration does not cover arbitrary derived storage. PIMPL is reserved for native OS resources (sockets, `HANDLE`, `FILE*`) or external-library state, not for hiding Safe values or owning STL state. See [CODING_STYLE.md](CODING_STYLE.md) for the full contract.
+
+### HTTP and HTTPS client
+
+```cpp
+#include <StormByte/network/http/client.hxx>
+
+StormByte::Network::HTTP::Client client;
+StormByte::Network::HTTP::Request request("https://example.com/data?q=1");
+request.headers.emplace_back("Accept", "application/octet-stream");
+StormByte::Network::HTTP::Options options;
+options.timeout = std::chrono::seconds{10};
+options.body_bytes = StormByte::ByteSize{1024 * 1024};
+auto response = client.Execute(request, options);
+if (response) {
+	// response->status, headers, trailers and Safe::Binary body
+}
+else {
+	// *response.error() is HTTP::Error; no request was retried.
+}
+```
+
+Use `request.method = std::string_view{"POST"}` and assign `request.body` a
+`Safe::Binary` for binary uploads, including embedded NULs. Ordered header
+occurrences preserve duplicates in both directions. Response field names are
+normalized to lowercase. `Options` separately bounds URL bytes, aggregate
+headers/field count (including interim responses and trailers), buffered bodies
+in either direction, incoming HTTP wire bytes, and interim-response count.
+HTTP/2 decoded header accounting includes the RFC per-field 32-byte overhead.
+`http2_bytes` additionally caps live nghttp2 session allocations, including
+HPACK literal storage allocated before decoded-header callbacks are invoked.
+Cancellation borrows a `const Safe::Atomic<bool>*` until `Execute` returns.
+One positive timeout (at most 24 hours) covers DNS waiting, connect alternatives,
+TLS authentication, upload and the complete response; it never restarts between
+chunks or protocol phases.
+
+`Protocol::Automatic` uses HTTP/1.1 on cleartext and offers `h2`, then
+`http/1.1`, over HTTPS. Authenticated HTTPS peers without ALPN use HTTP/1.1,
+as specified for legacy HTTP endpoints. `Protocol::HTTP1` offers only HTTP/1.1;
+`Protocol::HTTP2` requires h2 over HTTPS or sends an explicit HTTP/2 prior-
+knowledge preface on cleartext. There is no probing, replay, fallback after
+failure, or HTTPS-to-HTTP downgrade. nghttp2 supplies real HTTP/2 framing,
+HPACK, SETTINGS and flow control; neither it nor OpenSSL appears in this API.
+
+The HTTP/1 parser accepts HTTP/1.0 responses, fixed lengths, chunked framing and
+close-delimited bodies, consumes bounded informational responses, and handles
+HEAD/204/304 bodylessness. It rejects ambiguous/conflicting framing, malformed
+chunks and headers, forbidden trailers, truncated bodies and unnotified TLS
+EOF. Only `chunked` transfer coding is supported; other transfer codings fail
+explicitly. HTTP/2 supports a single locally initiated request stream with
+bounded buffered upload/download, trailers, resets and GOAWAY validation;
+server push is disabled.
+
+Default HTTPS uses Crypto's bundled server roots and the URL's DNS or binary IP
+identity, validating at each new session's current time. `ConfigureTLS` deeply
+copies a `Crypto::TLS::ClientConfiguration` for exclusive custom CAs, an
+explicit expected identity, revocation evidence, TLS policy and optional mTLS
+chain/key/password. The configured identity overrides URL-derived identity;
+ALPN remains controlled by HTTP options. Configuration failure preserves the
+previous policy. The default `refresh_validation_time=true` must normally be
+retained; `false` deliberately opts into a supplied fixed validation instant
+for offline tests/evidence. Crypto currently supports **TLS 1.3 only**.
+
+Each request opens and closes a fresh connection. There is no connection pool,
+parallel multiplexing, redirect following (3xx is returned unchanged), automatic
+content decompression, proxy, CONNECT/Upgrade/Expect, HTTP server, or HTTP/3/
+QUIC. Host, connection, framing and related hop-by-hop request headers are
+client-managed and rejected if supplied by the application. No failed request
+is replayed. A request can fail after the peer already received some/all of its
+bytes; do not blindly retry non-idempotent operations.
+
+Serialize each client's execution/configuration/moves/destruction. A timed-out
+DNS call leaves at most one managed worker until the OS lookup finishes;
+subsequent calls can report `ResolverBusy`. Destruction joins retained DNS work
+and may wait beyond the request deadline. Request/response/header owning fields
+are Safe values with out-of-line Network lifecycle; copies have independent
+value semantics, moved owning fields are empty, and moved clients must be
+reassigned before reuse. Keep Network, Crypto, Base and other providers loaded
+with compatible ABIs until all objects/results are destroyed.
 
 ### Network telemetry
 
@@ -391,6 +471,18 @@ ctest --test-dir build-validation/test --output-on-failure
 ```
 
 The registered suites cover client/server exchanges, negotiated handshakes and remote-file behavior. Fourteen public Safe suites cover `Client`, `ClientTelemetry`, `ConnectionClosed`, `ConnectionError`, `DeserializePacketFunction`, `Endpoint`, `Exception`, `FrameError`, `Packet`, `PacketError`, `RemoteFileMount`, `Server`, `ServerTelemetry` and `Telemetry`. Integration regressions exercise exact-derived destruction, callback copies, endpoint lifecycle and remote writer write/size/flush byte integrity. No private-class suites are registered. Coverage in the source tree is not a claim that every platform or configuration passes. Linux tests and sanitizers do not prove separate Windows CRT heap safety; that requires provider/consumer module validation on Windows with compatible ABIs and explicit module-lifetime checks.
+
+`HTTPTest` exercises the public HTTP client across the shared-library boundary
+using ephemeral loopback HTTP/1, Crypto TLS HTTP/1/h2, and cleartext nghttp2
+fixtures. It covers binary uploads/downloads (including HTTP/2 responses beyond
+the initial flow-control window), duplicate fields/trailers, framing failures,
+limits, cancellation/deadlines, ALPN, exclusive trust, identity validation and
+mutual authentication. Offline keys under `test/fixtures/tls` are deliberately
+disposable test data, not production credentials. Their CA signing keys were
+destroyed. Most trust tests opt into fixed time; a separate test intentionally
+checks current-time validation and therefore requires a clock within the
+server fixture's 2026–2036 validity period. The mTLS client has a separate
+client-authentication EKU and disposable client CA.
 
 ## Contributing
 

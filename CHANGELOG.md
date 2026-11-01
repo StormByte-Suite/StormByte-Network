@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Resolve numeric IPv4/IPv6 addresses without name-service lookup and give
+  Windows select-based event loops enough capacity to preserve the 64-peer TLS
+  handshake limit.
+- Add the public, synchronous `HTTP::Client` with Safe-owned binary requests,
+  duplicate-preserving response headers/trailers and typed errors. Support
+  HTTP/1.1 (including HTTP/1.0 responses) and actual nghttp2 HTTP/2 over plain
+  HTTP or Crypto TLS 1.3 HTTPS, with ALPN and explicit cleartext h2 prior knowledge.
+- Reuse managed Network DNS, sockets and controlled Crypto scheduling for one
+  total request deadline/cancellation across resolution, connect, authentication,
+  upload and complete response. Bound URL, headers, fields, body, wire bytes and
+  informational responses and native nghttp2 session allocations; validate
+  framing, chunks, bodyless statuses,
+  truncation, injection, HTTP/2 resets/GOAWAY and flow-controlled DATA.
+- Deep-copy HTTP custom CA/identity, revocation, policy and mTLS inputs; validate
+  at current time per session by default, with explicit fixed-time test opt-in.
+  Keep one fresh connection per request, return 3xx unchanged, and perform no
+  retries, redirects, automatic decompression, proxying or protocol downgrade.
+  No HTTP server, HTTP/3, QUIC, libcurl or new dependency is introduced.
+- Add deterministic loopback HTTP/HTTPS HTTP/1 and HTTP/2 regression tests,
+  including sizable byte-exact h2 flow-control transfers and disposable offline
+  client-authentication TLS fixtures.
+- Keep bundled nghttp2 archive symbols hidden inside Network rather than
+  re-exporting the private engine from the shared library.
 - **Breaking:** remove public `Packet::PROCESS_THRESHOLD`. All packet payloads now
   pass through input and output pipelines uniformly, regardless of opcode.
   Existing packet opcodes and wire framing are unchanged.

@@ -77,7 +77,7 @@ void Close(Connection::HandlerType handle) {
 /**
  * @brief Ephemeral loopback listener and native peer, entirely test-owned.
  */
-struct PeerFixture {
+struct STORMBYTE_NETWORK_PRIVATE PeerFixture {
 	Safe::Shared<Logger::Log> logger = Safe::Shared<Logger::Log>::MakePointer<Logger::ThreadedLog>(
 		std::cerr, Logger::Level::Error);
 	Socket::Client client{Connection::Protocol::IPv4, logger};
@@ -271,7 +271,13 @@ int test_partial_read_states() {
 	ASSERT_TRUE(fixture.client.ReadSome({}).state == Socket::OperationState::Error);
 	ASSERT_TRUE(fixture.client.ReadSome(buffer).state == Socket::OperationState::WouldBlock);
 	ASSERT_TRUE(::send(fixture.peer, "abc", 3, 0) == 3);
-	auto result = fixture.client.ReadSome(buffer);
+	Socket::OperationResult result;
+	for (int attempt = 0; attempt < 100; ++attempt) {
+		result = fixture.client.ReadSome(buffer);
+		if (result.state != Socket::OperationState::WouldBlock)
+			break;
+		std::this_thread::sleep_for(1ms);
+	}
 	ASSERT_TRUE(result.state == Socket::OperationState::Complete);
 	ASSERT_TRUE(result.bytes == ByteSize{3});
 	ASSERT_TRUE(buffer[0] == std::byte{'a'} && buffer[2] == std::byte{'c'});
@@ -424,9 +430,14 @@ int test_resolution_deadline_busy_and_reuse() {
 		ASSERT_TRUE(!result && state == Socket::OperationState::Busy);
 	}
 	ASSERT_TRUE(lookup_calls.load(Safe::MemoryOrder::Acquire) == 1);
-	std::this_thread::sleep_for(180ms);
-	result = resolver.Resolve("127.0.0.1", 1234, Connection::AddressPolicy::IPv4Only,
-		{std::chrono::steady_clock::now() + 1s}, state);
+	const auto reuse_deadline = std::chrono::steady_clock::now() + 1s;
+	do {
+		result = resolver.Resolve("127.0.0.1", 1234, Connection::AddressPolicy::IPv4Only,
+			{reuse_deadline}, state);
+		if (result || state != Socket::OperationState::Busy)
+			break;
+		std::this_thread::sleep_for(10ms);
+	} while (std::chrono::steady_clock::now() < reuse_deadline);
 	ASSERT_TRUE(result.has_value() && state == Socket::OperationState::Complete);
 	ASSERT_TRUE(lookup_calls.load(Safe::MemoryOrder::Acquire) == 2);
 	ASSERT_TRUE(lookup_completions.load(Safe::MemoryOrder::Acquire) == 2);

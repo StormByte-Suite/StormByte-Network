@@ -63,3 +63,4 @@ else()
 endif()
 
 buildmaster_link(StormByte-Network "${_nghttp2_target}")
+set_property(GLOBAL PROPERTY STORMBYTE_NETWORK_NGHTTP2_TARGET "${_nghttp2_target}")

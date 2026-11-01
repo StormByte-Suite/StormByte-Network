@@ -73,7 +73,8 @@ TLSConfiguration::TLSConfiguration(const Crypto::TLS::ServerConfiguration& confi
 
 TLSConfiguration::~TLSConfiguration() noexcept = default;
 
-Expected<Crypto::TLS::Session, Crypto::TLS::SessionError> TLSConfiguration::Create() const {
+Expected<Crypto::TLS::Session, Crypto::TLS::SessionError> TLSConfiguration::Create(
+	std::span<const std::byte> alpn) const {
 	if (m_role == Crypto::TLS::Role::Client) {
 		Crypto::TLS::ClientConfiguration configuration;
 		configuration.identity = m_identity;
@@ -90,7 +91,7 @@ Expected<Crypto::TLS::Session, Crypto::TLS::SessionError> TLSConfiguration::Crea
 		configuration.private_key_pem = m_key.span();
 		configuration.private_key_password = m_password.span();
 		configuration.policy = m_policy;
-		configuration.alpn_wire = m_alpn.span();
+		configuration.alpn_wire = alpn.empty() ? m_alpn.span() : alpn;
 		return Crypto::TLS::Session::CreateClient(configuration);
 	}
 	Crypto::TLS::ServerConfiguration configuration;
@@ -102,6 +103,6 @@ Expected<Crypto::TLS::Session, Crypto::TLS::SessionError> TLSConfiguration::Crea
 	configuration.validation_time = m_refresh_validation_time
 		? std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()) : m_time;
 	configuration.policy = m_policy;
-	configuration.alpn_wire = m_alpn.span();
+	configuration.alpn_wire = alpn.empty() ? m_alpn.span() : alpn;
 	return Crypto::TLS::Session::CreateServer(configuration);
 }

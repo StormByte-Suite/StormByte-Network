@@ -411,6 +411,9 @@ Socket::OperationResult Socket::Client::ConnectResolved(
 				return fail({after_initialization});
 			return {};
 		}
+		if (last.state == OperationState::Error)
+			m_logger << Logger::Level::Error << "All resolved connection attempts failed; last native error: "
+				<< last.native_error << std::endl;
 		return fail(last);
 	} catch (...) {
 		return fail({OperationState::Error});
