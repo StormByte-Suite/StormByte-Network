@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-01
+
 - Allow 90 seconds for the complete HTTP test suite on native-policy platforms
   and report per-case durations, without relaxing individual operation deadlines.
 - Flush HTTP per-case diagnostics before CI timeouts and separate TLS
