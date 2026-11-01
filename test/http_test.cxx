@@ -1102,9 +1102,10 @@ int main() {
 	int count = 0;
 	const auto Run = [&](const char* name, int (*test)()) {
 		++count;
+		std::cout << name << ": starting" << std::endl;
 		try {
 			failures += test();
-			std::cout << name << ": passed\n";
+			std::cout << name << ": passed" << std::endl;
 		}
 		catch (const std::exception& error) {
 			++failures;

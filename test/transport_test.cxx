@@ -100,12 +100,17 @@ struct STORMBYTE_NETWORK_PRIVATE PeerFixture {
 		if (::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) != 0)
 			throw std::runtime_error("listener address");
 		port = ntohs(address.sin_port);
+		if (!listening) {
+			Close(listener);
+			listener = static_cast<Connection::HandlerType>(-1);
+		}
 	}
 
 	~PeerFixture() {
 		if (peer != static_cast<Connection::HandlerType>(-1))
 			Close(peer);
-		Close(listener);
+		if (listener != static_cast<Connection::HandlerType>(-1))
+			Close(listener);
 	}
 
 	void Connect() {

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Flush HTTP per-case diagnostics before CI timeouts and separate TLS
+  cancellation from expiry; connection-refusal fixtures release their port
+  before connecting instead of leaving a bound non-listening socket.
 - Limit disposable TLS leaf certificates to 365 days for macOS native policy,
   use bound non-listening loopback ports for connection-refusal tests, and
   check resolver cancellation independently of thread scheduling latency.

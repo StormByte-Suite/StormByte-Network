@@ -373,7 +373,11 @@ int test_handshake_cancellation_and_expiry() {
 			cancel = std::jthread([&] { std::this_thread::sleep_for(20ms); cancellation.store(true); });
 		const auto start = std::chrono::steady_clock::now();
 		const auto result = Socket::TLS::Handshake(fixture.socket, session,
-			{start + 100ms, &cancellation});
+			{start + (cancelled ? 2s : 100ms), &cancellation});
+		if (result.state != (cancelled ? Socket::OperationState::Cancelled : Socket::OperationState::TimedOut))
+			std::cerr << "Handshake cancellation/expiry: cancelled=" << cancelled
+				<< ", state=" << static_cast<int>(result.state)
+				<< ", native_error=" << result.native_error << std::endl;
 		ASSERT_TRUE(result.state == (cancelled ? Socket::OperationState::Cancelled : Socket::OperationState::TimedOut));
 		ASSERT_TRUE(std::chrono::steady_clock::now() - start < 500ms);
 		ASSERT_TRUE(fixture.socket.Status() == Connection::Status::Disconnected);
