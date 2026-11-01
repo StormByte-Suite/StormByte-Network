@@ -52,11 +52,18 @@ These are other shared libraries. They are not inside this file. Each has
 its own release archive, its own LICENSE and its own THIRD-PARTY. The
 versions below are the ones this tag is built against.
 
-  - StormByte Base 2.2.0 — https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.0
-  - StormByte-Buffer 2.0.3 — https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.3
-  - StormByte-Logger 2.0.3 — https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.3
-  - StormByte System 2.1.0 — https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.0
+  - StormByte Base 2.2.2 — https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2
+  - StormByte-Buffer 2.0.5 — https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5
+  - StormByte-Crypto 2.3.0 — https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/2.3.0
+  - StormByte-Logger 2.0.5 — https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5
+  - StormByte System 2.1.2 — https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2
+
+WITH_NGHTTP2=SYSTEM links the installed nghttp2 rather than the private
+bundled build. If it is shared, it must also be provided by the runtime.
 
 A static rebuild of this library can fold those libraries into the result.
+StormByte-Crypto provides TLS and carries its own third-party notices for its
+cryptographic and TLS implementation dependencies. Those notices must accompany
+any distribution that includes the Crypto library.
 That binary is a different distribution from this archive, and the notices
 of every library folded into it have to travel with it.

@@ -9,7 +9,7 @@
 
 StormByte-Network is the C++26 networking module of the [StormByte](https://suite.stormbyte.org/StormByte) suite.
 
-It depends on [StormByte Base 2.2.2](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2), [StormByte Buffer 2.0.5](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5), [StormByte Logger 2.0.5](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5), and [StormByte System 2.1.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2).
+It depends on [StormByte Base 2.2.2](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2), [StormByte Buffer 2.0.5](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5), [StormByte Crypto 2.3.0](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/2.3.0), [StormByte Logger 2.0.5](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5), and [StormByte System 2.1.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2).
 
 It is not a thin socket wrapper. You inherit `Client` or `Server`, define packets, and attach Buffer pipelines. POSIX and Winsock, framing, event-driven I/O and bounded packet processing stay private.
 
@@ -48,12 +48,37 @@ It is not a thin socket wrapper. You inherit `Client` or `Server`, define packet
 git clone https://github.com/StormByte-Suite/StormByte-Network.git
 cd StormByte-Network
 cmake -S . -B build-install -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+	-DWITH_NGHTTP2=BUNDLED \
 	-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 cmake --build build-install -j
 cmake --install build-install
 ```
 
-`BUILD_SHARED_LIBS` defaults to `ON`; use `-DBUILD_SHARED_LIBS=OFF` for a static build. Needs [StormByte-BuildMaster](https://github.com/StormByte-Suite/StormByte-BuildMaster) >= 2.1.3. Configure downloads the StormByte release archives. There are no StormByte source submodules. BuildMaster is the installed package when it is >= 2.1.3, otherwise the `buildmaster` submodule. `-DENABLE_LTO=ON` and `-DENABLE_PGO=ON` match the release builds. macOS is Apple Clang only.
+`BUILD_SHARED_LIBS` defaults to `ON`; use `-DBUILD_SHARED_LIBS=OFF` for a static build. `WITH_NGHTTP2` defaults to `BUNDLED`, which builds the pinned nghttp2 1.70.0 submodule as a private static dependency; `SYSTEM` uses an installed nghttp2 and fails explicitly if its headers/library are missing. Initialize source dependencies with `git submodule update --init --recursive`. Needs [StormByte-BuildMaster](https://github.com/StormByte-Suite/StormByte-BuildMaster) >= 2.1.3. Configure downloads the StormByte release archives in BUNDLED mode, including Crypto 2.3.0 for TLS. There are no StormByte source submodules. BuildMaster is the installed package when it is >= 2.1.3, otherwise the `buildmaster` submodule. `-DENABLE_LTO=ON` and `-DENABLE_PGO=ON` match the release builds. macOS is Apple Clang only.
+
+### Private TLS transport
+
+The private socket adapter drives Crypto's TLS 1.3 buffer session without
+including or linking OpenSSL directly. DNS, connect, authentication and subsequent
+I/O can share one absolute deadline and a borrowed cancellation flag. Crypto
+validates peer identity and trust before application data is accepted; ALPN is
+available to the future HTTP/1.1 and HTTP/2 client.
+
+TLS failures, timeout and cancellation abandon the connection instead of
+replaying partially consumed plaintext/ciphertext. Bare TCP EOF is rejected as
+truncation; only TLS close-notify represents authenticated EOF. Shutdown exchanges
+close-notify within the supplied deadline.
+
+`TLSTransportTest` uses ephemeral loopback ports, Crypto sessions and offline
+certificates under `test/fixtures/tls`. The deliberately disposable server key is
+test data only; never use it as a credential or trust these certificates outside
+the test. The CA signing key was destroyed. Validation uses a fixed instant
+inside the certificates' validity, so tests do not expire with wall-clock time.
+OpenSSL's CLI was used only to generate these fixtures, not to build or run tests.
+The nine test cases cover fragmented TLS records, HTTP/2 and HTTP/1.1 ALPN
+selection (including a peer without ALPN), a byte-for-byte 512 KiB round trip,
+identity/trust and malformed-record rejection, invalid states,
+deadline/cancellation, backpressure, truncated EOF and orderly shutdown.
 
 These examples use `ccache`; install it or omit the two compiler-launcher options when it is unavailable.
 
@@ -85,8 +110,10 @@ These examples use `ccache`; install it or omit the two compiler-launcher option
 |------------|------------------|------|
 | [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2) | [2.2.2](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2) | Expected, Safe ownership/containers/synchronization/threads, Size, ByteSize, visibility |
 | [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5) | [2.0.5](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
+| [StormByte-Crypto](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/2.3.0) | [2.3.0](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/2.3.0) | Buffer-driven TLS 1.3 sessions, certificate verification and trust policies |
 | [StormByte-Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5) | [2.0.5](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5) | Diagnostics |
 | [StormByte-System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2) | [2.1.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2) | Calling-thread utilities |
+| [nghttp2](https://github.com/nghttp2/nghttp2) | 1.70.0 when bundled | Private HTTP/2 protocol engine; `WITH_NGHTTP2=BUNDLED` is the default, `SYSTEM` uses an installed library |
 
 ## The rest of the suite
 

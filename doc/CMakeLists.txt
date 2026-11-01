@@ -19,6 +19,7 @@ if(ENABLE_DOC)
 
 	download_doxygen_tag(StormByte "https://suite.stormbyte.org/StormByte/StormByte.tag")
 	download_doxygen_tag(StormByte-Buffer "https://suite.stormbyte.org/StormByte-Buffer/StormByte-Buffer.tag")
+	download_doxygen_tag(StormByte-Crypto "https://suite.stormbyte.org/StormByte-Crypto/StormByte-Crypto.tag")
 	download_doxygen_tag(StormByte-Logger "https://suite.stormbyte.org/StormByte-Logger/StormByte-Logger.tag")
 	download_doxygen_tag(StormByte-System "https://suite.stormbyte.org/StormByte-System/StormByte-System.tag")
 
@@ -51,6 +52,8 @@ if(ENABLE_DOC)
 		"STORMBYTE_NETWORK_PRIVATE:="
 		"STORMBYTE_BUFFER_PUBLIC:="
 		"STORMBYTE_BUFFER_PRIVATE:="
+		"STORMBYTE_CRYPTO_PUBLIC:="
+		"STORMBYTE_CRYPTO_PRIVATE:="
 		"STORMBYTE_SYSTEM_PUBLIC:="
 		"STORMBYTE_LOGGER_PUBLIC:="
 		"STORMBYTE_PUBLIC:="
@@ -90,6 +93,7 @@ if(ENABLE_DOC)
 	set(DOXYGEN_TAGFILES
 		"${StormByte_TAG_FILE}=https://suite.stormbyte.org/StormByte"
 		"${StormByte-Buffer_TAG_FILE}=https://suite.stormbyte.org/StormByte-Buffer"
+		"${StormByte-Crypto_TAG_FILE}=https://suite.stormbyte.org/StormByte-Crypto"
 		"${StormByte-Logger_TAG_FILE}=https://suite.stormbyte.org/StormByte-Logger"
 		"${StormByte-System_TAG_FILE}=https://suite.stormbyte.org/StormByte-System"
 	)

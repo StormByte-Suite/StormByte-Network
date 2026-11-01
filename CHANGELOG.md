@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Require StormByte-Crypto 2.3.0 for TLS integration, using its published binary
+  release in bundled builds and the Crypto component in system builds.
 - Add `WITH_NGHTTP2=BUNDLED|SYSTEM`; bundled builds use the source submodule
   pinned to v1.70.0, while an explicitly missing system library is an error.
+- Add a private TLS socket adapter driven by StormByte-Crypto, with authenticated
+  handshake, ALPN, controlled partial I/O, truncation detection and orderly
+  shutdown under one total deadline/cancellation policy.
+- Add offline loopback TLS regression tests without direct OpenSSL linkage.
 - Add opt-in private total-deadline/cancellation sends with retained partial-write
   progress and explicit partial-read data/would-block/EOF/error outcomes.
 - Add a managed single-slot private resolver, explicit IPv4/IPv6 alternative

@@ -59,44 +59,64 @@ OperationState OperationControl::Check() const noexcept {
 	return OperationState::Complete;
 }
 
+namespace {
+	/**
+	 * @brief Wait for one socket direction with bounded cancellation polling.
+	 * @param handle Borrowed native handle.
+	 * @param control Shared total operation controls.
+	 * @param reading True for incoming bytes, false for outgoing capacity.
+	 * @return Readiness or the terminal stop reason.
+	 */
+	OperationResult WaitReady(StormByte::Network::Connection::HandlerType handle,
+		const OperationControl& control, bool reading) noexcept {
+		for (;;) {
+			const auto state = control.Check();
+			if (state != OperationState::Complete)
+				return {state};
+			auto wait = std::chrono::milliseconds(50);
+			if (control.deadline != std::chrono::steady_clock::time_point::max())
+				wait = std::min(wait, std::chrono::ceil<std::chrono::milliseconds>(
+					control.deadline - std::chrono::steady_clock::now()));
+			const int milliseconds = static_cast<int>(std::max(wait.count(), decltype(wait.count()){0}));
+#ifdef UNIX
+			pollfd descriptor{handle, static_cast<short>(reading ? POLLIN : POLLOUT), 0};
+			const int result = poll(&descriptor, 1, milliseconds);
+			if (result < 0) {
+				const int error = errno;
+				if (error == EINTR)
+					continue;
+				return {OperationState::Error, StormByte::ByteSize{0}, error};
+			}
+			if (descriptor.revents & POLLNVAL)
+				return {OperationState::Error, StormByte::ByteSize{0}, EBADF};
+#else
+			fd_set ready, errors;
+			FD_ZERO(&ready);
+			FD_ZERO(&errors);
+			FD_SET(handle, &ready);
+			FD_SET(handle, &errors);
+			timeval timeout{0, milliseconds * 1000};
+			const int result = select(0, reading ? &ready : nullptr,
+				reading ? nullptr : &ready, &errors, &timeout);
+			if (result == SOCKET_ERROR) {
+				const int error = WSAGetLastError();
+				if (error == WSAEINTR)
+					continue;
+				return {OperationState::Error, StormByte::ByteSize{0}, error};
+			}
+#endif
+			if (result > 0)
+				return {control.Check()};
+		}
+	}
+}
+
 OperationResult StormByte::Network::Socket::WaitWritable(
 	Connection::HandlerType handle, const OperationControl& control) noexcept {
-	for (;;) {
-		const auto state = control.Check();
-		if (state != OperationState::Complete)
-			return {state};
-		auto wait = std::chrono::milliseconds(50);
-		if (control.deadline != std::chrono::steady_clock::time_point::max())
-			wait = std::min(wait, std::chrono::ceil<std::chrono::milliseconds>(
-				control.deadline - std::chrono::steady_clock::now()));
-		const int milliseconds = static_cast<int>(std::max(wait.count(), decltype(wait.count()){0}));
-#ifdef UNIX
-		pollfd descriptor{handle, POLLOUT, 0};
-		const int result = poll(&descriptor, 1, milliseconds);
-		if (result < 0) {
-			const int error = errno;
-			if (error == EINTR)
-				continue;
-			return {OperationState::Error, StormByte::ByteSize{0}, error};
-		}
-		if (descriptor.revents & POLLNVAL)
-			return {OperationState::Error, StormByte::ByteSize{0}, EBADF};
-#else
-		fd_set writable, errors;
-		FD_ZERO(&writable);
-		FD_ZERO(&errors);
-		FD_SET(handle, &writable);
-		FD_SET(handle, &errors);
-		timeval timeout{0, milliseconds * 1000};
-		const int result = select(0, nullptr, &writable, &errors, &timeout);
-		if (result == SOCKET_ERROR) {
-			const int error = WSAGetLastError();
-			if (error == WSAEINTR)
-				continue;
-			return {OperationState::Error, StormByte::ByteSize{0}, error};
-		}
-#endif
-		if (result > 0)
-			return {control.Check()};
-	}
+	return WaitReady(handle, control, false);
+}
+
+OperationResult StormByte::Network::Socket::WaitReadable(
+	Connection::HandlerType handle, const OperationControl& control) noexcept {
+	return WaitReady(handle, control, true);
 }

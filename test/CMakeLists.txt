@@ -19,6 +19,25 @@ if(ENABLE_TEST)
 	add_test(NAME TransportTest COMMAND TransportTest)
 	set_tests_properties(TransportTest PROPERTIES TIMEOUT 30)
 
+	add_executable(TLSTransportTest
+		tls_transport_test.cxx
+		../lib/private/StormByte/network/connection/handler.cxx
+		../lib/private/StormByte/network/connection/info.cxx
+		../lib/private/StormByte/network/connection/resolver.cxx
+		../lib/private/StormByte/network/socket/client.cxx
+		../lib/private/StormByte/network/socket/operation.cxx
+		../lib/private/StormByte/network/socket/socket.cxx
+		../lib/private/StormByte/network/socket/tls.cxx
+	)
+	target_link_libraries(TLSTransportTest StormByte::Network)
+	target_compile_definitions(TLSTransportTest PRIVATE
+		TLS_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tls")
+	if(WIN32)
+		target_link_libraries(TLSTransportTest ws2_32 iphlpapi)
+	endif()
+	add_test(NAME TLSTransportTest COMMAND TLSTransportTest)
+	set_tests_properties(TLSTransportTest PROPERTIES TIMEOUT 30)
+
 	foreach(test_class IN ITEMS
 		Client
 		ClientTelemetry

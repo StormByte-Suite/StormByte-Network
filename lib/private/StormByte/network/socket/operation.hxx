@@ -98,6 +98,14 @@ namespace StormByte {
 			 * @return Complete for readiness (including socket errors), or the stop reason.
 			 */
 			OperationResult WaitWritable(Connection::HandlerType handle, const OperationControl& control) noexcept;
+
+			/**
+			 * @brief Wait for readable bytes or EOF using the caller's total deadline.
+			 * @param handle Borrowed non-blocking native handle.
+			 * @param control Absolute deadline and optional cancellation flag.
+			 * @return Readiness or the stop reason.
+			 */
+			OperationResult WaitReadable(Connection::HandlerType handle, const OperationControl& control) noexcept;
 		}
 	}
 }

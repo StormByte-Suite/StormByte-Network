@@ -5,18 +5,20 @@ else()
 endif()
 
 if(WITH_STORMBYTE STREQUAL "SYSTEM")
-	find_package(StormByte REQUIRED Base Buffer Logger System)
+	find_package(StormByte REQUIRED Base Buffer Crypto Logger System)
 else()
 	add_subdirectory(base)
 	add_subdirectory(logger)
 	add_subdirectory(system)
 	add_subdirectory(buffer)
+	add_subdirectory(crypto)
 endif()
 
 buildmaster_link(StormByte-Network StormByte-Base)
 buildmaster_link(StormByte-Network StormByte-Buffer)
 buildmaster_link(StormByte-Network StormByte-Logger)
 buildmaster_link(StormByte-Network StormByte-System)
+buildmaster_link(StormByte-Network StormByte-Crypto)
 
 # doc/ is added before this directory, so the unpack targets do not exist yet there.
 if(TARGET StormByteNetworkDoc)
@@ -24,7 +26,8 @@ if(TARGET StormByteNetworkDoc)
 			_bm_bin_StormByte-Base_unpack
 			_bm_bin_StormByte-Logger_unpack
 			_bm_bin_StormByte-System_unpack
-			_bm_bin_StormByte-Buffer_unpack)
+			_bm_bin_StormByte-Buffer_unpack
+			_bm_bin_StormByte-Crypto_unpack)
 		if(TARGET "${_doc_dep}")
 			add_dependencies(StormByteNetworkDoc "${_doc_dep}")
 		endif()
