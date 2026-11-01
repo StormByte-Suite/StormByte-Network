@@ -121,6 +121,7 @@ jobs:
             -DENABLE_LTO=ON
             -DENABLE_PGO=ON
             -DWITH_STORMBYTE=BUNDLED
+            -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
             -DCMAKE_CXX_FLAGS=-stdlib=${{ matrix.stdlib }}
             -DCMAKE_CXX_STANDARD_LIBRARIES=-stdlib=${{ matrix.stdlib }}
@@ -202,6 +203,7 @@ jobs:
             -DENABLE_LTO=ON
             -DENABLE_PGO=ON
             -DWITH_STORMBYTE=BUNDLED
+            -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
           run-tests: false
           install: true
@@ -265,6 +267,7 @@ jobs:
             -DENABLE_LTO=ON
             -DENABLE_PGO=ON
             -DWITH_STORMBYTE=BUNDLED
+            -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
           run-tests: false
           install: true
@@ -339,4 +342,5 @@ jobs:
       extra-cmake-options: >-
         -DENABLE_DOC=ON
         -DWITH_STORMBYTE=BUNDLED
+        -DWITH_NGHTTP2=BUNDLED
       docs_output_dir: ./_site

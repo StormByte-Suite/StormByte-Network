@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.28)
+project(StormByteBundledNghttp2 LANGUAGES C)
+
+set(_nghttp2_source "${NGHTTP2_SOURCE}")
+if(NOT EXISTS "${_nghttp2_source}/CMakeLists.txt")
+	message(FATAL_ERROR "Pinned nghttp2 source is missing: ${_nghttp2_source}")
+endif()
+
+set(ENABLE_LIB_ONLY ON CACHE BOOL "" FORCE)
+set(ENABLE_APP OFF CACHE BOOL "" FORCE)
+set(ENABLE_HPACK_TOOLS OFF CACHE BOOL "" FORCE)
+set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ENABLE_FAILMALLOC OFF CACHE BOOL "" FORCE)
+set(ENABLE_DOC OFF CACHE BOOL "" FORCE)
+set(ENABLE_HTTP3 OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+
+add_subdirectory("${_nghttp2_source}" nghttp2)

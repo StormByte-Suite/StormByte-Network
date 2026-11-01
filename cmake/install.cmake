@@ -1,3 +1,5 @@
+include(GNUInstallDirs)
+
 install(TARGETS StormByte-Network
 	ARCHIVE 		DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 	LIBRARY 		DESTINATION "${CMAKE_INSTALL_LIBDIR}"
@@ -9,3 +11,9 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/lib/public/StormByte/"
 	PATTERN "*.h"
 	PATTERN "*.hxx"
 )
+if(WITH_NGHTTP2 STREQUAL "BUNDLED")
+	install(FILES "${CMAKE_SOURCE_DIR}/thirdparty/nghttp2/src/COPYING"
+		DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/StormByte-Network"
+		RENAME nghttp2-MIT.txt
+	)
+endif()

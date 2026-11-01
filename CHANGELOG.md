@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add `WITH_NGHTTP2=BUNDLED|SYSTEM`; bundled builds use the source submodule
+  pinned to v1.70.0, while an explicitly missing system library is an error.
 - Add opt-in private total-deadline/cancellation sends with retained partial-write
   progress and explicit partial-read data/would-block/EOF/error outcomes.
 - Add a managed single-slot private resolver, explicit IPv4/IPv6 alternative

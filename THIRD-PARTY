@@ -25,8 +25,25 @@ socket API) is also not in this archive.
 Compiled into this shared library
 ---------------------------------
 
-No third-party object code is compiled into this library. The shared
-library is original StormByte source under LICENSE and COPYING.LGPLv3.
+The library's own source is under LICENSE and COPYING.LGPLv3.
+When configured with WITH_NGHTTP2=BUNDLED, it also links a private static
+build of nghttp2 1.70.0:
+
+  https://github.com/nghttp2/nghttp2/releases/tag/v1.70.0
+
+nghttp2 is licensed under the MIT License. Copyright (c) 2012, 2014, 2015,
+2016 Tatsuhiro Tsujikawa and nghttp2 contributors. Its license text is
+available in the pinned source submodule's COPYING file and at:
+
+  https://github.com/nghttp2/nghttp2/blob/v1.70.0/COPYING
+
+Bundled installations include the complete license as
+share/licenses/StormByte-Network/nghttp2-MIT.txt.
+
+The MIT License permits use, copying, modification, merging, publication,
+distribution, sublicensing and sale, provided the copyright and permission
+notice are included in copies or substantial portions of the software. The
+software is provided "AS IS", without warranty or liability.
 
 Linked at run time, not compiled in
 ------------------------------------

@@ -1,3 +1,6 @@
 [submodule "BuildMaster"]
 	path = buildmaster
 	url = https://github.com/StormByte-Suite/StormByte-BuildMaster.git
+[submodule "thirdparty/nghttp2/src"]
+	path = thirdparty/nghttp2/src
+	url = https://github.com/nghttp2/nghttp2.git

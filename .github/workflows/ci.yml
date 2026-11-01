@@ -100,6 +100,7 @@ jobs:
             -DENABLE_PGO=OFF
             -DENABLE_TEST=ON
             -DWITH_STORMBYTE=BUNDLED
+            -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
             ${{ matrix.compiler == 'clang-libc++' && '-DCMAKE_CXX_FLAGS=-stdlib=libc++ -DCMAKE_CXX_STANDARD_LIBRARIES=-stdlib=libc++' || '' }}
           run-tests: true
@@ -159,6 +160,7 @@ jobs:
             -DENABLE_PGO=OFF
             -DENABLE_TEST=ON
             -DWITH_STORMBYTE=BUNDLED
+            -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
           run-tests: true
           ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
@@ -196,6 +198,7 @@ jobs:
             -DENABLE_PGO=OFF
             -DENABLE_TEST=ON
             -DWITH_STORMBYTE=BUNDLED
+            -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
           run-tests: true
           ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
