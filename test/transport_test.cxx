@@ -316,6 +316,40 @@ int test_interrupt_wakes_read_without_releasing_handle() {
 	PeerFixture fixture;
 	fixture.Connect();
 	const auto handle = fixture.client.Handle();
+	Safe::Atomic<bool> cancelled{false};
+	Socket::OperationResult result;
+	const auto start = std::chrono::steady_clock::now();
+	std::jthread receive([&] {
+		result = Socket::WaitReadable(handle, {start + 2s, &cancelled});
+	});
+	std::this_thread::sleep_for(100ms);
+	// Same order as Client::Cancel(): publish cancellation, then shut down natively.
+	const auto cancel = std::chrono::steady_clock::now();
+	cancelled.store(true, Safe::MemoryOrder::Release);
+	fixture.client.Interrupt();
+	receive.join();
+	ASSERT_TRUE(result.state == Socket::OperationState::Cancelled);
+	ASSERT_TRUE(std::chrono::steady_clock::now() - cancel < 500ms);
+	ASSERT_TRUE(fixture.client.Handle() == handle);
+	std::array<std::byte, 1> bytes{};
+	const auto read = fixture.client.ReadSome(bytes);
+#ifdef WINDOWS
+	// Winsock rejects receives after SD_BOTH instead of reporting EOF.
+	ASSERT_TRUE(read.state == Socket::OperationState::Error && read.native_error == WSAESHUTDOWN);
+#else
+	ASSERT_TRUE(read.state == Socket::OperationState::PeerClosed);
+#endif
+	return 0;
+}
+
+#ifdef UNIX
+/**
+ * @brief POSIX poll reports a local shutdown; Windows select does not, so it is not portable.
+ */
+int test_posix_shutdown_wakes_uncancelled_wait() {
+	PeerFixture fixture;
+	fixture.Connect();
+	const auto handle = fixture.client.Handle();
 	Socket::OperationResult result;
 	const auto start = std::chrono::steady_clock::now();
 	std::jthread receive([&] {
@@ -326,10 +360,9 @@ int test_interrupt_wakes_read_without_releasing_handle() {
 	ASSERT_TRUE(result.state == Socket::OperationState::Complete);
 	ASSERT_TRUE(std::chrono::steady_clock::now() - start < 500ms);
 	ASSERT_TRUE(fixture.client.Handle() == handle);
-	std::array<std::byte, 1> bytes{};
-	ASSERT_TRUE(fixture.client.ReadSome(bytes).state == Socket::OperationState::PeerClosed);
 	return 0;
 }
+#endif
 
 int test_partial_read_states() {
 	PeerFixture fixture;
@@ -585,6 +618,9 @@ int main() {
 	failures += test_interrupt_wakes_read_without_releasing_handle();
 	failures += test_partial_read_states();
 	failures += test_partial_read_transport_error();
+#ifdef UNIX
+	failures += test_posix_shutdown_wakes_uncancelled_wait();
+#endif
 	failures += test_send_cancelled_with_progress();
 	failures += test_send_deadline_with_progress();
 	failures += test_send_success_and_preflight();
@@ -597,9 +633,11 @@ int main() {
 	failures += test_resolution_preflight_and_error();
 	if (failures == 0)
 #ifdef LINUX
-		std::cout << "18 focused transport cases passed\n";
+		std::cout << "19 focused transport cases passed\n";
+#elif defined(UNIX)
+		std::cout << "18 focused transport cases passed (Linux backlog test not applicable)\n";
 #else
-		std::cout << "17 focused transport cases passed (Linux backlog test not applicable)\n";
+		std::cout << "17 focused transport cases passed (Linux backlog and POSIX shutdown-wake tests not applicable)\n";
 #endif
 	return failures;
 }

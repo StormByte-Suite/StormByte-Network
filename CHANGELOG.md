@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add typed `Client::Connect(..., std::chrono::milliseconds)` and protected `Send(packet, std::chrono::milliseconds)` overloads returning `Expected<..., Client::Error>`, with distinct timeout, cancellation, resolver-busy, TLS, transport, packet and precondition failures. Negative budgets are invalid, zero expires immediately and `milliseconds::max()` explicitly opts out.
-- Add thread-safe, sticky application-stream `Cancel()`. Native shutdown wakes blocked plaintext/TLS I/O; serialized operation owners release failed streams. Connect/request operations serialize without mixing responses, while queued operations can expire under their own original deadline. Preserve moves, reconnects, telemetry and independent remote-file lifetime.
+- Add thread-safe, sticky application-stream `Cancel()`. Native shutdown wakes blocked plaintext/TLS I/O on POSIX; Windows waits observe cancellation within their bounded 50 ms slice because Winsock `select` does not report a local shutdown; serialized operation owners release failed streams. Connect/request operations serialize without mixing responses, while queued operations can expire under their own original deadline. Preserve moves, reconnects, telemetry and independent remote-file lifetime.
 
 ### Changed
 
@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Serialize native socket shutdown against close, so cancellation can wake I/O without racing handle reuse. Remove the unconditional 100 ms delay on socket disconnection; shutdown followed by close does not require a sleep.
 - Share one absolute request deadline across upload, opcode, size, payload and TLS partial I/O instead of restarting waits on progress. Timeout, cancellation, truncated frames and callback failures discard the affected stream without replaying packets.
 - Synchronize client connection publication/status, make `Disconnect()` wake an active legacy or timed request, support cancellation/disconnection from packet callbacks without deadlock, and clean up streams on exceptional exits.
+- Fix two Windows CI failures in the new client-control tests; socket behavior is unchanged. The interrupt test asserted the POSIX-only wake of an uncancelled wait by a local shutdown; it now follows `Cancel()` (flag, then shutdown) on every platform, expects Winsock's `WSAESHUTDOWN` receive result after `SD_BOTH`, and keeps the uncancelled wake as a POSIX-only case. The 100 ms backpressure test spent its budget on non-preemptible 16 MiB framing before any socket write (about 0.1 s on Linux; the Windows CI request exceeded its 0.5 s bound). It now uses a fixed 16 KiB peer receive window and a 2 s budget, so expiry occurs while waiting for send capacity, and requires `TimedOut` within 2–2.4 s.
 
 [3.1.0]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.0.0...3.1.0
 

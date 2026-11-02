@@ -1,0 +1,70 @@
+# GitHub Actions run 41422940802, job windows-clang-cl (commit 2a274d7), CTest excerpt
+  RANLIB: C:/Program Files/LLVM/bin/llvm-ranlib.exe
+  CTEST_OPTIONS: --output-on-failure --timeout 300 --test-dir D:\a\StormByte-Network\StormByte-Network/build/test
+##[endgroup]
+────────────────────────────────────────────────────────
+🧪 Running tests (Windows)
+────────────────────────────────────────────────────────
+Test project D:/a/StormByte-Network/StormByte-Network/build/test
+      Start  1: ClientControlTest
+ 1/21 Test  #1: ClientControlTest ...................***Failed    7.79 sec
+[Error   ] 02/11/2026 09:46:56 Client request failed (error 4).
+test_send_backpressure_deadline: Assertion failed at D:\a\StormByte-Network\StormByte-Network\test\client_control_test.cxx:571: condition is false, expected true
+
+      Start  2: HTTPTest
+ 2/21 Test  #2: HTTPTest ............................   Passed   14.28 sec
+      Start  3: TransportTest
+ 3/21 Test  #3: TransportTest .......................***Failed    6.74 sec
+[Error   ] 02/11/2026 09:47:14 Invalid resolved address: StormByte.Network: Invalid socket address
+[Error   ] 02/11/2026 09:47:14 All resolved connection attempts failed; last native error: 0
+[Error   ] 02/11/2026 09:47:14 Failed to resolve host: StormByte.Network: Can't resolve host '127.0.0.1': getaddrinfo code 11001 (family 23)
+[Error   ] 02/11/2026 09:47:16 All resolved connection attempts failed; last native error: 10061
+test_interrupt_wakes_read_without_releasing_handle: Assertion failed at D:\a\StormByte-Network\StormByte-Network\test\transport_test.cxx:326: condition is false, expected true
+
+      Start  4: TLSTransportTest
+ 4/21 Test  #4: TLSTransportTest ....................   Passed    2.67 sec
+      Start  5: ClientSafeTest
+ 5/21 Test  #5: ClientSafeTest ......................   Passed    0.02 sec
+      Start  6: ClientTelemetrySafeTest
+ 6/21 Test  #6: ClientTelemetrySafeTest .............   Passed    0.02 sec
+      Start  7: ConnectionClosedSafeTest
+ 7/21 Test  #7: ConnectionClosedSafeTest ............   Passed    0.02 sec
+      Start  8: ConnectionErrorSafeTest
+ 8/21 Test  #8: ConnectionErrorSafeTest .............   Passed    0.02 sec
+      Start  9: DeserializePacketFunctionSafeTest
+ 9/21 Test  #9: DeserializePacketFunctionSafeTest ...   Passed    0.02 sec
+      Start 10: EndpointSafeTest
+10/21 Test #10: EndpointSafeTest ....................   Passed    0.01 sec
+      Start 11: ExceptionSafeTest
+11/21 Test #11: ExceptionSafeTest ...................   Passed    0.02 sec
+      Start 12: FrameErrorSafeTest
+12/21 Test #12: FrameErrorSafeTest ..................   Passed    0.02 sec
+      Start 13: PacketSafeTest
+13/21 Test #13: PacketSafeTest ......................   Passed    0.02 sec
+      Start 14: PacketErrorSafeTest
+14/21 Test #14: PacketErrorSafeTest .................   Passed    0.02 sec
+      Start 15: RemoteFileMountSafeTest
+15/21 Test #15: RemoteFileMountSafeTest .............   Passed    0.02 sec
+      Start 16: ServerSafeTest
+16/21 Test #16: ServerSafeTest ......................   Passed    0.07 sec
+      Start 17: ServerTelemetrySafeTest
+17/21 Test #17: ServerTelemetrySafeTest .............   Passed    0.02 sec
+      Start 18: TelemetrySafeTest
+18/21 Test #18: TelemetrySafeTest ...................   Passed    0.02 sec
+      Start 19: DiscoveryTest
+19/21 Test #19: DiscoveryTest .......................   Passed    0.33 sec
+      Start 20: ClientServerTest
+20/21 Test #20: ClientServerTest ....................   Passed   78.99 sec
+      Start 21: RemoteFileTest
+21/21 Test #21: RemoteFileTest ......................   Passed   24.67 sec
+
+90% tests passed, 2 tests failed out of 21
+
+Total Test time (real) = 135.82 sec
+
+The following tests FAILED:
+	  1 - ClientControlTest (Failed)
+	  3 - TransportTest (Failed)
+Errors while running CTest
+##[error]Process completed with exit code 1.
+##[end-action id=__stormbytepp_githubactions_2.__run_9;outcome=failure;conclusion=failure;duration_ms=136698]

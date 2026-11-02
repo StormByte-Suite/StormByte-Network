@@ -122,7 +122,15 @@ struct Peer {
 	unsigned short port = 0;
 	Crypto::TLS::Session session;
 
-	Peer() {
+	/**
+	 * @brief Listen on an ephemeral loopback port.
+	 * @param receive_buffer Accepted-socket receive buffer, or zero for the OS default.
+	 */
+	explicit Peer(int receive_buffer = 0) {
+		// Set before listen so accepted sockets inherit it and cannot auto-tune past it.
+		if (receive_buffer > 0 && ::setsockopt(listener, SOL_SOCKET, SO_RCVBUF,
+			reinterpret_cast<const char*>(&receive_buffer), sizeof(receive_buffer)) != 0)
+			throw std::runtime_error("listener receive buffer");
 		sockaddr_in address{};
 		address.sin_family = AF_INET;
 		address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -558,17 +566,22 @@ int test_queued_request_deadline_does_not_wait_for_active_request() {
 int test_send_backpressure_deadline() {
 	for (const bool tls: {false, true}) {
 		TestClient client;
-		Peer fixture;
+		// A non-reading peer with a fixed small window guarantees native send backpressure.
+		Peer fixture(16 * 1024);
 		if (tls)
 			fixture.ConnectTLS(client);
 		else
 			fixture.Connect(client);
 		const TestPacket large(ByteSize{16 * 1024 * 1024});
+		// Framing 16 MiB is synchronous pipeline work (about 0.1 s on Linux, slower on
+		// Windows CI) that runs before socket I/O; the budget must outlast it so the
+		// deadline expires while waiting for send capacity.
 		const auto start = std::chrono::steady_clock::now();
-		const auto result = client.Send(large, 100ms);
+		const auto result = client.Send(large, 2s);
+		const auto elapsed = std::chrono::steady_clock::now() - start;
 		ASSERT_FALSE(result);
 		ASSERT_TRUE(*result.error() == Client::Error::TimedOut);
-		ASSERT_TRUE(std::chrono::steady_clock::now() - start < 500ms);
+		ASSERT_TRUE(elapsed >= 2s && elapsed < 2400ms);
 		ASSERT_TRUE(client.Status() == Connection::Status::Disconnected);
 	}
 	return 0;

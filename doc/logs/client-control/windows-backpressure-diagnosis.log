@@ -1,0 +1,17 @@
+# Linux x86-64 Release (GCC, .validation), 2026-11-02, commit 2a274d7 + temporary
+# stderr timers around Transport::Frame construction, Frame::ProcessOutput and
+# SendApplication in Client::Send. Instrumentation was removed afterwards.
+# Original test: Send(TestPacket of N MiB, 100ms) to a non-reading peer.
+MB=1   plain frame=936us   process=16747us  first write chunk sent  elapsed=104668us TimedOut
+MB=1   tls   frame=405us   process=6991us   first write chunk sent  elapsed=104526us TimedOut
+MB=4   plain frame=3475us  process=32659us  whole 4 MiB accepted    elapsed=114540us TimedOut
+MB=4   tls   frame=1260us  process=20565us  whole 4 MiB accepted    elapsed=113317us TimedOut
+MB=16  plain frame=19335us process=102914us no socket write reached elapsed=139632us TimedOut
+MB=16  tls   frame=6752us  process=100377us no socket write reached elapsed=123671us TimedOut
+MB=32  plain frame=17230us process=194234us no socket write reached elapsed=245009us TimedOut
+MB=32  tls   frame=10328us process=192967us no socket write reached elapsed=236195us TimedOut
+# Conclusion: framing cost is linear (~6 ms/MiB) and the original 16 MiB/100 ms
+# case expired before any socket I/O. With the corrected fixture (16 KiB peer
+# SO_RCVBUF, 2 s budget), the same temporary probe reported:
+#   write stopped state=TimedOut bytes=4194304 of 16777226   (plaintext)
+#   write stopped state=TimedOut bytes=131072 of 16777226    (TLS)

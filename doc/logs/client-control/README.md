@@ -152,3 +152,35 @@ Full logs for the two fresh reproductions are `reproduce-clang.log` and
 `reproduce-source-gcc.log`; earlier optimized runs are also retained.
 Ordinary release and stress evidence are `release-tests.log` and
 `control-repeat.log`.
+
+## Windows CI follow-up (run 41422940802)
+
+`windows-ci-41422940802-failure.log`: build and link passed; 19/21 suites
+passed. `ClientControlTest` failed at `test_send_backpressure_deadline`
+(elapsed bound) and `TransportTest` at
+`test_interrupt_wakes_read_without_releasing_handle` (wait state). Both are new
+3.1.0 tests. The resolver/refusal diagnostics in the same log are intentional
+negative cases. The pre-change run on `5ff76eb`
+(`windows-ci-41416426281-prechange.log`) passed all 20 suites. At `2a274d7`, every
+established suite also passed on Windows, including HTTP, TLS transport,
+client/server and remote-file suites. Between `5ff76eb` and `2a274d7`, existing
+socket paths changed only by moving shutdown into the mutex-serialized
+`Interrupt()` and removing the post-shutdown sleep. `WaitReady`, `select` use and
+`Frame::ProcessOutput` were unchanged.
+
+- Interrupt: the test waited on a raw handle with no cancellation flag, so only a
+  readiness event could end it before 2 s. POSIX `poll` reports local
+  `shutdown`; Winsock `select` readability does not include it, and
+  `recv` after `SD_BOTH` returns `WSAESHUTDOWN`, not EOF. The product cancellation
+  path always publishes its flag before `Interrupt()`, and waits recheck it at
+  most every 50 ms. Windows passed `test_cancel_send`, `test_cancel_tls_send` and
+  `test_disconnect_unblocks_legacy_read`, as expected. The test now uses the
+  cancellation order on every platform and keeps the uncancelled wake as a
+  POSIX-only case.
+- Backpressure: `windows-backpressure-diagnosis.log` shows the original
+  16 MiB/100 ms case never reached a socket write even on Linux. Synchronous
+  framing consumed the budget, and Windows CI exceeded the 500 ms bound. A fixed
+  16 KiB peer receive window plus a 2 s budget now makes the deadline expire in
+  the send-capacity wait; the test requires `TimedOut` within 2–2.4 s.
+- `windows-fix-linux-focused.log`: three Linux runs of both corrected suites
+  passed (19 transport cases, 23 client-control cases).

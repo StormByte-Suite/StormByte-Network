@@ -196,7 +196,9 @@ Invalid arguments or expiry before acquiring/using a stream do not destroy it.
 
 `Cancel()` is thread-safe against connect/request I/O and status queries: it sets
 a sticky flag and calls native `shutdown` on an established socket, waking
-blocked I/O without concurrently closing or reusing its handle. It also
+blocked I/O without concurrently closing or reusing its handle. POSIX `poll`
+reports that local shutdown immediately; Winsock `select` does not, so Windows
+waits observe the flag at their next bounded wait slice of at most 50 ms. It also
 invalidates an idle application connection. `Disconnect()` performs the same
 cancellation and immediately releases an idle connection; an active request or
 connect releases its own stream on return. A subsequent `Connect` clears the
