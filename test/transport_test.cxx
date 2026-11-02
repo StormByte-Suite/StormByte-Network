@@ -281,6 +281,56 @@ int test_connect_pending_deadline_and_cancellation() {
 // Partial I/O
 // -------------------
 
+int test_disconnect_without_fixed_delay() {
+	std::chrono::steady_clock::duration elapsed{};
+	for (int index = 0; index < 3; ++index) {
+		PeerFixture fixture;
+		fixture.Connect();
+		const auto start = std::chrono::steady_clock::now();
+		fixture.client.Disconnect();
+		elapsed += std::chrono::steady_clock::now() - start;
+	}
+	ASSERT_TRUE(elapsed < 200ms);
+	return 0;
+}
+
+int test_interrupt_and_close_are_serialized() {
+	for (int index = 0; index < 32; ++index) {
+		PeerFixture fixture;
+		fixture.Connect();
+		Safe::Atomic<bool> done{false};
+		std::jthread interrupt([&] {
+			while (!done.load(Safe::MemoryOrder::Acquire))
+				fixture.client.Interrupt();
+		});
+		fixture.client.Disconnect();
+		done.store(true, Safe::MemoryOrder::Release);
+		interrupt.join();
+		ASSERT_TRUE(fixture.client.Status() == Connection::Status::Disconnected);
+		ASSERT_TRUE(fixture.client.Handle() == static_cast<Connection::HandlerType>(-1));
+	}
+	return 0;
+}
+
+int test_interrupt_wakes_read_without_releasing_handle() {
+	PeerFixture fixture;
+	fixture.Connect();
+	const auto handle = fixture.client.Handle();
+	Socket::OperationResult result;
+	const auto start = std::chrono::steady_clock::now();
+	std::jthread receive([&] {
+		result = Socket::WaitReadable(handle, {start + 2s});
+	});
+	fixture.client.Interrupt();
+	receive.join();
+	ASSERT_TRUE(result.state == Socket::OperationState::Complete);
+	ASSERT_TRUE(std::chrono::steady_clock::now() - start < 500ms);
+	ASSERT_TRUE(fixture.client.Handle() == handle);
+	std::array<std::byte, 1> bytes{};
+	ASSERT_TRUE(fixture.client.ReadSome(bytes).state == Socket::OperationState::PeerClosed);
+	return 0;
+}
+
 int test_partial_read_states() {
 	PeerFixture fixture;
 	std::array<std::byte, 8> buffer{};
@@ -530,6 +580,9 @@ int main() {
 	// -------------------
 	// Partial I/O
 	// -------------------
+	failures += test_disconnect_without_fixed_delay();
+	failures += test_interrupt_and_close_are_serialized();
+	failures += test_interrupt_wakes_read_without_releasing_handle();
 	failures += test_partial_read_states();
 	failures += test_partial_read_transport_error();
 	failures += test_send_cancelled_with_progress();
@@ -544,9 +597,9 @@ int main() {
 	failures += test_resolution_preflight_and_error();
 	if (failures == 0)
 #ifdef LINUX
-		std::cout << "15 focused transport cases passed\n";
+		std::cout << "18 focused transport cases passed\n";
 #else
-		std::cout << "14 focused transport cases passed (Linux backlog test not applicable)\n";
+		std::cout << "17 focused transport cases passed (Linux backlog test not applicable)\n";
 #endif
 	return failures;
 }

@@ -50,6 +50,7 @@
 #include <StormByte/network/exception.hxx>
 #include <StormByte/network/typedefs.hxx>
 #include <StormByte/safe/atomic.hxx>
+#include <StormByte/safe/mutex.hxx>
 #include <StormByte/safe/pointers.hxx>
 #include <StormByte/safe/string.hxx>
 
@@ -131,6 +132,12 @@ namespace StormByte {
 					virtual void Disconnect() noexcept;
 
 					/**
+					 * @brief Wake I/O without releasing or replacing the native handle.
+					 * @details May run concurrently with I/O and close, not socket moves or connect.
+					 */
+					void Interrupt() noexcept;
+
+					/**
 					 * @brief Current connection status.
 					 * @return Status.
 					 */
@@ -179,6 +186,7 @@ namespace StormByte {
 					Connection::Protocol m_protocol;						///< Protocol
 					StormByte::Safe::Atomic<Connection::Status> m_status;	///< Status
 					Connection::HandlerType m_handle;						///< Native handle
+					StormByte::Safe::Mutex m_interrupt_mutex;				///< Serializes shutdown against native close.
 					StormByte::Safe::Unique<Connection::Info> m_conn_info;	///< Peer info
 					StormByte::ByteSize m_mtu;								///< MTU in bytes
 					mutable StormByte::Safe::Shared<Logger::Log> m_logger;	///< Logger

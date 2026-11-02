@@ -128,14 +128,7 @@ void Socket::Disconnect() noexcept {
 		return;
 	}
 
-	if (HasHandle()) {
-#ifdef UNIX
-		shutdown(m_handle, SHUT_RDWR);
-#else
-		shutdown(m_handle, SD_BOTH);
-#endif
-		StormByte::System::ThisThread::Sleep(std::chrono::milliseconds(100));
-	}
+	Interrupt();
 
 	EnsureIsClosed();
 	m_conn_info.reset();
@@ -143,7 +136,19 @@ void Socket::Disconnect() noexcept {
 	m_logger << Logger::Level::LowLevel << "Disconnected socket " << std::string_view{m_UUID} << std::endl;
 }
 
+void Socket::Interrupt() noexcept {
+	StormByte::Safe::UniqueLock lock(m_interrupt_mutex);
+	if (HasHandle()) {
+#ifdef UNIX
+		shutdown(m_handle, SHUT_RDWR);
+#else
+		shutdown(m_handle, SD_BOTH);
+#endif
+	}
+}
+
 void Socket::EnsureIsClosed() noexcept {
+	StormByte::Safe::UniqueLock lock(m_interrupt_mutex);
 	if (!HasHandle())
 		return;
 	const auto handle = std::exchange(m_handle, static_cast<Connection::HandlerType>(-1));

@@ -7,15 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.0.1...HEAD
+[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.1.0...HEAD
 
-## [3.0.1] - 2026-11-02
+## [3.1.0] - 2026-11-02
 
 ### Changed
 
 - Bundled builds use the refreshed StormByte Base 2.2.3, Buffer 2.0.6, Crypto 2.3.1, Logger 2.0.6 and System 2.1.3 releases, including their final audit fixes and corrected bundled TLS trust-store initialization.
 
-[3.0.1]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.0.0...3.0.1
+### Fixed
+
+- Serialize native socket shutdown against close, so cancellation can wake I/O without racing handle reuse. Remove the unconditional 100 ms delay on socket disconnection; shutdown followed by close does not require a sleep.
+
+[3.1.0]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.0.0...3.1.0
 
 ## Known issues / TODO
 
