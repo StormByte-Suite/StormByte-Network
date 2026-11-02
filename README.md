@@ -9,7 +9,7 @@
 
 StormByte-Network is the C++26 networking module of the [StormByte](https://suite.stormbyte.org/StormByte) suite.
 
-It depends on [StormByte Base 2.2.2](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2), [StormByte Buffer 2.0.5](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5), [StormByte Crypto 2.3.0](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/2.3.0), [StormByte Logger 2.0.5](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5), and [StormByte System 2.1.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2).
+It depends on [StormByte Base 2.2.3](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.3), [StormByte Buffer 2.0.6](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.6), [StormByte Crypto 2.3.1](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/2.3.1), [StormByte Logger 2.0.6](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.6), and [StormByte System 2.1.3](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.3).
 
 It is not a thin socket wrapper. You inherit `Client` or `Server`, define packets, and optionally configure authenticated Crypto TLS. POSIX and Winsock, framing, event-driven I/O and bounded packet processing stay private.
 
@@ -54,7 +54,7 @@ cmake --build build-install -j
 cmake --install build-install
 ```
 
-`BUILD_SHARED_LIBS` defaults to `ON`; use `-DBUILD_SHARED_LIBS=OFF` for a static build. `WITH_NGHTTP2` defaults to `BUNDLED`, which builds the pinned nghttp2 1.70.0 submodule as a private static dependency; `SYSTEM` uses an installed nghttp2 and fails explicitly if its headers/library are missing. Initialize source dependencies with `git submodule update --init --recursive`. Needs [StormByte-BuildMaster](https://github.com/StormByte-Suite/StormByte-BuildMaster) >= 2.1.3. Configure downloads the StormByte release archives in BUNDLED mode, including Crypto 2.3.0 for TLS. There are no StormByte source submodules. BuildMaster is the installed package when it is >= 2.1.3, otherwise the `buildmaster` submodule. `-DENABLE_LTO=ON` and `-DENABLE_PGO=ON` match the release builds. macOS is Apple Clang only.
+`BUILD_SHARED_LIBS` defaults to `ON`; use `-DBUILD_SHARED_LIBS=OFF` for a static build. `WITH_NGHTTP2` defaults to `BUNDLED`, which builds the pinned nghttp2 1.70.0 submodule as a private static dependency; `SYSTEM` uses an installed nghttp2 and fails explicitly if its headers/library are missing. Initialize source dependencies with `git submodule update --init --recursive`. Needs [StormByte-BuildMaster](https://github.com/StormByte-Suite/StormByte-BuildMaster) >= 2.1.3. Configure downloads the StormByte release archives in BUNDLED mode, including Crypto 2.3.1 for TLS. There are no StormByte source submodules. BuildMaster is the installed package when it is >= 2.1.3, otherwise the `buildmaster` submodule. `-DENABLE_LTO=ON` and `-DENABLE_PGO=ON` match the release builds. macOS is Apple Clang only.
 
 ### Private TLS transport
 
@@ -110,11 +110,11 @@ These examples use `ccache`; install it or omit the two compiler-launcher option
 
 | Dependency | Required Version | Role |
 |------------|------------------|------|
-| [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2) | [2.2.2](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.2) | Expected, Safe ownership/containers/synchronization/threads, Size, ByteSize, visibility |
-| [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5) | [2.0.5](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.5) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
-| [StormByte-Crypto](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/2.3.0) | [2.3.0](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/2.3.0) | Buffer-driven TLS 1.3 sessions, certificate verification and trust policies |
-| [StormByte-Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5) | [2.0.5](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.5) | Diagnostics |
-| [StormByte-System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2) | [2.1.2](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.2) | Calling-thread utilities |
+| [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.3) | [2.2.3](https://github.com/StormByte-Suite/StormByte/releases/tag/2.2.3) | Expected, Safe ownership/containers/synchronization/threads, Size, ByteSize, visibility |
+| [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.6) | [2.0.6](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/2.0.6) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
+| [StormByte-Crypto](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/2.3.1) | [2.3.1](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/2.3.1) | Buffer-driven TLS 1.3 sessions, certificate verification and trust policies |
+| [StormByte-Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.6) | [2.0.6](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/2.0.6) | Diagnostics |
+| [StormByte-System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.3) | [2.1.3](https://github.com/StormByte-Suite/StormByte-System/releases/tag/2.1.3) | Calling-thread utilities |
 | [nghttp2](https://github.com/nghttp2/nghttp2) | 1.70.0 when bundled | Private HTTP/2 protocol engine; `WITH_NGHTTP2=BUNDLED` is the default, `SYSTEM` uses an installed library |
 
 ## The rest of the suite

@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### TODO
+[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.0.1...HEAD
+
+## [3.0.1] - 2026-11-02
+
+### Changed
+
+- Bundled builds use the refreshed StormByte Base 2.2.3, Buffer 2.0.6, Crypto 2.3.1, Logger 2.0.6 and System 2.1.3 releases, including their final audit fixes and corrected bundled TLS trust-store initialization.
+
+[3.0.1]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.0.0...3.0.1
+
+## Known issues / TODO
 
 - Missing deadlines on the request/response `Client` path. Internet clients
   (for example a GUI talking to a remote licensing server over TLS) cannot tell
