@@ -1533,6 +1533,94 @@ int test_stop_requested_by_handler() {
 }
 
 // -------------------
+// Operation
+// -------------------
+
+int test_controlled_request_and_reconnect() {
+	for (const bool tls: {false, true}) {
+		::Test::Server server(logger);
+		::Test::Client client(logger);
+		if (!tls) {
+			ASSERT_TRUE(server.DisableTLS());
+			ASSERT_TRUE(client.DisableTLS());
+		}
+		ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+		ASSERT_TRUE(client.Net::Client::Connect(Connection::Protocol::IPv4, HOST, PORT, std::chrono::seconds{2}));
+		const std::string text(128 * 1024, 'x');
+		::Test::Packet::EchoText request(text);
+		const auto result = client.Send(request, std::chrono::seconds{2});
+		ASSERT_TRUE(result);
+		const auto reply = SB::Safe::DynamicPointerCast<::Test::Packet::ReplyText>(*result);
+		ASSERT_NOT_NULL(reply);
+		ASSERT_EQUAL(text, reply->GetText());
+		const auto stopped = client.Send(::Test::Packet::SlowRequest{}, std::chrono::milliseconds{50});
+		ASSERT_FALSE(stopped);
+		ASSERT_TRUE(*stopped.error() == Net::Client::Error::TimedOut);
+		ASSERT_TRUE(client.Status() == Connection::Status::Disconnected);
+		ASSERT_TRUE(client.Net::Client::Connect(Connection::Protocol::IPv4, HOST, PORT, std::chrono::seconds{2}));
+		ASSERT_TRUE(client.RequestPing());
+		client.Disconnect();
+		server.Disconnect();
+	}
+	return 0;
+}
+
+int test_loopback_request_latency() {
+	for (const bool tls: {false, true}) {
+		::Test::Server server(logger);
+		::Test::Client client(logger);
+		if (!tls) {
+			ASSERT_TRUE(server.DisableTLS());
+			ASSERT_TRUE(client.DisableTLS());
+		}
+		ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+		ASSERT_TRUE(client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+		std::chrono::microseconds minimum = std::chrono::microseconds::max();
+		std::chrono::microseconds maximum{0};
+		std::chrono::microseconds total{0};
+		for (int index = 0; index < 128; ++index) {
+			const auto start = std::chrono::steady_clock::now();
+			ASSERT_TRUE(client.RequestPing());
+			const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::steady_clock::now() - start);
+			minimum = std::min(minimum, elapsed);
+			maximum = std::max(maximum, elapsed);
+			total += elapsed;
+		}
+		std::cout << "LOOPBACK " << (tls ? "TLS" : "plain") << " n=128 min="
+			<< minimum.count() << " mean=" << total.count() / 128 << " max=" << maximum.count() << " us\n";
+		ASSERT_TRUE(maximum < std::chrono::milliseconds{500});
+		client.Disconnect();
+		server.Disconnect();
+	}
+	return 0;
+}
+
+int test_tls_cancel_pending_response() {
+	::Test::Server server(logger);
+	::Test::Client client(logger);
+	ASSERT_TRUE(server.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	ASSERT_TRUE(client.Connect(Connection::Protocol::IPv4, HOST, PORT));
+	bool cancelled = false;
+	std::jthread request([&] {
+		const auto result = client.Send(::Test::Packet::SlowRequest{}, std::chrono::seconds{5});
+		cancelled = !result && *result.error() == Net::Client::Error::Cancelled;
+	});
+	std::this_thread::sleep_for(std::chrono::milliseconds{50});
+	const auto start = std::chrono::steady_clock::now();
+	client.Cancel();
+	request.join();
+	ASSERT_TRUE(cancelled);
+	ASSERT_TRUE(std::chrono::steady_clock::now() - start < std::chrono::milliseconds{400});
+	ASSERT_TRUE(client.Status() == Connection::Status::Disconnected);
+	ASSERT_TRUE(client.Net::Client::Connect(Connection::Protocol::IPv4, HOST, PORT, std::chrono::seconds{2}));
+	ASSERT_TRUE(client.RequestPing());
+	client.Disconnect();
+	server.Disconnect();
+	return 0;
+}
+
+// -------------------
 // Ownership
 // -------------------
 int test_deserializer_function_copy() {
@@ -2138,7 +2226,11 @@ int test_telemetry_snapshots_and_lifetime() {
 	return 0;
 }
 
-int main() {
+int main(int argc, char** argv) {
+	if (argc == 2 && std::string_view{argv[1]} == "--latency")
+		return test_loopback_request_latency();
+	if (argc == 2 && std::string_view{argv[1]} == "--controlled")
+		return test_controlled_request_and_reconnect() + test_tls_cancel_pending_response();
 	int result = 0;
 
 	// -------------------
@@ -2162,6 +2254,13 @@ int main() {
 	result += test_shutdown_with_pending_task();
 	result += test_slow_handler_does_not_block_other_clients();
 	result += test_stop_requested_by_handler();
+
+	// -------------------
+	// Operation
+	// -------------------
+	result += test_controlled_request_and_reconnect();
+	result += test_loopback_request_latency();
+	result += test_tls_cancel_pending_response();
 
 	// -------------------
 	// Ownership

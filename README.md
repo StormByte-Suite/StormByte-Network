@@ -137,7 +137,7 @@ Under `StormByte::Network`:
 
 | Type | Role |
 |------|------|
-| `Client` | Inherit; call `Send`; optionally configure TLS before connecting |
+| `Client` / `Client::Error` | Inherit; typed total-budget `Connect`/`Send`, thread-safe cancellation; optional TLS |
 | `Server` | Inherit; implement `ProcessClientPacket` |
 | `Transport::Packet` | Inherit; implement `DoSerialize` |
 | `Connection::Protocol` | IPv4 / IPv6 |
@@ -156,6 +156,75 @@ Public polymorphic and callback types are `MAYBE_SAFE`: safe ownership does not 
 Packet payloads use `StormByte::Safe::Binary`. Header-defined state, public and private, uses Safe containers, shared/unique ownership, synchronization, atomics and threads; standard borrowed views and scalars remain permitted. There is no ownership bridge through `std::shared_ptr`. `StormByte::Size` represents element counts and `StormByte::ByteSize` represents byte lengths and offsets, with explicit conversions at numeric and wire/OS boundaries. Do not interpret a container's element count as a byte length without accounting for its element type.
 
 The exact `STORMBYTE_DECLARE_MAYBE_SAFE` macro registers complete public types and appropriate private types. It carries a provider lifecycle contract, not a blanket certification: fields and allocation paths must comply, each constructor, assignment and destructor must be implemented or explicitly deleted, and moved-from objects must remain valid for cleanup. A derived type needs its own review; the base declaration does not cover arbitrary derived storage. PIMPL is reserved for native OS resources (sockets, `HANDLE`, `FILE*`) or external-library state, not for hiding Safe values or owning STL state. See [CODING_STYLE.md](CODING_STYLE.md) for the full contract.
+
+### Application request deadlines and cancellation
+
+The synchronous application client now has additive, typed overloads:
+
+```cpp
+auto connected = client.Connect(StormByte::Network::Connection::Protocol::IPv4,
+	"licensing.example", 443, std::chrono::seconds{5});
+if (!connected && *connected.error() == StormByte::Network::Client::Error::TimedOut) {
+	// DNS wait, TCP connect and TLS authentication share the same five seconds.
+}
+
+// Inside a derived client: Send remains protected.
+auto response = Send(packet, std::chrono::seconds{2});
+if (!response && *response.error() == StormByte::Network::Client::Error::Cancelled) {
+	// Another thread called Cancel() or Disconnect().
+}
+```
+
+Configure TLS and its expected server identity before connecting when the
+endpoint requires authentication; port 443 alone does not enable TLS.
+`Connect(..., timeout)` returns `Expected<void, Client::Error>` and
+`Send(packet, timeout)` returns `Expected<PacketPointer, Client::Error>`.
+Budgets use milliseconds: negative is `InvalidTimeout`, zero expires immediately,
+and `milliseconds::max()` explicitly opts out of expiry. Existing signatures
+remain available: the Boolean `Connect` uses a **ten-second total budget**,
+and the packet-handle `Send` keeps its legacy **unlimited** wait and empty-on-error
+result. Prefer the typed overloads for Internet-facing applications.
+
+One absolute deadline includes operation queueing, DNS caller waiting and every
+connect alternative, TLS handshake, the complete upload, opcode, size, payload,
+pipeline transformations and deserialization. Partial plaintext or TLS progress
+never restarts it. Typed failures distinguish expiry, cancellation, resolver
+busy, native transport/EOF, TLS authentication, invalid packet/policy, allocation
+and connection preconditions. A failed operation that consumed stream bytes
+discards the connection rather than retrying or replaying a partial frame.
+Invalid arguments or expiry before acquiring/using a stream do not destroy it.
+
+`Cancel()` is thread-safe against connect/request I/O and status queries: it sets
+a sticky flag and calls native `shutdown` on an established socket, waking
+blocked I/O without concurrently closing or reusing its handle. It also
+invalidates an idle application connection. `Disconnect()` performs the same
+cancellation and immediately releases an idle connection; an active request or
+connect releases its own stream on return. A subsequent `Connect` clears the
+cancelled state and can reconnect. Remote-file planes keep their existing,
+independent lifecycle and are not cancelled by these application-stream calls.
+
+Requests/connects serialize internally, but queued calls retain their original
+deadline and can expire without waiting for the active request. Only `Cancel`,
+`Disconnect`, `Status` and `Telemetry` may be called reentrantly from packet
+callbacks. Moves, destruction and caller-owned callback state still need
+external lifetime synchronization; do not destroy a client while any call is
+running. Callbacks and pipeline work are synchronous and **cannot be preempted**:
+expiry/cancellation is reported on their return. Scheduler delays, allocation
+and native setup are not hard real-time guarantees.
+
+Each client retains one managed DNS slot. An OS `getaddrinfo` already running
+cannot be cancelled: timeout/cancellation stops caller waiting, not the lookup.
+The slot reports `ResolverBusy` until it finishes, and client/resolver destruction
+joins outstanding DNS work, potentially beyond the operation budget.
+
+If a derived class overrides the legacy `Connect`, C++ name hiding also applies
+to the new overload: expose it with `using StormByte::Network::Client::Connect`,
+or provide a timed wrapper that also performs your application's login flow.
+
+Loopback latency is regression-tested over 128 plaintext and 128 TLS pings.
+The previously reported approximately one-second round trip was **not reproduced**
+in the pre-change baseline (plaintext 115–878 µs, TLS 27–207 µs, five each), so no
+polling-interval root cause or speculative latency fix is claimed.
 
 ### HTTP and HTTPS client
 

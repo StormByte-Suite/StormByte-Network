@@ -11,49 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.1.0] - 2026-11-02
 
+### Added
+
+- Add typed `Client::Connect(..., std::chrono::milliseconds)` and protected `Send(packet, std::chrono::milliseconds)` overloads returning `Expected<..., Client::Error>`, with distinct timeout, cancellation, resolver-busy, TLS, transport, packet and precondition failures. Negative budgets are invalid, zero expires immediately and `milliseconds::max()` explicitly opts out.
+- Add thread-safe, sticky application-stream `Cancel()`. Native shutdown wakes blocked plaintext/TLS I/O; serialized operation owners release failed streams. Connect/request operations serialize without mixing responses, while queued operations can expire under their own original deadline. Preserve moves, reconnects, telemetry and independent remote-file lifetime.
+
 ### Changed
 
 - Bundled builds use the refreshed StormByte Base 2.2.3, Buffer 2.0.6, Crypto 2.3.1, Logger 2.0.6 and System 2.1.3 releases, including their final audit fixes and corrected bundled TLS trust-store initialization.
+- Application connects use the existing bounded managed resolver and nonblocking connection scheduler. One total budget covers DNS caller waiting, connection attempts and configurable TLS authentication; the legacy Boolean connect defaults to ten seconds total. The legacy packet-handle send remains unlimited and preserves empty-on-error behavior.
+- Investigate the reported approximately one-second loopback round trip with measured plaintext/TLS probes and add a 128-ping-per-mode latency regression. The pre-change baseline was already 115–878 µs plaintext and 27–207 µs TLS (five samples each), so no unconfirmed polling cause or latency fix is claimed.
 
 ### Fixed
 
 - Serialize native socket shutdown against close, so cancellation can wake I/O without racing handle reuse. Remove the unconditional 100 ms delay on socket disconnection; shutdown followed by close does not require a sleep.
+- Share one absolute request deadline across upload, opcode, size, payload and TLS partial I/O instead of restarting waits on progress. Timeout, cancellation, truncated frames and callback failures discard the affected stream without replaying packets.
+- Synchronize client connection publication/status, make `Disconnect()` wake an active legacy or timed request, support cancellation/disconnection from packet callbacks without deadlock, and clean up streams on exceptional exits.
 
 [3.1.0]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.0.0...3.1.0
 
-## Known issues / TODO
+## Known limits
 
-- Missing deadlines on the request/response `Client` path. Internet clients
-  (for example a GUI talking to a remote licensing server over TLS) cannot tell
-  a slow peer from a hung one and currently block forever. The deadline and
-  cancellation model already used by `HTTP::Client` and the remote-file plane
-  should also cover:
-  - `Client::Send` (`lib/public/StormByte/network/client.cxx`): after
-    `Endpoint::Reply` it waits in `connection->Receive()` with no limit. The
-    per-request deadline should be configurable (for example
-    `Send(packet, timeout)` or a client-wide default) and a timeout should be
-    reported as a distinct error instead of an empty packet.
-  - `Transport::Frame::ProcessInput`
-    (`lib/private/StormByte/network/transport/frame.cxx`): opcode, size and
-    payload reads call `Receive`/`ReceiveInto` with `timeout_seconds = 0`
-    (infinite), even though `Socket::Client::ReceiveLoop` already supports a
-    timeout. One deadline should span the whole frame, so a peer that dribbles
-    bytes cannot extend it indefinitely.
-  - `Client::Connect` → `Socket::Client::Connect(hostname, port)`
-    (`lib/private/StormByte/network/socket/client.cxx`): DNS resolution
-    (`Connection::Info::FromHost`) and `::connect()` are blocking and have no
-    deadline. It should reuse the `Resolver` + `OperationControl` overload that
-    `HTTP::Client` uses and accept a connect timeout.
-  - TLS handshake: `Socket::Client::StartTLS` hard-codes a 10 s deadline. It
-    should be configurable, ideally as part of the same connect deadline.
-  - Cross-thread cancellation: `Client::Disconnect()` only resets
-    `m_connection`, but `Send` holds its own copy. A `Disconnect` from another
-    thread therefore does not unblock a pending receive, and the unsynchronized
-    access to `m_connection` is a data race. A thread-safe `Cancel()` is needed
-    that shuts the socket down (`shutdown()`) and wakes any blocked operation.
-- Investigate the ~1 s round-trip latency observed for a single small
-  request/response on localhost (possibly the `WaitForData` polling interval on
-  the client or server receive path).
+- OS DNS already in progress cannot be cancelled. A timed-out/cancelled lookup
+  occupies its client's single managed slot until completion, and destruction
+  joins it, potentially beyond the operation budget.
+- Synchronous application callbacks and pipeline work cannot be preempted;
+  deadlines/cancellation are checked on their return. Moves/destruction still
+  require external synchronization with all active client calls.
 
 ## [3.0.0] - 2026-11-01
 

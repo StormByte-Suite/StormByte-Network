@@ -40,6 +40,7 @@
 
 #include <StormByte/network/client.hxx>
 #include <StormByte/network/connection/client.hxx>
+#include <StormByte/network/connection/resolver.hxx>
 #include <StormByte/network/remote_file_protocol.hxx>
 #include <StormByte/network/socket/client.hxx>
 #include <StormByte/network/transport/frame.hxx>
@@ -49,13 +50,79 @@
 
 #include <memory>
 #include <mutex>
+#include <new>
 #include <string>
+#include <thread>
 #include <utility>
 
 using namespace StormByte;
 using namespace StormByte::Network;
 
 namespace {
+	/**
+	 * @brief Discard a non-replayable stream if a callback or allocation unwinds.
+	 */
+	struct OperationCleanup {
+		Client* client; ///< Synchronous borrowed owner.
+		void (*cleanup)(Client*) noexcept; ///< Provider cleanup, cleared after completion.
+
+		/**
+		 * @brief Release an abandoned operation without suppressing its exception.
+		 */
+		~OperationCleanup() noexcept {
+			if (cleanup)
+				cleanup(client);
+		}
+	};
+
+	/**
+	 * @brief Convert a native outcome while preserving cancellation over socket EOF.
+	 * @param state Native outcome.
+	 * @param control Original operation control.
+	 * @return Typed application-client failure.
+	 */
+	Client::Error ClientFailure(Socket::OperationState state, const Socket::OperationControl& control) noexcept {
+		const auto stopped = control.Check();
+		if (stopped != Socket::OperationState::Complete)
+			state = stopped;
+		switch (state) {
+			case Socket::OperationState::Cancelled: return Client::Error::Cancelled;
+			case Socket::OperationState::TimedOut: return Client::Error::TimedOut;
+			case Socket::OperationState::Busy: return Client::Error::ResolverBusy;
+			default: return Client::Error::Transport;
+		}
+	}
+
+	/**
+	 * @brief Build an overflow-safe absolute budget before serializing operations.
+	 * @param timeout Nonnegative duration or the unlimited sentinel.
+	 * @param cancelled Borrowed sticky stream cancellation flag.
+	 * @return Absolute deadline and cancellation.
+	 */
+	Socket::OperationControl ClientControl(std::chrono::milliseconds timeout, const Safe::Atomic<bool>& cancelled) noexcept {
+		const auto now = std::chrono::steady_clock::now();
+		const auto room = std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::time_point::max() - now);
+		return {timeout >= room ? std::chrono::steady_clock::time_point::max() : now + timeout, &cancelled};
+	}
+
+	/**
+	 * @brief Include serialized-operation queueing in the caller's original budget.
+	 * @param lock Deferred operation lock, acquired only on successful return.
+	 * @param control Borrowed operation budget.
+	 * @return Completion, cancellation or expiry without touching another operation.
+	 */
+	Socket::OperationState LockOperation(std::unique_lock<Safe::Mutex>& lock, const Socket::OperationControl& control) {
+		for (;;) {
+			const auto state = control.Check();
+			if (state != Socket::OperationState::Complete)
+				return state;
+			if (lock.try_lock())
+				return Socket::OperationState::Complete;
+			std::this_thread::sleep_for(std::chrono::milliseconds{1});
+		}
+	}
+
 	/**
 	 * @brief Own a mount-failure callback context entirely inside Network.
 	 * @tparam Callable Copyable callback target.
@@ -88,6 +155,7 @@ namespace {
 Client::Client(DeserializePacketFunction deserialize_packet_function,
 	StormByte::Safe::Shared<Logger::Log> logger):
 	Endpoint(std::move(deserialize_packet_function), std::move(logger)),
+	m_resolver(Safe::MakeShared<Connection::Resolver>()),
 	m_telemetry(Safe::MakeShared<ClientTelemetry>()) {}
 
 Client::~Client() noexcept {
@@ -96,6 +164,9 @@ Client::~Client() noexcept {
 
 Client::Client(Client&& other) noexcept:
 	Endpoint(std::move(other)),
+	m_cancelled(other.m_cancelled.load(Safe::MemoryOrder::Acquire)),
+	m_active_socket(std::move(other.m_active_socket)),
+	m_resolver(std::move(other.m_resolver)),
 	m_tls_configuration(std::move(other.m_tls_configuration)),
 	m_connection(std::move(other.m_connection)),
 	m_remote_address(std::move(other.m_remote_address)),
@@ -113,6 +184,9 @@ Client& Client::operator=(Client&& other) noexcept {
 			m_remote_file_plane->Stop();
 	}
 	Endpoint::operator=(std::move(other));
+	m_cancelled.store(other.m_cancelled.load(Safe::MemoryOrder::Acquire), Safe::MemoryOrder::Release);
+	m_active_socket = std::move(other.m_active_socket);
+	m_resolver = std::move(other.m_resolver);
 	m_tls_configuration = std::move(other.m_tls_configuration);
 	m_connection = std::move(other.m_connection);
 	m_remote_address = std::move(other.m_remote_address);
@@ -123,33 +197,71 @@ Client& Client::operator=(Client&& other) noexcept {
 }
 
 bool Client::Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) {
-	try {
-		if (!m_telemetry)
-			m_telemetry = Safe::MakeShared<ClientTelemetry>();
-		m_telemetry->RecordConnectionAttempt();
-		if (m_connection) {
-			m_telemetry->RecordConnectionFailed();
-			m_logger << Logger::Level::Error << "Client is already connected." << std::endl;
-			return false;
-		}
+	const auto result = Connect(protocol, address, port, std::chrono::seconds{10});
+	if (!result)
+		m_logger << Logger::Level::Error << "Client connection failed (error "
+			<< static_cast<int>(*result.error()) << ")." << std::endl;
+	return static_cast<bool>(result);
+}
 
-		auto socket = Socket::Client::Create(protocol, m_logger);
-		if (!socket || !socket->Connect(address, port)) {
+Expected<void, Client::Error> Client::Connect(const Connection::Protocol& protocol, std::string_view address,
+	unsigned short port, std::chrono::milliseconds timeout) {
+	if (timeout.count() < 0)
+		return Unexpected(Error::InvalidTimeout);
+	const auto control = ClientControl(timeout, m_cancelled);
+	std::unique_lock operation(m_operation_mutex, std::defer_lock);
+	const auto queued = LockOperation(operation, {control.deadline});
+	if (queued != Socket::OperationState::Complete)
+		return Unexpected(ClientFailure(queued, {control.deadline}));
+	if (m_cancelled.load(Safe::MemoryOrder::Acquire))
+		DropConnection();
+	{
+		std::scoped_lock state(m_state_mutex);
+		if (m_connection)
+			return Unexpected(Error::AlreadyConnected);
+		m_cancelled.store(false, Safe::MemoryOrder::Release);
+	}
+	OperationCleanup cleanup{this, [](Client* client) noexcept { client->DropConnection(); }};
+	auto fail = [&](Error error) -> Expected<void, Error> {
+		const auto state = control.Check();
+		if (state != Socket::OperationState::Complete)
+			error = ClientFailure(state, control);
+		DropConnection();
+		if (m_telemetry)
 			m_telemetry->RecordConnectionFailed();
-			m_logger << Logger::Level::Error << "Failed to connect to " << std::string_view{address} << ":" << port
-					<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
-			return false;
+		return Unexpected(error);
+	};
+	try {
+		{
+			std::scoped_lock state(m_state_mutex);
+			if (!m_telemetry)
+				m_telemetry = Safe::MakeShared<ClientTelemetry>();
+		}
+		if (!m_resolver)
+			m_resolver = Safe::MakeShared<Connection::Resolver>();
+		m_telemetry->RecordConnectionAttempt();
+		auto socket = Socket::Client::Create(protocol, m_logger);
+		if (!socket)
+			return fail(Error::Allocation);
+		auto connected = socket->Connect(address, port, *m_resolver, control);
+		if (connected.state != Socket::OperationState::Complete)
+			return fail(ClientFailure(connected.state, control));
+		{
+			std::scoped_lock state(m_state_mutex);
+			m_active_socket = socket;
 		}
 		if (m_tls_configuration) {
 			auto session = m_tls_configuration->Create();
-			if (!session || !socket->StartTLS(std::move(session.value()), true)) {
-				socket->Disconnect();
-				m_telemetry->RecordConnectionFailed();
-				return false;
+			if (!session)
+				return fail(Error::TLS);
+			const auto handshake = socket->StartTLS(std::move(*session), control);
+			if (handshake.state != Socket::OperationState::Complete) {
+				const auto error = ClientFailure(handshake.state, control);
+				return fail(error == Error::Transport ? Error::TLS : error);
 			}
 		}
 
-		auto connection = Safe::MakeShared<Connection::Client>(std::move(socket), Buffer::Pipeline{}, Buffer::Pipeline{});
+		auto connection = Safe::MakeShared<Connection::Client>(socket, Buffer::Pipeline{}, Buffer::Pipeline{});
 		m_remote_address = address;
 		m_protocol = protocol;
 		{
@@ -158,62 +270,144 @@ bool Client::Connect(const Connection::Protocol& protocol, std::string_view addr
 				m_remote_file_plane->Stop();
 			m_remote_file_plane.reset();
 		}
-		m_connection = std::move(connection);
+		{
+			std::scoped_lock state(m_state_mutex);
+			if (control.Check() == Socket::OperationState::Complete)
+				m_connection = std::move(connection);
+		}
+		if (!m_connection)
+			return fail(ClientFailure(control.Check(), control));
 		m_telemetry->RecordConnectionEstablished();
 		m_logger << Logger::Level::LowLevel << "Successfully connected to " << address << ":" << port
 				<< " using protocol " << Connection::ProtocolString(protocol) << std::endl;
-		return true;
-	} catch (...) {
-		if (m_telemetry)
-			m_telemetry->RecordConnectionFailed();
-		m_logger << Logger::Level::Error << "Failed to initialize client connection state." << std::endl;
-		return false;
+		cleanup.cleanup = nullptr;
+		return {};
+	} catch (const std::bad_alloc&) {
+		return fail(Error::Allocation);
 	}
+}
+
+void Client::Cancel() noexcept {
+	std::scoped_lock state(m_state_mutex);
+	m_cancelled.store(true, Safe::MemoryOrder::Release);
+	if (m_active_socket)
+		m_active_socket->Interrupt();
+}
+
+void Client::DropConnection() noexcept {
+	Safe::Shared<Socket::Client> socket;
+	{
+		std::scoped_lock state(m_state_mutex);
+		socket = std::move(m_active_socket);
+		const bool connected = static_cast<bool>(m_connection);
+		m_connection.reset();
+		if (connected && m_telemetry)
+			m_telemetry->RecordDisconnected();
+	}
+	if (socket)
+		socket->Disconnect();
 }
 
 void Client::Disconnect() noexcept {
-	if (m_connection) {
-		m_logger << Logger::Level::LowLevel << "Disconnecting client." << std::endl;
-		m_connection.reset();
-		if (m_telemetry)
-			m_telemetry->RecordDisconnected();
-	}
+	Cancel();
+	std::unique_lock operation(m_operation_mutex, std::try_to_lock);
+	if (operation.owns_lock())
+		DropConnection();
 }
 
 Connection::Status Client::Status() const noexcept {
+	std::scoped_lock state(m_state_mutex);
+	if (m_cancelled.load(Safe::MemoryOrder::Acquire))
+		return Connection::Status::Disconnected;
 	return m_connection ? m_connection->Status() : Connection::Status::Disconnected;
 }
 
 PacketPointer Client::Send(const Transport::Packet& packet) noexcept {
-	if (!m_connection)
-		return {};
-	auto connection = m_connection;
-	const std::string_view uuid = connection->Socket()->UUID();
-	if (!AllowOutgoingOpcode(uuid, packet.Opcode())) {
-		Disconnect();
+	try {
+		auto result = Send(packet, std::chrono::milliseconds::max());
+		if (!result)
+			m_logger << Logger::Level::Error << "Client request failed (error "
+				<< static_cast<int>(*result.error()) << ")." << std::endl;
+		return result ? std::move(*result) : PacketPointer{};
+	} catch (const std::bad_alloc&) {
+		m_logger << Logger::Level::Error << "Client request allocation failed." << std::endl;
 		return {};
 	}
+}
+
+Expected<PacketPointer, Client::Error> Client::Send(const Transport::Packet& packet, std::chrono::milliseconds timeout) {
+	if (timeout.count() < 0)
+		return Unexpected(Error::InvalidTimeout);
+	const auto control = ClientControl(timeout, m_cancelled);
+	std::unique_lock operation(m_operation_mutex, std::defer_lock);
+	const auto queued = LockOperation(operation, control);
+	if (queued != Socket::OperationState::Complete)
+		return Unexpected(ClientFailure(queued, control));
+	if (control.Check() != Socket::OperationState::Complete) {
+		if (m_cancelled.load(Safe::MemoryOrder::Acquire))
+			DropConnection();
+		return Unexpected(ClientFailure(control.Check(), control));
+	}
+	if (!m_connection)
+		return Unexpected(Error::NotConnected);
+	auto connection = m_connection;
+	OperationCleanup cleanup{this, [](Client* client) noexcept { client->DropConnection(); }};
+	const std::string_view uuid = connection->Socket()->UUID();
 	if (m_telemetry)
 		m_telemetry->RecordRequest();
 	auto sample = m_telemetry ? m_telemetry->MeasureRequest() : StormByte::Clock::Sample{};
-	PacketPointer response;
-	if (Endpoint::Reply(connection, packet)) {
-		auto frame = connection->Receive(m_logger);
-		if (!AllowIncomingOpcode(uuid, frame.Opcode()) || !frame.DecodeInput(connection->InputPipeline(), m_logger))
-			Disconnect();
-		else
-			response = frame.ProcessPacket(m_deserialize_packet_function, m_logger);
+	auto finish = [&](Expected<PacketPointer, Error> result) {
+		const auto state = control.Check();
+		if (state != Socket::OperationState::Complete)
+			result = Unexpected(ClientFailure(state, control));
+		if (!result)
+			DropConnection();
+		if (m_telemetry)
+			m_telemetry->RecordRequestResult(sample.Stop(), static_cast<bool>(result));
+		cleanup.cleanup = nullptr;
+		return result;
+	};
+	try {
+		if (!AllowOutgoingOpcode(uuid, packet.Opcode()))
+			return finish(Unexpected(Error::Packet));
+		Transport::Frame outgoing(packet);
+		auto bytes = outgoing.ProcessOutput(connection->OutputPipeline(), m_logger);
+		while (!bytes.EoF()) {
+			if (control.Check() != Socket::OperationState::Complete)
+				return finish(Unexpected(ClientFailure(control.Check(), control)));
+			Safe::Binary chunk;
+			if (!bytes.Extract(ByteSize{0}, chunk))
+				return finish(Unexpected(Error::Packet));
+			if (chunk.empty())
+				continue;
+			const auto sent = connection->Socket()->SendApplication(chunk.span(), control);
+			if (sent.state != Socket::OperationState::Complete)
+				return finish(Unexpected(ClientFailure(sent.state, control)));
+		}
+		if (!bytes.IsReadable())
+			return finish(Unexpected(Error::Packet));
+		auto frame = Transport::Frame::ProcessInput(connection->Socket(), control);
+		if (!frame)
+			return finish(Unexpected(ClientFailure(*frame.error(), control)));
+		if (!AllowIncomingOpcode(uuid, frame->Opcode()) || !frame->DecodeInput(connection->InputPipeline(), m_logger))
+			return finish(Unexpected(Error::Packet));
+		if (control.Check() != Socket::OperationState::Complete)
+			return finish(Unexpected(ClientFailure(control.Check(), control)));
+		auto response = frame->ProcessPacket(m_deserialize_packet_function, m_logger);
+		if (control.Check() != Socket::OperationState::Complete)
+			return finish(Unexpected(ClientFailure(control.Check(), control)));
+		if (!response)
+			return finish(Unexpected(Error::Packet));
+		return finish(std::move(response));
+	} catch (const std::bad_alloc&) {
+		return finish(Unexpected(Error::Allocation));
 	}
-	if (!response)
-		Disconnect();
-	if (m_telemetry)
-		m_telemetry->RecordRequestResult(sample.Stop(), static_cast<bool>(response));
-	return response;
 }
 
 bool Client::ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
 	bool refresh_validation_time) noexcept {
 	try {
+		std::scoped_lock operation(m_operation_mutex);
 		std::scoped_lock lock(m_remote_file_mutex);
 		if (m_connection || m_remote_file_plane)
 			return false;
@@ -229,6 +423,7 @@ bool Client::ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
 }
 
 bool Client::DisableTLS() noexcept {
+	std::scoped_lock operation(m_operation_mutex);
 	std::scoped_lock lock(m_remote_file_mutex);
 	if (m_connection || m_remote_file_plane)
 		return false;
@@ -245,10 +440,12 @@ bool Client::AllowOutgoingOpcode(std::string_view, Transport::Packet::OpcodeType
 }
 
 StormByte::Safe::Shared<ClientTelemetry> Client::Telemetry() const noexcept {
+	std::scoped_lock state(m_state_mutex);
 	return m_telemetry;
 }
 
 RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mount) noexcept {
+	std::scoped_lock operation(m_operation_mutex);
 	if (mount.Result() != RemoteFileMount::Status::Authorized
 		|| mount.Mode() != RemoteFileMount::Access::Read || mount.Port() == 0
 		|| mount.MaximumTimeoutSeconds() < 3 || m_remote_address.empty()) {
@@ -312,6 +509,7 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 }
 
 RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mount) noexcept {
+	std::scoped_lock operation(m_operation_mutex);
 	if (mount.Result() != RemoteFileMount::Status::Authorized
 		|| mount.Mode() != RemoteFileMount::Access::Write || mount.Port() == 0
 		|| mount.MaximumTimeoutSeconds() < 3 || m_remote_address.empty()) {

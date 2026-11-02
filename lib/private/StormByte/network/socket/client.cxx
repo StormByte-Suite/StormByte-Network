@@ -172,6 +172,59 @@ bool Socket::Client::TLSReady() const noexcept {
 	return !m_tls_enabled || (m_tls.HandshakeComplete() && m_tls.Status() == Crypto::TLS::State::Open);
 }
 
+Socket::OperationResult Socket::Client::StartTLS(Crypto::TLS::Session session, const OperationControl& control) {
+	if (m_tls_enabled || session.Status() != Crypto::TLS::State::Handshaking)
+		return {OperationState::Error};
+	m_tls_enabled = true;
+	m_tls_pending = true;
+	m_tls = std::move(session);
+	m_tls_deadline = control.deadline;
+	const auto result = TLS::Handshake(*this, m_tls, control);
+	if (result.state == OperationState::Complete)
+		m_tls_pending = false;
+	return {result.state, result.bytes, result.native_error};
+}
+
+Socket::OperationResult Socket::Client::SendApplication(std::span<const std::byte> data,
+	const OperationControl& control) {
+	if (!m_tls_enabled)
+		return Send(data, control);
+	const auto result = TLS::Write(*this, m_tls, data, control);
+	return {result.state, result.bytes, result.native_error};
+}
+
+Socket::OperationResult Socket::Client::ReceiveApplication(ByteSize size, Safe::Binary& out,
+	const OperationControl& control) {
+	std::array<std::byte, 16384> bytes{};
+	ByteSize total{0};
+	while (total < size) {
+		const auto state = control.Check();
+		if (state != OperationState::Complete)
+			return {state, total};
+		const auto count = static_cast<std::size_t>(std::min(size - total, ByteSize{bytes.size()}));
+		OperationResult result;
+		if (m_tls_enabled) {
+			const auto read = TLS::Read(*this, m_tls, std::span{bytes}.first(count), control);
+			result = {read.state, read.bytes, read.native_error};
+		}
+		else {
+			result = ReadSome(std::span{bytes}.first(count));
+			if (result.state == OperationState::WouldBlock) {
+				result = WaitReadable(m_handle, control);
+				if (result.state == OperationState::Complete)
+					continue;
+			}
+		}
+		if (result.state != OperationState::Complete)
+			return {result.state, total, result.native_error};
+		if (result.bytes == 0)
+			return {OperationState::PeerClosed, total};
+		out.append(std::span{bytes}.first(static_cast<std::size_t>(result.bytes)));
+		total += result.bytes;
+	}
+	return {control.Check(), total};
+}
+
 bool Socket::Client::TLSHasOutput() const noexcept {
 	return m_tls_enabled && (!m_tls_output.empty() || m_tls_pending);
 }

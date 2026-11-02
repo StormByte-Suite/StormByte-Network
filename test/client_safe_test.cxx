@@ -179,8 +179,16 @@ int test_offline_operations() {
 
 int test_public_signatures() {
 	using Client = Network::Client;
-	static_assert(Type::SameAs<decltype(&Client::Connect), bool (Client::*)(const Network::Connection::Protocol&,
-		std::string_view, const unsigned short&)>);
+	using LegacyConnect = bool (Client::*)(const Network::Connection::Protocol&, std::string_view, const unsigned short&);
+	using TimedConnect = Expected<void, Client::Error> (Client::*)(const Network::Connection::Protocol&,
+		std::string_view, unsigned short, std::chrono::milliseconds);
+	using LegacySend = Network::PacketPointer (Client::*)(const Network::Transport::Packet&) noexcept;
+	using TimedSend = Expected<Network::PacketPointer, Client::Error> (Client::*)(const Network::Transport::Packet&, std::chrono::milliseconds);
+	static_assert(Type::SameAs<decltype(static_cast<LegacyConnect>(&Client::Connect)), LegacyConnect>);
+	static_assert(Type::SameAs<decltype(static_cast<TimedConnect>(&Client::Connect)), TimedConnect>);
+	static_assert(Type::SameAs<decltype(static_cast<LegacySend>(&ClientFixture::Send)), LegacySend>);
+	static_assert(Type::SameAs<decltype(static_cast<TimedSend>(&ClientFixture::Send)), TimedSend>);
+	static_assert(Type::SameAs<decltype(&Client::Cancel), void (Client::*)() noexcept>);
 	static_assert(Type::SameAs<decltype(&Client::ConfigureTLS),
 		bool (Client::*)(const Crypto::TLS::ClientConfiguration&, bool) noexcept>);
 	static_assert(Type::SameAs<decltype(&Client::DisableTLS), bool (Client::*)() noexcept>);

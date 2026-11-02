@@ -41,6 +41,7 @@
 #pragma once
 
 #include <StormByte/buffer/pipeline.hxx>
+#include <StormByte/network/socket/operation.hxx>
 #include <StormByte/network/transport/packet.hxx>
 #include <StormByte/network/typedefs.hxx>
 
@@ -123,7 +124,16 @@ namespace StormByte {
 					Frame& operator=(Frame&& other) noexcept;
 
 					/**
-					 * @brief Read one frame from the socket.
+					 * @brief Read an entire wire frame under the request's original budget.
+					 * @param client Connected socket.
+					 * @param control Total request deadline and cancellation.
+					 * @return Raw frame or explicit stop reason; partial frames cannot be retried.
+					 */
+					static Expected<Frame, Socket::OperationState> ProcessInput(
+						StormByte::Safe::Shared<Socket::Client> client, const Socket::OperationControl& control);
+
+					/**
+					 * @brief Read one frame from the socket using the legacy unlimited budget.
 					 * @param client Safe shared socket client.
 					 * @param in_pipeline Input pipeline.
 					 * @param logger Logger.

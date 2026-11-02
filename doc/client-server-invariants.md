@@ -4,10 +4,22 @@ This document records the observable behavior that the internal server redesign 
 
 ## Public Contract
 
-- `Client`, `Server`, `Endpoint`, packet factories, pipelines, `Send`, and `Reply` keep their public signatures.
+- `Client`, `Server`, `Endpoint`, packet factories, pipelines, `Send`, and `Reply` keep their legacy signatures; Network 3.1 adds typed, timed client overloads and `Cancel()`.
 - Client request/response calls remain synchronous to their caller.
 - `ProcessClientPacket(client_uuid, packet)` remains synchronous from the handler's point of view and keeps its current signature.
 - A response is sent only after the request packet has been fully received, deserialized, and processed.
+
+## Application Client Operations
+
+- One absolute `steady_clock` deadline covers serialized-operation admission, DNS caller waiting, TCP connect alternatives and TLS authentication, or the complete send/frame/read/transform/deserialize request path. Neither dribbled headers nor partial payload/TLS progress restarts it.
+- Negative budgets are invalid, zero expires before starting I/O and `milliseconds::max()` means unlimited. Legacy Boolean connect uses ten seconds total; legacy packet-handle send remains unlimited.
+- Timeout and cancellation are distinct `Client::Error` values, not empty response packets. EOF or an incomplete wire frame is a transport failure. Packet policy/transformation/deserialization failures remain isolated to the affected application stream.
+- `Cancel()` publishes a sticky flag and interrupts native I/O with shutdown; only the serialized operation owner closes the handle. Native close and interruption are mutually synchronized. A later connect discards a cancelled stream and resets cancellation.
+- `Disconnect()` never waits for a packet callback or active I/O owner. The active request/connect performs deferred cleanup, including exceptional exit. Idle disconnect releases immediately.
+- Connect and request calls serialize internally. Queueing counts toward the original budget and an expired queued request does not interrupt the active one.
+- Packet callbacks may call `Cancel`, `Disconnect`, `Status` and `Telemetry`, but must not reenter other client operations. No application callback can be preempted; check the original deadline/cancellation after it returns.
+- Moves/destruction require external synchronization with every call. The moved-to object retains its active connection, cancellation and managed DNS slot; moved-from clients remain disconnected and reusable.
+- Application cancellation leaves independent remote-file handles/planes alone. OS DNS work remains single-slot, non-detached and uncancellable until it completes; destruction joins it even beyond the caller budget.
 
 ## Current Server Lifecycle
 

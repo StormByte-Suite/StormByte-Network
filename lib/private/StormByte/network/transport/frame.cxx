@@ -147,6 +147,24 @@ Frame Frame::ProcessInput(StormByte::Safe::Shared<Socket::Client> client,
 	return FromWire(opcode, std::move(payload));
 }
 
+StormByte::Expected<Frame, Socket::OperationState> Frame::ProcessInput(
+	StormByte::Safe::Shared<Socket::Client> client, const Socket::OperationControl& control) {
+	StormByte::Safe::Binary header;
+	auto read = client->ReceiveApplication(
+		StormByte::ByteSize{sizeof(Packet::OpcodeType) + sizeof(std::size_t)}, header, control);
+	if (read.state != Socket::OperationState::Complete)
+		return StormByte::Unexpected(read.state);
+	const auto opcode = Serializable<Packet::OpcodeType>::Deserialize(header.span().first(sizeof(Packet::OpcodeType)));
+	const auto size = Serializable<std::size_t>::Deserialize(header.span().subspan(sizeof(Packet::OpcodeType)));
+	if (!opcode || !size)
+		return StormByte::Unexpected(Socket::OperationState::Error);
+	StormByte::Safe::Binary payload;
+	read = client->ReceiveApplication(StormByte::ByteSize{*size}, payload, control);
+	if (read.state != Socket::OperationState::Complete)
+		return StormByte::Unexpected(read.state);
+	return FromWire(*opcode, std::move(payload));
+}
+
 PacketPointer Frame::ProcessPacket(const DeserializePacketFunction& packet_fn,
 	StormByte::Safe::Shared<Logger::Log> logger) noexcept {
 	try {

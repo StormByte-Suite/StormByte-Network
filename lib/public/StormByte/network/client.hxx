@@ -45,6 +45,7 @@
 #include <StormByte/network/discovery.hxx>
 #include <StormByte/network/endpoint.hxx>
 #include <StormByte/network/remote_file.hxx>
+#include <StormByte/safe/atomic.hxx>
 #include <StormByte/safe/function.hxx>
 #include <StormByte/safe/mutex.hxx>
 #include <StormByte/safe/pointers.hxx>
@@ -73,6 +74,22 @@ namespace StormByte {
 			 * @brief Forward declaration of the connected client implementation.
 			 */
 			class Client;
+
+			/**
+			 * @brief Managed single-slot DNS resolver owned by Network.
+			 */
+			class Resolver;
+		}
+
+		/**
+		 * @namespace StormByte::Network::Socket
+		 * @brief Private native transport implementation.
+		 */
+		namespace Socket {
+			/**
+			 * @brief Native stream owner, never exposed by the public client.
+			 */
+			class Client;
 		}
 
 		/**
@@ -99,11 +116,29 @@ namespace StormByte {
 			 * type through its provider's Safe factory when sharing ownership across
 			 * modules; the base registration does not certify derived state. Keep Base,
 			 * Network, Crypto, logger, packet and callback providers loaded until
-			 * their objects are released. Serialize client use, moves and destruction.
+			 * their objects are released. Connect and requests serialize internally;
+			 * Cancel, Disconnect, Status and Telemetry may be used concurrently.
+			 * Externally synchronize moves, destruction and caller-owned callback state.
 			 * Opcode UUIDs and Connect addresses are synchronous borrowed views.
 		 */
 		class STORMBYTE_NETWORK_PUBLIC Client: private Endpoint {
 			public:
+				/**
+				 * @brief Explicit request/connect failures; failed streams are never replayed.
+				 */
+				enum class Error {
+					InvalidTimeout, ///< Negative budgets are invalid.
+					NotConnected, ///< No usable application connection.
+					AlreadyConnected, ///< Connect would replace a live stream.
+					TimedOut, ///< The total operation budget expired.
+					Cancelled, ///< Cancel or Disconnect interrupted this operation.
+					ResolverBusy, ///< A previous OS DNS lookup is still running.
+					Transport, ///< DNS, native I/O, EOF or incomplete framing.
+					TLS, ///< TLS configuration or authentication failed.
+					Packet, ///< Opcode policy, transformation or deserialization failed.
+					Allocation ///< Network could not allocate operation state.
+				};
+
 				/**
 				 * @brief Construct with a packet factory and a logger.
 				 * @param deserialize_packet_function Builds domain packets from wire data.
@@ -143,13 +178,37 @@ namespace StormByte {
 				Client& operator=(Client&& other) noexcept;
 
 				/**
-				 * @brief Connect to a remote host.
+				 * @brief Connect to a remote host with a ten-second total default budget.
 				 * @param protocol Address family.
 				 * @param address Hostname or IP borrowed for this call, without embedded nulls.
 				 * @param port Port number.
 				 * @return true on success.
 				 */
 				bool Connect(const Connection::Protocol& protocol, std::string_view address, const unsigned short& port) override;
+
+				/**
+				 * @brief Resolve, connect and authenticate using one total time budget.
+				 * @param protocol Address family.
+				 * @param address Borrowed hostname or IP.
+				 * @param port Destination port.
+				 * @param timeout Total budget; zero expires immediately, max means unlimited.
+				 * @return Completion or typed failure; a failed connection is discarded.
+				 * @details OS DNS is not preemptible: a stopped lookup keeps the managed slot
+				 * busy until it finishes, and destruction joins it. User callbacks cannot
+				 * be preempted. Connect and Send serialize; moves and destruction require
+				 * external lifetime synchronization, including against Cancel.
+				 */
+				Expected<void, Error> Connect(const Connection::Protocol& protocol, std::string_view address,
+					unsigned short port, std::chrono::milliseconds timeout);
+
+				/**
+				 * @brief Cancel the active operation and invalidate its application stream.
+				 * @details Thread-safe against Connect, Send, Status and Disconnect.
+				 * Shuts down connected I/O without closing/reusing a handle concurrently.
+				 * Cancellation is sticky until the next Connect; no failed frame is replayed.
+				 * Remote-file channels retain their independent lifecycle.
+				 */
+				void Cancel() noexcept;
 
 				/**
 				 * @brief Require TLS for subsequent application and remote-file connections.
@@ -170,7 +229,11 @@ namespace StormByte {
 				bool DisableTLS() noexcept;
 
 				/**
-				 * @brief Disconnect if connected.
+				 * @brief Cancel I/O and disconnect if connected.
+				 * @details Nonblocking when an operation owns the stream: that operation
+				 * releases it on return. Safe from packet callbacks, like Cancel and Status.
+				 * Other client calls must not reenter from callbacks. Destruction still
+				 * requires all calls, including callbacks and cancellation, to have returned.
 				 */
 				void Disconnect() noexcept override;
 
@@ -242,6 +305,17 @@ namespace StormByte {
 				PacketPointer Send(const Transport::Packet& packet) noexcept;
 
 				/**
+				 * @brief Send and receive one packet under a single total budget.
+				 * @param packet Borrowed request.
+				 * @param timeout Total send/header/payload budget; max means unlimited.
+				 * @return Response or distinct failure; failure discards the stream.
+				 * @details Includes pipeline and packet callbacks, which are synchronous
+				 * and cannot be preempted. Expiry/cancellation is checked on their return.
+				 * Legacy Send keeps an unlimited budget and returns an empty handle on failure.
+				 */
+				Expected<PacketPointer, Error> Send(const Transport::Packet& packet, std::chrono::milliseconds timeout);
+
+				/**
 				 * @brief Attach a reader to an application-authorized remote file mount.
 				 * @param mount Public mount descriptor decoded by the application factory.
 				 * @return Caller-owned remote reader, or an empty handle on failure.
@@ -256,6 +330,16 @@ namespace StormByte {
 				RemoteFileWriterHandle CreateRemoteFileWriter(const RemoteFileMount& mount) noexcept;
 
 			private:
+				/**
+				 * @brief Remove and close the application stream while the operation lock is held.
+				 */
+				void DropConnection() noexcept;
+
+				Safe::Mutex m_operation_mutex; ///< Serializes connect, requests and configuration.
+				mutable Safe::Mutex m_state_mutex; ///< Guards connection publication and cancellation.
+				Safe::Atomic<bool> m_cancelled{false}; ///< Sticky cancellation for the current stream.
+				Safe::Shared<Socket::Client> m_active_socket; ///< Published only after native connect.
+				Safe::Shared<Connection::Resolver> m_resolver; ///< Retained bounded DNS worker slot.
 				Safe::Shared<const Detail::TLSConfiguration> m_tls_configuration; ///< Immutable TLS inputs, not session state.
 				Safe::Shared<Connection::Client> m_connection;					///< Active framed connection.
 				Safe::String m_remote_address;								///< Address used for private file channels.

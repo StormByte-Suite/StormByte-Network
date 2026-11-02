@@ -1,6 +1,16 @@
 option(ENABLE_TEST "Enable Unit Tests" OFF)
 if(ENABLE_TEST)
 	enable_testing()
+	add_executable(ClientControlTest client_control_test.cxx)
+	target_link_libraries(ClientControlTest PRIVATE StormByte::Network)
+	target_compile_definitions(ClientControlTest PRIVATE
+		TLS_FIXTURE_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/tls")
+	if(WIN32)
+		target_link_libraries(ClientControlTest PRIVATE ws2_32)
+	endif()
+	add_test(NAME ClientControlTest COMMAND ClientControlTest)
+	set_tests_properties(ClientControlTest PROPERTIES TIMEOUT 30)
+
 	add_executable(HTTPTest
 		http_test.cxx
 		../lib/private/StormByte/network/connection/handler.cxx

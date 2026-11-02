@@ -1,7 +1,8 @@
 # Private transport foundation
 
-These opt-in socket operations do not change public APIs, packet protocols or
-legacy `Connect`, `Send`, `Receive`, `TryRead` and `ReadOnce` behavior.
+These private socket operations preserve packet protocols and raw legacy socket
+`Connect`, `Send`, `Receive`, `TryRead` and `ReadOnce` behavior. Network 3.1 also
+uses them for the public application's additive timed `Connect`/`Send` overloads.
 
 `Socket::OperationControl` borrows a `Safe::Atomic<bool>` cancellation flag and
 uses an absolute `steady_clock` deadline (maximum means unlimited). Cancellation
@@ -9,6 +10,23 @@ wins over expiry. Callers serialize socket I/O and lifecycle operations; cancel
 through the flag, not a concurrent disconnect. Waits poll cancellation at most
 every 50 ms, subject to OS scheduling. Deadlines never restart after progress,
 would-block or interrupted waits.
+
+`Socket::Interrupt()` is the narrow cross-thread exception to serialized native
+lifecycle: it shuts down, but never closes or replaces, a connected handle.
+Interruption and native close share a mutex so a cancellation cannot target a
+reused descriptor. Never call it concurrently with socket connect or moves.
+The public application client only publishes a socket for interruption after
+native connect completes; DNS/pending connect uses the cancellation flag.
+The operation owner performs final disconnection without an arbitrary sleep.
+
+`SendApplication(span, control)` and `ReceiveApplication(size, out, control)`
+schedule either plaintext or the socket's attached Crypto session under the
+same caller control. Controlled `StartTLS(session, control)` consumes that
+original connect deadline rather than a new ten-second handshake allowance.
+`Frame::ProcessInput(socket, control)` reads the complete opcode/size/payload
+under one budget and returns an explicit stop reason; it never deserializes a
+partial frame. Packet transforms and factories are synchronous, checked before
+and after execution, and cannot be forcibly interrupted.
 
 `Client::Send(span, control)` returns `OperationResult`: completion, timeout,
 cancellation, peer close or error, with the exact bytes accepted by `send` before

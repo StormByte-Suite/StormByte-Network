@@ -124,6 +124,32 @@ namespace StormByte {
 					bool StartTLS(Crypto::TLS::Session session, bool synchronous) noexcept;
 
 					/**
+					 * @brief Authenticate under the caller's total connect deadline.
+					 * @param session Independent configured session.
+					 * @param control Total connect budget and cancellation.
+					 * @return Completion or terminal stop reason.
+					 */
+					OperationResult StartTLS(Crypto::TLS::Session session, const OperationControl& control);
+
+					/**
+					 * @brief Write application bytes, including TLS, without restarting the budget.
+					 * @param data Borrowed application bytes.
+					 * @param control Total operation budget.
+					 * @return Completion or terminal stop reason.
+					 */
+					OperationResult SendApplication(std::span<const std::byte> data, const OperationControl& control);
+
+					/**
+					 * @brief Append exactly the requested application bytes under one budget.
+					 * @param size Required byte count.
+					 * @param out Destination bytes.
+					 * @param control Total operation budget.
+					 * @return Completion or terminal stop reason; partial bytes are not replayable.
+					 */
+					OperationResult ReceiveApplication(StormByte::ByteSize size, StormByte::Safe::Binary& out,
+						const OperationControl& control);
+
+					/**
 					 * @brief Advance TLS with at most one native read and write, never waiting.
 					 * @param readable Native read readiness.
 					 * @return False on authentication, deadline or transport failure.
