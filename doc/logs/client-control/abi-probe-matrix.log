@@ -1,0 +1,39 @@
+StormByte-2.2.3-linux-x64-libstdc++.zip: La suma coincide
+StormByte-2.2.3-linux-x64-libc++.zip: La suma coincide
+g++ (Gentoo Hardened 16.2.1_p20260926 p1) 16.2.1 20260926
+clang version 22.1.8+libcxx
+gcc-O0: link FAIL (see /home/stormbyte/Software/StormByte/StormByte/network/.validation/abi-reproduction/gcc-O0.log)
+gcc-O2: link and execution PASS
+gcc-O0-asan: link FAIL (see /home/stormbyte/Software/StormByte/StormByte/network/.validation/abi-reproduction/gcc-O0-asan.log)
+clang-O0-libstdcxx: link and execution PASS
+clang-O0-libcxx: link and execution PASS
+In file included from /home/stormbyte/Software/StormByte/StormByte/network/.validation/abi-reproduction/libstdcxx/include/StormByte/byte_size.hxx:43,
+                 from /home/stormbyte/Software/StormByte/StormByte/network/.validation/abi-reproduction/probe.cxx:40:
+/home/stormbyte/Software/StormByte/StormByte/network/.validation/abi-reproduction/libstdcxx/include/StormByte/safe/string.hxx:1481:57: warning: se descartan los atributos de tipo después de que el tipo ya se definió [-Wattributes]
+ 1481 | extern template class STORMBYTE_PUBLIC StormByte::Safe::Vector<StormByte::Safe::String>;
+      |                                                         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+GCC references:
+                 U __assert_fail
+                 U __stack_chk_fail
+                 U _ZNK9StormByte8ByteSizecvT_IlEEv
+
+Clang references:
+                 U __assert_fail
+                 U __stack_chk_fail
+                 U _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralElQntsr4TypeE6SameAsIS1_mEEEv
+
+Released ByteSize conversion-template exports:
+00000000001b03c0 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEaQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b03a0 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEcQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b0510 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEDiQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b04f0 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEDsQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b04d0 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEDuQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b03e0 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEhQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b0440 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEiQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b0460 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEjQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b0470 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralElQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b0400 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEsQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b0420 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEtQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b04b0 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralEwQntsr4TypeE6SameAsIS1_mEEEv
+00000000001b0490 W _ZNK9StormByte8ByteSizecvT_ITkNS_4Type8IntegralExQntsr4TypeE6SameAsIS1_mEEEv

@@ -541,6 +541,14 @@ cmake --build build-validation -j
 ctest --test-dir build-validation/test --output-on-failure
 ```
 
+The Network 3.1.0 client-control [validation evidence and reproduction scripts](doc/logs/client-control/README.md)
+include ordinary and sanitizer test logs, baseline/final loopback timings and
+the exact compiler-ABI investigation. Linux release archives use Clang;
+GCC and Clang currently mangle some constrained Base templates differently,
+even when both use libstdc++. Match the provider's compiler ABI for binary
+validation, or use a compatible source-built provider. Optimized inlining
+can mask that mismatch and is not proof of general binary compatibility.
+
 The registered suites cover client/server exchanges, negotiated handshakes and remote-file behavior. Fourteen public Safe suites cover `Client`, `ClientTelemetry`, `ConnectionClosed`, `ConnectionError`, `DeserializePacketFunction`, `Endpoint`, `Exception`, `FrameError`, `Packet`, `PacketError`, `RemoteFileMount`, `Server`, `ServerTelemetry` and `Telemetry`. Integration regressions exercise exact-derived destruction, callback copies, endpoint lifecycle and remote writer write/size/flush byte integrity. No private-class suites are registered. Coverage in the source tree is not a claim that every platform or configuration passes. Linux tests and sanitizers do not prove separate Windows CRT heap safety; that requires provider/consumer module validation on Windows with compatible ABIs and explicit module-lifetime checks.
 
 `HTTPTest` exercises the public HTTP client across the shared-library boundary

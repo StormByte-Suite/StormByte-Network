@@ -1,0 +1,17 @@
+Test project /home/stormbyte/Software/StormByte/StormByte/network/.validation-clang-sanitized/test
+    Start  1: ClientControlTest
+1/6 Test  #1: ClientControlTest ................   Passed    3.09 sec
+    Start  2: HTTPTest
+2/6 Test  #2: HTTPTest .........................   Passed    3.01 sec
+    Start  3: TransportTest
+3/6 Test  #3: TransportTest ....................   Passed    0.65 sec
+    Start  4: TLSTransportTest
+4/6 Test  #4: TLSTransportTest .................   Passed    2.76 sec
+    Start 20: ClientServerTest
+5/6 Test #20: ClientServerTest .................   Passed   10.09 sec
+    Start 21: RemoteFileTest
+6/6 Test #21: RemoteFileTest ...................   Passed   20.99 sec
+
+100% tests passed, 0 tests failed out of 6
+
+Total Test time (real) =  40.59 sec

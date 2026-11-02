@@ -1,0 +1,25 @@
+Test project /home/stormbyte/Software/StormByte/StormByte/network/.validation/test
+    Start 1: ClientControlTest
+    Test #1: ClientControlTest ................   Passed    2.22 sec
+    Start 1: ClientControlTest
+    Test #1: ClientControlTest ................   Passed    2.25 sec
+    Start 1: ClientControlTest
+    Test #1: ClientControlTest ................   Passed    2.28 sec
+    Start 1: ClientControlTest
+    Test #1: ClientControlTest ................   Passed    2.27 sec
+    Start 1: ClientControlTest
+    Test #1: ClientControlTest ................   Passed    2.26 sec
+    Start 1: ClientControlTest
+    Test #1: ClientControlTest ................   Passed    2.26 sec
+    Start 1: ClientControlTest
+    Test #1: ClientControlTest ................   Passed    2.28 sec
+    Start 1: ClientControlTest
+    Test #1: ClientControlTest ................   Passed    2.26 sec
+    Start 1: ClientControlTest
+    Test #1: ClientControlTest ................   Passed    2.24 sec
+    Start 1: ClientControlTest
+1/1 Test #1: ClientControlTest ................   Passed    2.26 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =  22.59 sec

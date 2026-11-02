@@ -1,0 +1,8 @@
+In file included from /home/stormbyte/Software/StormByte/StormByte/network/.validation/abi-reproduction/libstdcxx/include/StormByte/byte_size.hxx:43,
+                 from /home/stormbyte/Software/StormByte/StormByte/network/.validation/abi-reproduction/probe.cxx:40:
+/home/stormbyte/Software/StormByte/StormByte/network/.validation/abi-reproduction/libstdcxx/include/StormByte/safe/string.hxx:1481:57: warning: se descartan los atributos de tipo después de que el tipo ya se definió [-Wattributes]
+ 1481 | extern template class STORMBYTE_PUBLIC StormByte::Safe::Vector<StormByte::Safe::String>;
+      |                                                         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/x86_64-pc-linux-gnu/binutils-bin/2.47/ld: /home/stormbyte/Software/StormByte/StormByte/network/.validation/abi-reproduction/compiler-work/ccS53WdS.o: en la función `Convert(StormByte::ByteSize)':
+probe.cxx:(.text+0x14): referencia a `StormByte::ByteSize::operator long<long>() const' sin definir
+collect2: error: ld devolvió el estado de salida 1

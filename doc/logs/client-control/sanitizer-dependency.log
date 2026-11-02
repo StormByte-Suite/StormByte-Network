@@ -1,0 +1,7 @@
+[ 50%] [BuildMaster/File     ]: Download (cached) StormByte-Base StormByte-2.2.3-linux-x64-libstdc++.zip
+-- [BuildMaster/File     ]: Downloading StormByte-Base StormByte-2.2.3-linux-x64-libstdc++.zip... (cached) OK
+[ 50%] Built target _bm_bin_StormByte-Base_dl
+[100%] [BuildMaster/File     ]: Decompress StormByte-Base StormByte-2.2.3-linux-x64-libstdc++.zip
+[100%] Built target StormByte-Base_build
+[100%] Built target _bm_bin_StormByte-Base_unpack
+[100%] Built target StormByte-Base_install

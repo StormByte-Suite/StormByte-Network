@@ -1,0 +1,48 @@
+Debug sanitizer timing assertion sites:
+	const bool read = fixture.ReadRequest();
+	const auto start = std::chrono::steady_clock::now();
+	client.Cancel();
+	send.join();
+	ASSERT_TRUE(read);
+	ASSERT_FALSE(result);
+	ASSERT_TRUE(*result.error() == Client::Error::Cancelled);
+	ASSERT_TRUE(std::chrono::steady_clock::now() - start < 500ms);
+	return 0;
+}
+
+int test_cancel_tls_send() {
+	TestClient client;
+	Peer fixture;
+	fixture.ConnectTLS(client);
+	Expected<PacketPointer, Client::Error> result;
+	TestPacket large(ByteSize{16 * 1024 * 1024});
+	std::jthread send([&] { result = client.Send(large, 5s); });
+	std::array<char, 1> bytes{};
+	const auto read = ::recv(fixture.peer, bytes.data(), 1, 0);
+	const auto start = std::chrono::steady_clock::now();
+	client.Cancel();
+	send.join();
+	ASSERT_EQUAL(1, read);
+	ASSERT_FALSE(result);
+	ASSERT_TRUE(*result.error() == Client::Error::Cancelled);
+	ASSERT_TRUE(std::chrono::steady_clock::now() - start < 500ms);
+	return 0;
+}
+			fixture.Connect(client);
+		const TestPacket large(ByteSize{16 * 1024 * 1024});
+		const auto start = std::chrono::steady_clock::now();
+		const auto result = client.Send(large, 100ms);
+		ASSERT_FALSE(result);
+		ASSERT_TRUE(*result.error() == Client::Error::TimedOut);
+		ASSERT_TRUE(std::chrono::steady_clock::now() - start < 500ms);
+		ASSERT_TRUE(client.Status() == Connection::Status::Disconnected);
+	}
+	return 0;
+
+Exact missing released ABI symbol:
+In file included from .validation/archive-check/current-libstdcxx/include/StormByte/byte_size.hxx:43,
+                 from <stdin>:1:
+.validation/archive-check/current-libstdcxx/include/StormByte/safe/string.hxx:1481:57: warning: se descartan los atributos de tipo después de que el tipo ya se definió [-Wattributes]
+ 1481 | extern template class STORMBYTE_PUBLIC StormByte::Safe::Vector<StormByte::Safe::String>;
+      |                                                         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                 U _ZNK9StormByte8ByteSizecvT_IlEEv

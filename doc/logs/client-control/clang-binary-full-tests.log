@@ -1,0 +1,200 @@
+Start testing: Nov 02 10:37 CET
+----------------------------------------------------------
+1/21 Testing: ClientControlTest
+1/21 Test: ClientControlTest
+Command: "/home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test/ClientControlTest"
+Directory: /home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test
+"ClientControlTest" start time: Nov 02 10:37 CET
+Output:
+----------------------------------------------------------
+[Error   ] 02/11/2026 10:37:18 Client request failed (error 4).
+23 focused client control cases passed
+<end of output>
+Test time =   3.07 sec
+----------------------------------------------------------
+Test Passed.
+"ClientControlTest" end time: Nov 02 10:37 CET
+"ClientControlTest" time elapsed: 00:00:03
+----------------------------------------------------------
+
+2/21 Testing: HTTPTest
+2/21 Test: HTTPTest
+Command: "/home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test/HTTPTest"
+Directory: /home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test
+"HTTPTest" start time: Nov 02 10:37 CET
+Output:
+----------------------------------------------------------
+test_http1_bodyless: starting
+test_http1_bodyless: passed (44 ms)
+test_http1_chunked_informational_trailers: starting
+test_http1_chunked_informational_trailers: passed (13 ms)
+test_http1_close_delimited_and_redirect: starting
+test_http1_close_delimited_and_redirect: passed (11 ms)
+test_http1_fixed_binary_and_lifecycle: starting
+test_http1_fixed_binary_and_lifecycle: passed (11 ms)
+test_http1_ipv6: starting
+test_http1_ipv6: passed (11 ms)
+test_http1_limits: starting
+test_http1_limits: passed (83 ms)
+test_http1_malformed: starting
+test_http1_malformed: passed (251 ms)
+test_http1_truncated: starting
+test_http1_truncated: passed (83 ms)
+test_http2_bodyless: starting
+test_http2_bodyless: passed (38 ms)
+test_http2_closed_stream_reset: starting
+test_http2_closed_stream_reset: passed (12 ms)
+test_http2_errors_and_bounds: starting
+test_http2_errors_and_bounds: passed (100 ms)
+test_http2_flow_control_clear_and_tls: starting
+test_http2_flow_control_clear_and_tls: passed (79 ms)
+test_http2_native_allocation_bound: starting
+test_http2_native_allocation_bound: passed (111 ms)
+test_https_alpn_and_current_time: starting
+test_https_alpn_and_current_time: passed (117 ms)
+test_https_authenticated_close_delimited: starting
+test_https_authenticated_close_delimited: passed (25 ms)
+test_https_mutual_authentication: starting
+test_https_mutual_authentication: passed (60 ms)
+test_https_truncated_close_delimited: starting
+test_https_truncated_close_delimited: passed (23 ms)
+test_https_trust_and_identity_failure: starting
+test_https_trust_and_identity_failure: passed (79 ms)
+test_validation_deadline_and_cancel: starting
+test_validation_deadline_and_cancel: passed (681 ms)
+test_validation_invalid_options_and_requests: starting
+test_validation_invalid_options_and_requests: passed (0 ms)
+test_validation_invalid_urls: starting
+test_validation_invalid_urls: passed (0 ms)
+test_validation_upload_and_h2_controls: starting
+test_validation_upload_and_h2_controls: passed (918 ms)
+22 HTTP cases, 0 failures
+<end of output>
+Test time =   2.82 sec
+----------------------------------------------------------
+Test Passed.
+"HTTPTest" end time: Nov 02 10:37 CET
+"HTTPTest" time elapsed: 00:00:02
+----------------------------------------------------------
+
+3/21 Testing: TransportTest
+3/21 Test: TransportTest
+Command: "/home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test/TransportTest"
+Directory: /home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test
+"TransportTest" start time: Nov 02 10:37 CET
+Output:
+----------------------------------------------------------
+[Error   ] 02/11/2026 10:37:23 Invalid resolved address: StormByte.Network: Invalid socket address
+[Error   ] 02/11/2026 10:37:23 All resolved connection attempts failed; last native error: 0
+[Error   ] 02/11/2026 10:37:23 Failed to resolve host: StormByte.Network: Can't resolve host '127.0.0.1': getaddrinfo code -9 (family 10)
+[Error   ] 02/11/2026 10:37:23 All resolved connection attempts failed; last native error: 111
+18 focused transport cases passed
+<end of output>
+Test time =   0.65 sec
+----------------------------------------------------------
+Test Passed.
+"TransportTest" end time: Nov 02 10:37 CET
+"TransportTest" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/21 Testing: TLSTransportTest
+4/21 Test: TLSTransportTest
+Command: "/home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test/TLSTransportTest"
+Directory: /home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test
+"TLSTransportTest" start time: Nov 02 10:37 CET
+Output:
+----------------------------------------------------------
+9 focused TLS transport cases passed
+<end of output>
+Test time =   2.66 sec
+----------------------------------------------------------
+Test Passed.
+"TLSTransportTest" end time: Nov 02 10:37 CET
+"TLSTransportTest" time elapsed: 00:00:02
+----------------------------------------------------------
+
+20/21 Testing: ClientServerTest
+20/21 Test: ClientServerTest
+Command: "/home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test/ClientServerTest"
+Directory: /home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test
+"ClientServerTest" start time: Nov 02 10:37 CET
+Output:
+----------------------------------------------------------
+[Error   ] [T140039897024512] 02/11/2026 10:37:27: Client request failed (error 6).
+[Error   ] [T140039897024512] 02/11/2026 10:37:27: Client request failed (error 6).
+[Error   ] [T140039897024512] 02/11/2026 10:37:27: Client request failed (error 6).
+[Error   ] [T140039897024512] 02/11/2026 10:37:27: Client request failed (error 6).
+[Error   ] [T140039897024512] 02/11/2026 10:37:27: Client connection failed (error 6).
+[Error   ] [T140039897024512] 02/11/2026 10:37:27: Client connection failed (error 2).
+[Error   ] [T140039897024512] 02/11/2026 10:37:27: Client request failed (error 1).
+[Error   ] [T140039897024512] 02/11/2026 10:37:27: Client request failed (error 4).
+[Error   ] [T140039897024512] 02/11/2026 10:37:27: Client request failed (error 4).
+[Error   ] [T135641473873600] 02/11/2026 10:37:27: Client request failed (error 4).
+[Error   ] [T140039897024512] 02/11/2026 10:37:28: Client request failed (error 6).
+[Error   ] [T140039897024512] 02/11/2026 10:37:28: Failed to listen on localhost:7080 using protocol Unknown
+[Error   ] [T135641473873600] 02/11/2026 10:37:28: Client request failed (error 6).
+[Error   ] [T140039897024512] 02/11/2026 10:37:30: Client request failed (error 6).
+LOOPBACK plain n=128 min=640 mean=1493 max=8067 us
+LOOPBACK TLS n=128 min=26 mean=37 max=325 us
+[Error   ] [T140039897024512] 02/11/2026 10:37:32: Client request failed (error 8).
+[Error   ] [T140039897024512] 02/11/2026 10:37:32: Client request failed (error 8).
+[Error   ] [T140039897024512] 02/11/2026 10:37:32: Client request failed (error 8).
+[Error   ] [T140039897024512] 02/11/2026 10:37:32: Client request failed (error 6).
+[Error   ] [T140039897024512] 02/11/2026 10:37:32: Client request failed (error 6).
+[Info    ] [T140039897024512] 02/11/2026 10:37:36: test_request_large_data_echoed: Received large data size: 20 MiB
+[Info    ] [T140039897024512] 02/11/2026 10:37:36: test_request_name_list: Received names: Name_1 Name_2 Name_3
+[Info    ] [T140039897024512] 02/11/2026 10:37:36: test_request_random_number: Received random number: 40
+[Error   ] [T140039897024512] 02/11/2026 10:37:36: Client connection failed (error 7).
+All tests passed!
+<end of output>
+Test time =  10.09 sec
+----------------------------------------------------------
+Test Passed.
+"ClientServerTest" end time: Nov 02 10:37 CET
+"ClientServerTest" time elapsed: 00:00:10
+----------------------------------------------------------
+
+21/21 Testing: RemoteFileTest
+21/21 Test: RemoteFileTest
+Command: "/home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test/RemoteFileTest"
+Directory: /home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-binary-clang/network/test
+"RemoteFileTest" start time: Nov 02 10:37 CET
+Output:
+----------------------------------------------------------
+test_acl_and_independent_reader_cursors passed
+test_capability_isolation passed
+test_foreign_mount_rejection_preserves_owner passed
+test_rejected_descriptors_and_wrong_access_factories passed
+test_closed_mount_rejected_and_fresh_token_usable passed
+[RemoteFileTest] 02/11/2026 10:37:37: Send failed: Broken pipe (code: 32) errno: 32 (Broken pipe)
+test_plane_failure_faults_every_leaf passed
+test_tls_and_control_disconnect passed
+[RemoteFileTest] 02/11/2026 10:37:37: Client request failed (error 6).
+test_plaintext_control_denied_by_tls_server passed
+test_eight_interleaved_readers passed
+test_empty_file_eof passed
+test_large_pattern_reader passed
+test_sixteen_peers_with_eight_readers passed
+test_tls_auxiliary_plaintext_rejected passed
+test_tls_auxiliary_stall_expires passed
+test_tls_configuration_cannot_downgrade_live_channels passed
+[RemoteFileTest] 02/11/2026 10:37:42: Client connection failed (error 7).
+[RemoteFileTest] 02/11/2026 10:37:42: Client connection failed (error 7).
+test_tls_current_time_default_and_fixed_opt_in passed
+test_tls_heartbeat_read_write_roundtrip passed
+[RemoteFileTest] 02/11/2026 10:37:47: Client request failed (error 6).
+test_tls_mtls_rejects_missing_identity passed
+test_tls_primary_pending_limit passed
+test_tls_primary_stall_isolation passed
+test_flush_after_size_queries passed
+test_pattern_writer_lifecycle passed
+test_writer_reader_conflicts passed
+<end of output>
+Test time =  20.95 sec
+----------------------------------------------------------
+Test Passed.
+"RemoteFileTest" end time: Nov 02 10:37 CET
+"RemoteFileTest" time elapsed: 00:00:20
+----------------------------------------------------------
+
+End testing: Nov 02 10:37 CET

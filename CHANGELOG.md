@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bundled builds use the refreshed StormByte Base 2.2.3, Buffer 2.0.6, Crypto 2.3.1, Logger 2.0.6 and System 2.1.3 releases, including their final audit fixes and corrected bundled TLS trust-store initialization.
 - Application connects use the existing bounded managed resolver and nonblocking connection scheduler. One total budget covers DNS caller waiting, connection attempts and configurable TLS authentication; the legacy Boolean connect defaults to ten seconds total. The legacy packet-handle send remains unlimited and preserves empty-on-error behavior.
 - Investigate the reported approximately one-second loopback round trip with measured plaintext/TLS probes and add a 128-ping-per-mode latency regression. The pre-change baseline was already 115–878 µs plaintext and 27–207 µs TLS (five samples each), so no unconfirmed polling cause or latency fix is claimed.
+- Archive client-control release/sanitizer evidence and reproduction scripts under `doc/logs/client-control`. Confirm six focused sanitizer suites pass with the released Clang/libstdc++ providers and, separately, GCC with unchanged source-built Base. Document the GCC/Clang constrained-template mangling mismatch rather than misidentifying it as missing release exports.
 
 ### Fixed
 

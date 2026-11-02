@@ -1,0 +1,2 @@
+LOOPBACK plain n=128 min=86 mean=113 max=886 us
+LOOPBACK TLS n=128 min=12 mean=15 max=107 us

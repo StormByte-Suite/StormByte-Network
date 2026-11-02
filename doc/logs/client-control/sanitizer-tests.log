@@ -1,0 +1,44 @@
+Test project /home/stormbyte/Software/StormByte/StormByte/network/.validation-sanitized/test
+    Start  1: ClientControlTest
+1/6 Test  #1: ClientControlTest ................***Failed   14.55 sec
+test_cancel_send: Assertion failed at /home/stormbyte/Software/StormByte/StormByte/network/test/client_control_test.cxx:386: condition is false, expected true
+test_cancel_tls_send: Assertion failed at /home/stormbyte/Software/StormByte/StormByte/network/test/client_control_test.cxx:405: condition is false, expected true
+[Error   ] 02/11/2026 10:24:03 Client request failed (error 4).
+test_send_backpressure_deadline: Assertion failed at /home/stormbyte/Software/StormByte/StormByte/network/test/client_control_test.cxx:571: condition is false, expected true
+
+    Start  2: HTTPTest
+2/6 Test  #2: HTTPTest .........................   Passed    5.07 sec
+    Start  3: TransportTest
+3/6 Test  #3: TransportTest ....................   Passed    0.83 sec
+    Start  4: TLSTransportTest
+4/6 Test  #4: TLSTransportTest .................   Passed    2.74 sec
+    Start 20: ClientServerTest
+5/6 Test #20: ClientServerTest .................   Passed   58.68 sec
+    Start 21: RemoteFileTest
+6/6 Test #21: RemoteFileTest ...................***Timeout 300.06 sec
+test_acl_and_independent_reader_cursors passed
+test_capability_isolation passed
+test_foreign_mount_rejection_preserves_owner passed
+test_rejected_descriptors_and_wrong_access_factories passed
+test_closed_mount_rejected_and_fresh_token_usable passed
+[RemoteFileTest] 02/11/2026 10:25:30: Send failed: Broken pipe (code: 32) errno: 32 (Broken pipe)
+test_plane_failure_faults_every_leaf passed
+test_tls_and_control_disconnect passed
+[RemoteFileTest] 02/11/2026 10:25:30: Client request failed (error 6).
+test_plaintext_control_denied_by_tls_server passed
+test_eight_interleaved_readers passed
+test_empty_file_eof passed
+test_large_pattern_reader passed
+[RemoteFileTest] 02/11/2026 10:28:42: Send failed: Broken pipe (code: 32) errno: 32 (Broken pipe)
+[RemoteFileTest] 02/11/2026 10:30:05: Send failed: Broken pipe (code: 32) errno: 32 (Broken pipe)
+[RemoteFileTest] 02/11/2026 10:30:09: Send failed: Broken pipe (code: 32) errno: 32 (Broken pipe)
+
+
+67% tests passed, 2 tests failed out of 6
+
+Total Test time (real) = 381.94 sec
+
+The following tests FAILED:
+	  1 - ClientControlTest (Failed)
+	 21 - RemoteFileTest (Timeout)
+Errors while running CTest

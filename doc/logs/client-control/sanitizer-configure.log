@@ -1,0 +1,37 @@
+-- The C compiler identification is GNU 16.2.1
+-- The CXX compiler identification is GNU 16.2.1
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- AddressSanitizer and UndefinedBehaviorSanitizer enabled
+-- [BuildMaster/Core     ]: Bootstrapping StormByte-BuildMaster 2.1.4 (https://github.com/StormByte-Suite/StormByte-BuildMaster)
+-- [BuildMaster/Env      ]: 	Setting up environment...
+-- [BuildMaster/Tools    ]: 	Setting up tools: ninja
+-- StormByte archive: StormByte-2.2.3-linux-x64-libstdc++.zip
+-- [BuildMaster/File     ]: Downloading StormByte-Base StormByte-2.2.3-linux-x64-libstdc++.zip... OK
+-- [BuildMaster/Component]: BACKEND=binary 'StormByte-Base' (shared) — StormByte-2.2.3-linux-x64-libstdc++.zip
+-- StormByte archive: StormByte-Logger-2.0.6-linux-x64-libstdc++.zip
+-- [BuildMaster/File     ]: Downloading StormByte-Logger StormByte-Logger-2.0.6-linux-x64-libstdc++.zip... OK
+-- [BuildMaster/Component]: BACKEND=binary 'StormByte-Logger' (shared) — StormByte-Logger-2.0.6-linux-x64-libstdc++.zip
+-- StormByte archive: StormByte-System-2.1.3-linux-x64-libstdc++.zip
+-- [BuildMaster/File     ]: Downloading StormByte-System StormByte-System-2.1.3-linux-x64-libstdc++.zip... OK
+-- [BuildMaster/Component]: BACKEND=binary 'StormByte-System' (shared) — StormByte-System-2.1.3-linux-x64-libstdc++.zip
+-- StormByte archive: StormByte-Buffer-2.0.6-linux-x64-libstdc++.zip
+-- [BuildMaster/File     ]: Downloading StormByte-Buffer StormByte-Buffer-2.0.6-linux-x64-libstdc++.zip... OK
+-- [BuildMaster/Component]: BACKEND=binary 'StormByte-Buffer' (shared) — StormByte-Buffer-2.0.6-linux-x64-libstdc++.zip
+-- StormByte archive: StormByte-Crypto-2.3.1-linux-x64-libstdc++.zip
+-- [BuildMaster/File     ]: Downloading StormByte-Crypto StormByte-Crypto-2.3.1-linux-x64-libstdc++.zip... OK
+-- [BuildMaster/Component]: BACKEND=binary 'StormByte-Crypto' (shared) — StormByte-Crypto-2.3.1-linux-x64-libstdc++.zip
+-- [BuildMaster/Tools    ]: 	Setting up tools: cmake
+-- [BuildMaster/Component]: BACKEND=host 'StormByte-Network' (shared) — in-process library
+-- [BuildMaster/CMake    ]: Configuring nghttp2 1.70.0
+-- Configuring done (5.6s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/stormbyte/Software/StormByte/StormByte/network/.validation-sanitized

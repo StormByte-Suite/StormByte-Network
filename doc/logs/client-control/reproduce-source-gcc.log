@@ -1,0 +1,17 @@
+Test project /home/stormbyte/Software/StormByte/StormByte/network/.validation/reproduce-source-gcc/network/test
+    Start  1: ClientControlTest
+1/6 Test  #1: ClientControlTest ................   Passed    3.71 sec
+    Start  2: HTTPTest
+2/6 Test  #2: HTTPTest .........................   Passed    3.04 sec
+    Start  3: TransportTest
+3/6 Test  #3: TransportTest ....................   Passed    0.71 sec
+    Start  4: TLSTransportTest
+4/6 Test  #4: TLSTransportTest .................   Passed    2.58 sec
+    Start 20: ClientServerTest
+5/6 Test #20: ClientServerTest .................   Passed   12.55 sec
+    Start 21: RemoteFileTest
+6/6 Test #21: RemoteFileTest ...................   Passed   31.93 sec
+
+100% tests passed, 0 tests failed out of 6
+
+Total Test time (real) =  54.52 sec
