@@ -184,3 +184,5 @@ socket paths changed only by moving shutdown into the mutex-serialized
   the send-capacity wait; the test requires `TimedOut` within 2–2.4 s.
 - `windows-fix-linux-focused.log`: three Linux runs of both corrected suites
   passed (19 transport cases, 23 client-control cases).
+- `windows-ci-41425108105-fixed.log`: CI run 41425108105 on `9693ef5`
+  completed successfully on every job; `windows-clang-cl` passed 21/21 suites.

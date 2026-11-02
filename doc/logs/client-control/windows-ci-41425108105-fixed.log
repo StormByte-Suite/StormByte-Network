@@ -1,0 +1,23 @@
+# GitHub Actions run 41425108105, job windows-clang-cl 125209942930 (commit 9693ef5), CTest summary
+ 1/21 Test  #1: ClientControlTest ...................   Passed   10.25 sec
+ 2/21 Test  #2: HTTPTest ............................   Passed   14.93 sec
+ 3/21 Test  #3: TransportTest .......................   Passed    4.88 sec
+ 4/21 Test  #4: TLSTransportTest ....................   Passed    2.65 sec
+ 5/21 Test  #5: ClientSafeTest ......................   Passed    0.03 sec
+ 6/21 Test  #6: ClientTelemetrySafeTest .............   Passed    0.02 sec
+ 7/21 Test  #7: ConnectionClosedSafeTest ............   Passed    0.02 sec
+ 8/21 Test  #8: ConnectionErrorSafeTest .............   Passed    0.02 sec
+ 9/21 Test  #9: DeserializePacketFunctionSafeTest ...   Passed    0.02 sec
+10/21 Test #10: EndpointSafeTest ....................   Passed    0.01 sec
+11/21 Test #11: ExceptionSafeTest ...................   Passed    0.02 sec
+12/21 Test #12: FrameErrorSafeTest ..................   Passed    0.02 sec
+13/21 Test #13: PacketSafeTest ......................   Passed    0.02 sec
+14/21 Test #14: PacketErrorSafeTest .................   Passed    0.02 sec
+15/21 Test #15: RemoteFileMountSafeTest .............   Passed    0.02 sec
+16/21 Test #16: ServerSafeTest ......................   Passed    0.07 sec
+17/21 Test #17: ServerTelemetrySafeTest .............   Passed    0.02 sec
+18/21 Test #18: TelemetrySafeTest ...................   Passed    0.02 sec
+19/21 Test #19: DiscoveryTest .......................   Passed    0.34 sec
+20/21 Test #20: ClientServerTest ....................   Passed   79.82 sec
+21/21 Test #21: RemoteFileTest ......................   Passed   24.95 sec
+100% tests passed out of 21
