@@ -39,6 +39,7 @@
  */
 
 #include <StormByte/network/connection/handler.hxx>
+#include <StormByte/network/connection/info.hxx>
 #include <StormByte/network/socket/client.hxx>
 #include <StormByte/network/socket/server.hxx>
 
@@ -198,7 +199,14 @@ ExpectedClient Socket::Server::Accept() noexcept {
 #endif
 	try {
 		Client client_socket(m_protocol, m_logger);
-		Connection::HandlerType client_handle = ::accept(m_handle, nullptr, nullptr);
+		sockaddr_storage peer_address{};
+#ifdef WINDOWS
+		int peer_address_length = sizeof(peer_address);
+#else
+		socklen_t peer_address_length = sizeof(peer_address);
+#endif
+		Connection::HandlerType client_handle = ::accept(m_handle,
+			reinterpret_cast<sockaddr*>(&peer_address), &peer_address_length);
 #ifdef WINDOWS
 		if (client_handle == INVALID_SOCKET) {
 #else
@@ -208,6 +216,10 @@ ExpectedClient Socket::Server::Accept() noexcept {
 		}
 
 		client_socket.m_handle = client_handle;
+		auto peer_info = Connection::Info::FromSockAddr(reinterpret_cast<const sockaddr*>(&peer_address));
+		if (!peer_info)
+			return Unexpected<ConnectionError>("Failed to read accepted client's peer address");
+		client_socket.SetPeerAddress(PeerAddress{peer_info.value().IP(), peer_info.value().Port()});
 		client_socket.m_status.store(Connection::Status::Connecting, Safe::MemoryOrder::Release);
 		client_socket.InitializeAfterConnect();
 		m_active_clients.push_back(Safe::MakeShared<Client>(std::move(client_socket)));

@@ -665,6 +665,20 @@ void Server::DisconnectClientAfterReply(std::string_view uuid) noexcept {
 	}
 }
 
+Safe::Optional<PeerAddress> Server::GetPeerAddress(std::string_view uuid) {
+	std::scoped_lock lock(m_remote_file_mutex);
+	const auto connection_it = std::ranges::find_if(m_configurable_connections, [uuid](const auto& entry) {
+		return static_cast<std::string_view>(entry.first) == uuid;
+	});
+	if (connection_it == m_configurable_connections.end()
+		|| !connection_it->second.connection
+		|| !connection_it->second.connection->Socket()) {
+		return std::nullopt;
+	}
+
+	return connection_it->second.connection->Socket()->RemotePeerAddress();
+}
+
 bool Server::OnClientConnected(std::string_view) noexcept {
 	return true;
 }

@@ -43,6 +43,7 @@
 #include <StormByte/crypto/tls/session.hxx>
 #include <StormByte/buffer/consumer.hxx>
 #include <StormByte/network/connection/resolver.hxx>
+#include <StormByte/network/peer_address.hxx>
 #include <StormByte/network/socket/operation.hxx>
 #include <StormByte/network/socket/socket.hxx>
 #include <StormByte/network/typedefs.hxx>
@@ -185,6 +186,18 @@ namespace StormByte {
 					 * @return True when this channel requires TLS.
 					 */
 					bool UsingTLS() const noexcept;
+
+					/**
+					 * @brief Store the remote address captured when the socket was accepted.
+					 * @param address Numeric peer address and source port.
+					 */
+					void SetPeerAddress(PeerAddress address) noexcept;
+
+					/**
+					 * @brief Borrow the remote address captured when the socket was accepted.
+					 * @return Peer address; empty for outbound client sockets.
+					 */
+					const PeerAddress& RemotePeerAddress() const noexcept;
 
 					/**
 					 * @brief Construct with protocol and logger.
@@ -357,6 +370,7 @@ namespace StormByte {
 					bool Ping() noexcept;
 
 				private:
+					PeerAddress m_peer_address; ///< Accepted peer address; empty for outbound sockets.
 					Crypto::TLS::Session m_tls; ///< Independent Crypto-owned engine.
 					Safe::Mutex m_tls_mutex; ///< Serializes engine steps, never socket waits.
 					bool m_tls_enabled{false}; ///< Fail-closed TLS mode.

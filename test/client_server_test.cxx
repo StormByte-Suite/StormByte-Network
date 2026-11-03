@@ -755,8 +755,8 @@ namespace Test {
 			 * @return True for authenticated fixture sessions.
 			 */
 			bool OnClientConnected(std::string_view uuid) noexcept override {
-				(void)uuid;
-				return true;
+				const auto peer_address = GetPeerAddress(uuid);
+				return peer_address && !peer_address->ip.empty() && peer_address->port != 0;
 			}
 
 		private:

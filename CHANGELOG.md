@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### TODO
+### Added
 
-- Expose the remote IP address (and port) of each connected client session, so servers can log and identify peers. The address is currently discarded at accept time (`::accept(fd, nullptr, nullptr)`) and no API provides it per session.
+- Expose the accepted peer's numeric IP address and source port through `PeerAddress` and the protected `Server::GetPeerAddress(uuid)` accessor.
 
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.1.0...HEAD
 

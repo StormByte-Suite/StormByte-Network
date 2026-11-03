@@ -44,12 +44,14 @@
 #include <StormByte/network/detail/server_state.hxx>
 #include <StormByte/network/discovery.hxx>
 #include <StormByte/network/endpoint.hxx>
+#include <StormByte/network/peer_address.hxx>
 #include <StormByte/network/remote_file_mount.hxx>
 #include <StormByte/network/server_telemetry.hxx>
 #include <StormByte/safe/atomic.hxx>
 #include <StormByte/safe/deque.hxx>
 #include <StormByte/safe/map.hxx>
 #include <StormByte/safe/mutex.hxx>
+#include <StormByte/safe/optional.hxx>
 #include <StormByte/safe/pair.hxx>
 #include <StormByte/safe/pointers.hxx>
 #include <StormByte/safe/string.hxx>
@@ -292,6 +294,14 @@ namespace StormByte {
 				 * @param uuid Client UUID.
 				 */
 				void DisconnectClient(std::string_view uuid) noexcept;
+
+				/**
+				 * @brief Get the remote address for an active client session.
+				 * @param uuid Server-assigned session identity.
+				 * @return Peer address, or empty when the session is not active.
+				 * @details Safe to call from server callbacks and packet workers.
+				 */
+				Safe::Optional<PeerAddress> GetPeerAddress(std::string_view uuid);
 
 				/**
 				 * @brief Send the current handler's reply, then close and discard pending input.

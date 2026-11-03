@@ -114,7 +114,7 @@ Socket::Client::Client(const Connection::Protocol& protocol, StormByte::Safe::Sh
 }
 
 Socket::Client::Client(Client&& other) noexcept:
-	Socket(std::move(other)), m_tls(std::move(other.m_tls)),
+	Socket(std::move(other)), m_peer_address(std::move(other.m_peer_address)), m_tls(std::move(other.m_tls)),
 	m_tls_enabled(std::exchange(other.m_tls_enabled, false)),
 	m_tls_buffered(std::exchange(other.m_tls_buffered, false)),
 	m_tls_pending(std::exchange(other.m_tls_pending, false)),
@@ -126,6 +126,7 @@ Socket::Client::~Client() noexcept = default;
 Socket::Client& Socket::Client::operator=(Client&& other) noexcept {
 	if (this != &other) {
 		Socket::operator=(std::move(other));
+		m_peer_address = std::move(other.m_peer_address);
 		m_tls = std::move(other.m_tls);
 		m_tls_enabled = std::exchange(other.m_tls_enabled, false);
 		m_tls_buffered = std::exchange(other.m_tls_buffered, false);
@@ -135,6 +136,14 @@ Socket::Client& Socket::Client::operator=(Client&& other) noexcept {
 		m_tls_deadline = other.m_tls_deadline;
 	}
 	return *this;
+}
+
+void Socket::Client::SetPeerAddress(PeerAddress address) noexcept {
+	m_peer_address = std::move(address);
+}
+
+const PeerAddress& Socket::Client::RemotePeerAddress() const noexcept {
+	return m_peer_address;
 }
 
 Socket::Client::Pointer Socket::Client::Create(const Connection::Protocol& protocol, Safe::Shared<Logger::Log> logger) noexcept {
