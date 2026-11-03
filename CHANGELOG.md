@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### TODO
+
+- Expose the remote IP address (and port) of each connected client session, so servers can log and identify peers. The address is currently discarded at accept time (`::accept(fd, nullptr, nullptr)`) and no API provides it per session.
+
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.1.0...HEAD
 
 ## [3.1.0] - 2026-11-02
