@@ -1,6 +1,6 @@
 include("${CMAKE_SOURCE_DIR}/cmake/stormbyte.cmake")
 
-set(STORMBYTE_LOGGER_VERSION "2.0.6")
+set(STORMBYTE_LOGGER_VERSION "3.0.0")
 stormbyte_component_url(STORMBYTE_LOGGER_URL "${STORMBYTE_LOGGER_VERSION}" "StormByte-Logger")
 
 set(STORMBYTE_LOGGER_OPTSTR "BACKEND=binary;ALIAS=StormByte::Logger")

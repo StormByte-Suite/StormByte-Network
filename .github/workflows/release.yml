@@ -4,8 +4,8 @@ name: Release
 # fails before the build. The zips replace the assets of that tag's release,
 # which does not have to be the latest. A retag of the same name is replaced.
 #
-# Same jobs as ci.yml. Each build also installs and zips the prefix.
-# One job attaches those zips. Docs are deployed on their own, only for this tag.
+# Each build installs and uploads its own ZIP to the release.
+# Docs are deployed independently for this tag.
 
 on:
   workflow_dispatch:
@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-26.04, ubuntu-26.04-arm, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     name: checkout-bootstrap (${{ matrix.os }})
     steps:
@@ -57,8 +57,12 @@ jobs:
 
   apt-bootstrap:
     needs: guard
-    runs-on: ubuntu-latest
-    name: apt-bootstrap
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
+    runs-on: ${{ matrix.runner }}
+    name: apt-bootstrap (${{ matrix.runner }})
     steps:
       - name: Warm APT lists cache
         uses: stormbytepp/githubactions/.github/actions/update-apt-cached@master
@@ -67,23 +71,30 @@ jobs:
 
   ###########################################################################
   # Linux
-  # Name: <component>-<tag>-<os>-<arch>-<stdlib>.zip
+  # Name: <component>-<tag>-<os>-<arch>-<libc>-<stdlib>.zip
   # libstdc++ and libc++ are both in the filename. Windows has one ABI and no suffix.
   ###########################################################################
   build-linux:
     needs: [checkout-bootstrap, apt-bootstrap]
-    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - compiler: clang
+        platform:
+          - runner: ubuntu-26.04
+            arch: amd64
+          - runner: ubuntu-26.04-arm
+            arch: arm64
+        libc: [glibc, musl]
+        toolchain:
+          - compiler: gcc
             stdlib: libstdc++
-            asset: linux-x64-libstdc++
-          - compiler: clang-libc++
+          - compiler: clang
             stdlib: libc++
-            asset: linux-x64-libc++
-    name: linux-${{ matrix.stdlib }}
+    runs-on: ${{ matrix.platform.runner }}
+    name: linux-${{ matrix.platform.arch }}-${{ matrix.libc }}-${{ matrix.toolchain.stdlib }}
     steps:
       - name: Checkout repository and submodules
         uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
@@ -97,10 +108,10 @@ jobs:
           set -euo pipefail
           # Prepend. A job-level assignment replaces the variable and
           # drops whatever the runner or a previous step already set.
-          # /usr/lib/llvm-20/lib holds LLVM libunwind. libc++ needs it
+          # /usr/lib/llvm-22/lib holds LLVM libunwind. libc++ needs it
           # and the default loader does not search that directory.
           # The toolchain creates it later; tests only need the entry.
-          extra="/usr/lib/llvm-20/lib:${{ github.workspace }}/build/lib:${{ github.workspace }}/build/buildmaster/install/lib:${{ github.workspace }}/build/buildmaster/install/lib64"
+          extra="/usr/lib/llvm-22/lib:${{ github.workspace }}/build/pgo-instr/lib:${{ github.workspace }}/build/pgo-instr/buildmaster/install/lib:${{ github.workspace }}/build/pgo-instr/buildmaster/install/lib64:${{ github.workspace }}/build/lib:${{ github.workspace }}/build/buildmaster/install/lib:${{ github.workspace }}/build/buildmaster/install/lib64"
           for name in LD_LIBRARY_PATH DYLD_LIBRARY_PATH; do
             current="$(printenv "$name" 2>/dev/null || true)"
             if [[ -n "${current}" ]]; then
@@ -110,50 +121,26 @@ jobs:
             fi
           done
 
-      - name: Build with toolchain
+      - name: Build and deploy with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
         with:
-          toolchain: ${{ matrix.compiler }}
-          ccache-key: v1-release-${{ matrix.compiler }}
-          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-${{ matrix.compiler }}
+          compiler: ${{ matrix.toolchain.compiler }}
+          cxx-stdlib: ${{ matrix.toolchain.stdlib }}
+          libc: ${{ matrix.libc }}
+          compiler-cache-key: network-v1
+          compiler-cache-scope: release-${{ matrix.platform.arch }}-${{ matrix.libc }}-${{ matrix.toolchain.compiler }}-${{ matrix.toolchain.stdlib }}
+          buildmaster-cache-key: bm-network-release-${{ matrix.platform.arch }}-${{ matrix.libc }}-${{ matrix.toolchain.compiler }}-${{ matrix.toolchain.stdlib }}
           build-type: ${{ env.BUILD_TYPE }}
-          configure-options: >-
-            -DENABLE_LTO=ON
-            -DENABLE_PGO=ON
+          pgo: true
+          lto: true
+          cpu-baseline: auto
+          cmake-options: >-
             -DWITH_STORMBYTE=BUNDLED
             -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
-            -DCMAKE_CXX_FLAGS=-stdlib=${{ matrix.stdlib }}
-            -DCMAKE_CXX_STANDARD_LIBRARIES=-stdlib=${{ matrix.stdlib }}
-          run-tests: false
-          install: true
-          install-location: package
-
-      - name: Zip the install prefix
-        id: zip
-        shell: bash
-        run: |
-          set -euo pipefail
-          name="${{ github.event.repository.name }}-${{ github.ref_name }}-${{ matrix.asset }}.zip"
-          for notice in LICENSE COPYING.* THIRD-PARTY; do
-            if [[ -f "${notice}" ]]; then
-              cp "${notice}" package/
-            fi
-          done
-          (
-            cd package
-            cmake -E tar cf "../${name}" --format=zip -- .
-          )
-          echo "name=${name}" >> "$GITHUB_OUTPUT"
-          echo "Packed ${name}"
-          cmake -E tar tf "${name}"
-
-      - name: Upload archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.zip.outputs.name }}
-          path: ${{ steps.zip.outputs.name }}
-          if-no-files-found: error
+          ctest: false
+          install-prefix: package
+          deploy: true
 
   ###########################################################################
   # macOS
@@ -161,6 +148,9 @@ jobs:
   ###########################################################################
   build-macos:
     needs: [checkout-bootstrap]
+    permissions:
+      actions: write
+      contents: write
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -192,54 +182,32 @@ jobs:
             fi
           done
 
-      - name: Build with toolchain
+      - name: Build and deploy with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
         with:
-          toolchain: ${{ matrix.compiler }}
-          ccache-key: v1-release-${{ matrix.compiler }}
-          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-${{ matrix.compiler }}
+          compiler: ${{ matrix.compiler }}
+          compiler-cache-key: network-v1
+          buildmaster-cache-key: bm-network-release-macos-${{ matrix.compiler }}
           build-type: ${{ env.BUILD_TYPE }}
-          configure-options: >-
-            -DENABLE_LTO=ON
-            -DENABLE_PGO=ON
+          pgo: true
+          lto: true
+          cpu-baseline: auto
+          cmake-options: >-
             -DWITH_STORMBYTE=BUNDLED
             -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
-          run-tests: false
-          install: true
-          install-location: package
-
-      - name: Zip the install prefix
-        id: zip
-        shell: bash
-        run: |
-          set -euo pipefail
-          name="${{ github.event.repository.name }}-${{ github.ref_name }}-${{ matrix.asset }}.zip"
-          for notice in LICENSE COPYING.* THIRD-PARTY; do
-            if [[ -f "${notice}" ]]; then
-              cp "${notice}" package/
-            fi
-          done
-          (
-            cd package
-            cmake -E tar cf "../${name}" --format=zip -- .
-          )
-          echo "name=${name}" >> "$GITHUB_OUTPUT"
-          echo "Packed ${name}"
-          cmake -E tar tf "${name}"
-
-      - name: Upload archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.zip.outputs.name }}
-          path: ${{ steps.zip.outputs.name }}
-          if-no-files-found: error
+          ctest: false
+          install-prefix: package
+          deploy: true
 
   ###########################################################################
   # Windows
   ###########################################################################
   build-windows:
     needs: [checkout-bootstrap]
+    permissions:
+      actions: write
+      contents: write
     runs-on: windows-latest
     name: windows-clang-cl
 
@@ -256,80 +224,23 @@ jobs:
           echo "${{ github.workspace }}\build\lib" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "${{ github.workspace }}\build\buildmaster\install\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Build with toolchain
+      - name: Build and deploy with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
         with:
-          toolchain: clang-cl
-          ccache-key: v1-release-clang-cl
-          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-clang-cl
+          compiler: clang-cl
+          compiler-cache-key: network-v1
+          buildmaster-cache-key: bm-network-release-windows-clang-cl
           build-type: ${{ env.BUILD_TYPE }}
-          configure-options: >-
-            -DENABLE_LTO=ON
-            -DENABLE_PGO=ON
+          pgo: true
+          lto: true
+          cpu-baseline: auto
+          cmake-options: >-
             -DWITH_STORMBYTE=BUNDLED
             -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
-          run-tests: false
-          install: true
-          install-location: package
-
-      - name: Zip the install prefix
-        id: zip
-        shell: bash
-        run: |
-          set -euo pipefail
-          name="${{ github.event.repository.name }}-${{ github.ref_name }}-windows-x64.zip"
-          for notice in LICENSE COPYING.* THIRD-PARTY; do
-            if [[ -f "${notice}" ]]; then
-              cp "${notice}" package/
-            fi
-          done
-          (
-            cd package
-            cmake -E tar cf "../${name}" --format=zip -- .
-          )
-          echo "name=${name}" >> "$GITHUB_OUTPUT"
-          echo "Packed ${name}"
-          cmake -E tar tf "${name}"
-
-      - name: Upload archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.zip.outputs.name }}
-          path: ${{ steps.zip.outputs.name }}
-          if-no-files-found: error
-
-  ###########################################################################
-  # Attach the archives to this tag's release
-  ###########################################################################
-  publish:
-    needs: [build-linux, build-macos, build-windows]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download archives
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Attach archives to this tag's release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          tag="${{ github.ref_name }}"
-          shopt -s nullglob
-          files=(dist/*.zip)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "::error::No archives to upload"
-            exit 1
-          fi
-          printf 'Uploading to %s:\n' "$tag"
-          printf '  %s\n' "${files[@]}"
-          gh release upload "$tag" "${files[@]}" --repo "$GH_REPO" --clobber
+          ctest: false
+          install-prefix: package
+          deploy: true
 
   ###########################################################################
   # Docs (StormByteNetworkDoc) — Linux + same APT lists cache. Independent of the zips.

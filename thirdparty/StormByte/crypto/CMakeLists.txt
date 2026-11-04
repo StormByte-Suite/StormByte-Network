@@ -1,6 +1,6 @@
 include("${CMAKE_SOURCE_DIR}/cmake/stormbyte.cmake")
 
-set(STORMBYTE_CRYPTO_VERSION "2.3.1")
+set(STORMBYTE_CRYPTO_VERSION "3.0.0")
 stormbyte_component_url(STORMBYTE_CRYPTO_URL "${STORMBYTE_CRYPTO_VERSION}" "StormByte-Crypto")
 
 set(STORMBYTE_CRYPTO_OPTSTR "BACKEND=binary;ALIAS=StormByte::Crypto")

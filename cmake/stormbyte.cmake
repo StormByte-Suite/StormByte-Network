@@ -2,7 +2,7 @@
 #
 # stormbyte_component_url(<outvar> <tag> [repo])
 # Writes the download URL for that release tag into <outvar>.
-# The archive name matches release.yml: <repo>-<tag>-<os>-<arch>[-stdlib].zip
+# The archive name matches release.yml: <repo>-<tag>-<os>-<arch>[-libc-stdlib].zip
 # <repo> defaults to StormByte (Base). Logger is StormByte-Logger, System is
 # StormByte-System. The GitHub repository is StormByte-Suite/<repo>.
 # Windows has no runtime suffix. MSVC and clang-cl share that zip: they are
@@ -19,6 +19,37 @@ function(_stormbyte_cxx_blob _out)
 		string(APPEND _blob " ${CMAKE_CXX_FLAGS_${_cfg}}")
 	endif()
 	set(${_out} "${_blob}" PARENT_SCOPE)
+endfunction()
+
+function(_stormbyte_libc _out)
+	if(NOT CMAKE_CXX_COMPILER)
+		message(FATAL_ERROR
+			"stormbyte_component_url: the C++ compiler is not known yet")
+	endif()
+	_stormbyte_cxx_blob(_blob)
+	separate_arguments(_flags UNIX_COMMAND "${_blob}")
+	set(_src "${CMAKE_BINARY_DIR}/CMakeFiles/stormbyte-libc.cpp")
+	file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/CMakeFiles")
+	file(WRITE "${_src}" "#include <features.h>\n")
+	execute_process(
+		COMMAND "${CMAKE_CXX_COMPILER}" -E -dM -x c++ ${_flags} "${_src}"
+		OUTPUT_VARIABLE _defs
+		ERROR_VARIABLE _err
+		RESULT_VARIABLE _rc
+	)
+	if(NOT _rc EQUAL 0)
+		message(FATAL_ERROR
+			"stormbyte_component_url: cannot detect the Linux C library "
+			"(${CMAKE_CXX_COMPILER})\n${_err}")
+	endif()
+	if(_defs MATCHES "(^|\n)[ \t]*#define[ \t]+__GLIBC__[ \t]")
+		set(${_out} "glibc" PARENT_SCOPE)
+	elseif(_defs MATCHES "(^|\n)[ \t]*#define[ \t]+(__UCLIBC__|__BIONIC__)[ \t]")
+		message(FATAL_ERROR
+			"stormbyte_component_url: only glibc and musl are supported")
+	else()
+		set(${_out} "musl" PARENT_SCOPE)
+	endif()
 endfunction()
 
 function(_stormbyte_stdlib _out)
@@ -101,8 +132,12 @@ function(stormbyte_component_url out tag)
 		endif()
 		set(_tag "macos-${_arch}")
 	elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+		if(_arch STREQUAL "x64")
+			set(_arch "amd64")
+		endif()
+		_stormbyte_libc(_libc)
 		_stormbyte_stdlib(_stdlib)
-		set(_tag "linux-${_arch}-${_stdlib}")
+		set(_tag "linux-${_arch}-${_libc}-${_stdlib}")
 	else()
 		message(FATAL_ERROR
 			"stormbyte_component_url: unsupported system '${CMAKE_SYSTEM_NAME}'")

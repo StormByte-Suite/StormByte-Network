@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-26.04, ubuntu-26.04-arm, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     name: checkout-bootstrap (${{ matrix.os }})
     steps:
@@ -38,8 +38,12 @@ jobs:
           submodules: recursive
 
   apt-bootstrap:
-    runs-on: ubuntu-latest
-    name: apt-bootstrap
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-26.04, ubuntu-26.04-arm]
+    runs-on: ${{ matrix.runner }}
+    name: apt-bootstrap (${{ matrix.runner }})
     steps:
       - name: Warm APT lists cache
         uses: stormbytepp/githubactions/.github/actions/update-apt-cached@master
@@ -51,12 +55,30 @@ jobs:
   ###########################################################################
   build-linux:
     needs: [checkout-bootstrap, apt-bootstrap]
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        compiler: [gcc, clang, clang-libc++]
-    name: linux-${{ matrix.compiler }}
+        platform:
+          - runner: ubuntu-26.04
+            arch: amd64
+          - runner: ubuntu-26.04-arm
+            arch: arm64
+        libc: [glibc, musl]
+        toolchain:
+          - compiler: gcc
+            stdlib: libstdc++
+          - compiler: clang
+            stdlib: libc++
+        include:
+          - platform:
+              runner: ubuntu-26.04
+              arch: amd64
+            libc: glibc
+            toolchain:
+              compiler: clang
+              stdlib: libstdc++
+    runs-on: ${{ matrix.platform.runner }}
+    name: linux-${{ matrix.platform.arch }}-${{ matrix.libc }}-${{ matrix.toolchain.compiler }}-${{ matrix.toolchain.stdlib }}
     steps:
       - name: Checkout repository and submodules
         uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
@@ -70,17 +92,18 @@ jobs:
           set -euo pipefail
           # Append. Assigning the variable would drop a path already set.
           add_dir() {
-            local name="$1" dir="$2"
-            local current="${!name-}"
+            local name="$1" dir="$2" current
+            current="$(printenv "$name" || true)"
             case ":${current}:" in
               *":${dir}:"*) return 0 ;;
             esac
             if [[ -n "$current" ]]; then
-              export "${name}=${current}:${dir}"
+              current="${current}:${dir}"
             else
-              export "${name}=${dir}"
+              current="${dir}"
             fi
-            echo "${name}=${!name}" >> "$GITHUB_ENV"
+            export "${name}=${current}"
+            echo "${name}=${current}" >> "$GITHUB_ENV"
           }
           for name in LD_LIBRARY_PATH DYLD_LIBRARY_PATH; do
             add_dir "$name" "${{ github.workspace }}/build/lib"
@@ -91,19 +114,22 @@ jobs:
       - name: Build with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
         with:
-          toolchain: ${{ matrix.compiler }}
-          ccache-key: v1-release-${{ matrix.compiler }}
-          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-${{ matrix.compiler }}
+          compiler: ${{ matrix.toolchain.compiler }}
+          cxx-stdlib: ${{ matrix.toolchain.stdlib }}
+          libc: ${{ matrix.libc }}
+          compiler-cache-key: network-v1
+          compiler-cache-scope: ${{ matrix.platform.arch }}-${{ matrix.libc }}-${{ matrix.toolchain.compiler }}-${{ matrix.toolchain.stdlib }}
+          buildmaster-cache-key: bm-network-${{ matrix.platform.arch }}-${{ matrix.libc }}-${{ matrix.toolchain.compiler }}-${{ matrix.toolchain.stdlib }}
           build-type: ${{ env.BUILD_TYPE }}
-          configure-options: >-
-            -DENABLE_LTO=ON
-            -DENABLE_PGO=OFF
+          pgo: false
+          lto: true
+          cpu-baseline: auto
+          cmake-options: >-
             -DENABLE_TEST=ON
             -DWITH_STORMBYTE=BUNDLED
             -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
-            ${{ matrix.compiler == 'clang-libc++' && '-DCMAKE_CXX_FLAGS=-stdlib=libc++ -DCMAKE_CXX_STANDARD_LIBRARIES=-stdlib=libc++' || '' }}
-          run-tests: true
+          ctest: true
           ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
 
   ###########################################################################
@@ -112,11 +138,7 @@ jobs:
   build-macos:
     needs: [checkout-bootstrap]
     runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        compiler: [clang]
-    name: macos-${{ matrix.compiler }}
+    name: macos-clang-BUNDLED
     steps:
       - name: Checkout repository and submodules
         uses: stormbytepp/githubactions/.github/actions/checkout-cached@master
@@ -130,17 +152,18 @@ jobs:
           set -euo pipefail
           # Append. Assigning the variable would drop a path already set.
           add_dir() {
-            local name="$1" dir="$2"
-            local current="${!name-}"
+            local name="$1" dir="$2" current
+            current="$(printenv "$name" || true)"
             case ":${current}:" in
               *":${dir}:"*) return 0 ;;
             esac
             if [[ -n "$current" ]]; then
-              export "${name}=${current}:${dir}"
+              current="${current}:${dir}"
             else
-              export "${name}=${dir}"
+              current="${dir}"
             fi
-            echo "${name}=${!name}" >> "$GITHUB_ENV"
+            export "${name}=${current}"
+            echo "${name}=${current}" >> "$GITHUB_ENV"
           }
           for name in LD_LIBRARY_PATH DYLD_LIBRARY_PATH; do
             add_dir "$name" "${{ github.workspace }}/build/lib"
@@ -151,18 +174,19 @@ jobs:
       - name: Build with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
         with:
-          toolchain: ${{ matrix.compiler }}
-          ccache-key: v1-release-${{ matrix.compiler }}
-          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-${{ matrix.compiler }}
+          compiler: clang
+          compiler-cache-key: network-v1
+          buildmaster-cache-key: bm-network-macos-clang
           build-type: ${{ env.BUILD_TYPE }}
-          configure-options: >-
-            -DENABLE_LTO=ON
-            -DENABLE_PGO=OFF
+          pgo: false
+          lto: true
+          cpu-baseline: auto
+          cmake-options: >-
             -DENABLE_TEST=ON
             -DWITH_STORMBYTE=BUNDLED
             -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
-          run-tests: true
+          ctest: true
           ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test
 
       - name: Diagnose macOS TLS fixture rejection
@@ -180,7 +204,7 @@ jobs:
   build-windows:
     needs: [checkout-bootstrap]
     runs-on: windows-latest
-    name: windows-clang-cl
+    name: windows-clang-cl-BUNDLED
 
     steps:
       - name: Checkout repository and submodules
@@ -198,16 +222,17 @@ jobs:
       - name: Build with toolchain
         uses: stormbytepp/githubactions/.github/actions/build-with-toolchain@master
         with:
-          toolchain: clang-cl
-          ccache-key: v1-release-clang-cl
-          buildmaster-datadir-cache-key: bm-datadir-${{ runner.os }}-clang-cl
+          compiler: clang-cl
+          compiler-cache-key: network-v1
+          buildmaster-cache-key: bm-network-windows-clang-cl
           build-type: ${{ env.BUILD_TYPE }}
-          configure-options: >-
-            -DENABLE_LTO=ON
-            -DENABLE_PGO=OFF
+          pgo: false
+          lto: true
+          cpu-baseline: auto
+          cmake-options: >-
             -DENABLE_TEST=ON
             -DWITH_STORMBYTE=BUNDLED
             -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
-          run-tests: true
+          ctest: true
           ctest-options: --output-on-failure --timeout 300 --test-dir ${{ github.workspace }}/build/test

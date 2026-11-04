@@ -7,11 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.2.0...HEAD
+
+## [3.2.0] - 2026-11-04
+
 ### Added
 
 - Expose the accepted peer's numeric IP address and source port through `PeerAddress` and the protected `Server::GetPeerAddress(uuid)` accessor.
+- Make installed Network packages discoverable with `find_package(StormByte COMPONENTS Network)`.
 
-[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.1.0...HEAD
+### Changed
+
+- Bundled builds use StormByte Base, Buffer, Crypto, Logger and System 3.0.0; require BuildMaster 2.1.5.
+
+[3.2.0]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.1.0...3.2.0
 
 ## [3.1.0] - 2026-11-02
 

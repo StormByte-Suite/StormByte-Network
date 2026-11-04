@@ -11,6 +11,9 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/lib/public/StormByte/"
 	PATTERN "*.h"
 	PATTERN "*.hxx"
 )
+install(FILES "${CMAKE_SOURCE_DIR}/cmake/FindStormByteNetwork.cmake"
+	DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/cmake/Modules"
+)
 if(WITH_NGHTTP2 STREQUAL "BUNDLED")
 	install(FILES "${CMAKE_SOURCE_DIR}/thirdparty/nghttp2/src/COPYING"
 		DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/StormByte-Network"

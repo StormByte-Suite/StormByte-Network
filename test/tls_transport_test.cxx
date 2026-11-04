@@ -514,9 +514,10 @@ int test_transfer_read_write_and_shutdown_deadlines() {
 		fixture.Start(0, false, true, true);
 		ASSERT_TRUE(HandshakeSucceeded(fixture.socket, session,
 			{std::chrono::steady_clock::now() + 2s}));
+		// The deadline measures I/O, not allocation of the large write buffer.
+		std::vector<std::byte> bytes(operation == 1 ? 8 * 1024 * 1024 : 1, std::byte{42});
 		const auto start = std::chrono::steady_clock::now();
 		const Socket::OperationControl control{start + 50ms};
-		std::vector<std::byte> bytes(operation == 1 ? 8 * 1024 * 1024 : 1, std::byte{42});
 		Socket::TLS::Result result;
 		if (operation == 0)
 			result = Socket::TLS::Read(fixture.socket, session, bytes, control);
