@@ -73,7 +73,9 @@ The private socket adapter drives Crypto's TLS 1.3 buffer session without
 including or linking OpenSSL directly. DNS, connect, authentication and subsequent
 I/O can share one absolute deadline and a borrowed cancellation flag. Crypto
 validates peer identity and trust before application data is accepted; the HTTP
-client negotiates HTTP/1.1 or HTTP/2 through ALPN.
+client negotiates HTTP/1.1 or HTTP/2 through ALPN. Responses are buffered by
+default; an optional `HTTP::Receiver` streams the final body chunk by chunk
+instead, for example to write a large download to disk with progress.
 
 TLS failures, timeout and cancellation abandon the connection instead of
 replaying partially consumed plaintext/ciphertext. Bare TCP EOF is rejected as

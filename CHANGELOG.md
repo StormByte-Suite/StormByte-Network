@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Expose the accepted peer's numeric IP address and source port through `PeerAddress` and the protected `Server::GetPeerAddress(uuid)` accessor.
 - Make installed Network packages discoverable with `find_package(StormByte COMPONENTS Network)`.
+- Stream HTTP response bodies through an optional borrowed `HTTP::Receiver` (`Options::receiver`) over HTTP/1.1 and HTTP/2, for downloads with progress and without buffering the body in memory. `Begin` receives the final status and fields (including Content-Length) before any body byte, and `Write` receives every chunk in order; `Response::body` stays empty and trailers are still returned. `body_bytes` bounds the streamed total. A receiver that declines or throws ends the request with the new `Error::Rejected`; the existing cancellation flag and deadline keep working.
 
 ### Changed
 

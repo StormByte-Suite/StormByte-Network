@@ -49,6 +49,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstring>
 #include <exception>
 #include <functional>
@@ -127,6 +128,46 @@ void Configure(HT::Client& client, std::string_view identity = "localhost", bool
 	}
 	Require(client.ConfigureTLS(configuration, current), "HTTP custom TLS configuration");
 }
+
+/**
+ * @brief Streaming receiver that records delivery and can decline or fail.
+ */
+struct Collector final: HT::Receiver {
+	enum class Mode { Accept, DeclineBegin, DeclineWrite, ThrowWrite };	///< Injected behavior.
+	Mode mode;	///< Test scenario.
+	std::string body;	///< Concatenated delivered chunks.
+	std::string length;	///< Content-Length seen by Begin.
+	unsigned short status{0};	///< Final status seen by Begin.
+	std::size_t begins{0};	///< Begin calls.
+	std::size_t writes{0};	///< Write calls.
+	bool body_before_begin{false};	///< Ordering violation.
+
+	/**
+	 * @brief Select the receiver behavior.
+	 * @param mode Test scenario.
+	 */
+	explicit Collector(Mode mode = Mode::Accept): mode(mode) {}
+
+	bool Begin(unsigned short final_status, const Safe::Vector<HT::Header>& headers) override {
+		++begins;
+		status = final_status;
+		for (const auto& header: headers)
+			if (std::string_view(header.name) == "content-length")
+				length = std::string_view(header.value);
+		return mode != Mode::DeclineBegin;
+	}
+
+	bool Write(std::span<const std::byte> bytes) override {
+		if (!begins)
+			body_before_begin = true;
+		Require(!bytes.empty(), "receiver chunks are nonempty");
+		++writes;
+		if (mode == Mode::ThrowWrite)
+			throw std::runtime_error("receiver failure");
+		body.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		return mode != Mode::DeclineWrite;
+	}
+};
 
 /**
  * @brief Bounded test-side plain/TLS channel built on Network, not OpenSSL.
@@ -667,6 +708,104 @@ int test_http1_malformed() {
 	return 0;
 }
 
+/**
+ * @brief Deterministic binary payload covering every byte value.
+ * @param size Payload length.
+ * @param seed Byte pattern multiplier.
+ * @return Payload bytes.
+ */
+std::string Payload(std::size_t size, std::size_t seed = 1) {
+	std::string payload(size, '\0');
+	for (std::size_t index = 0; index < payload.size(); ++index)
+		payload[index] = static_cast<char>((index * seed) % 251);
+	return payload;
+}
+
+int test_http1_streaming_receiver() {
+	const auto payload = Payload(200000, 3);
+	for (const bool chunked: {false, true}) {
+		Fixture fixture;
+		fixture.Start([&](Peer& peer) {
+			peer.Request();
+			if (!chunked) {
+				peer.Write("HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(payload.size()) + "\r\n\r\n");
+				peer.Write(payload);
+				return;
+			}
+			peer.Write("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+			for (std::size_t offset = 0; offset < payload.size(); offset += 50000) {
+				const auto part = std::string_view(payload).substr(offset, 50000);
+				std::array<char, 16> digits{};
+				const auto end = std::to_chars(digits.data(), digits.data() + digits.size(), part.size(), 16).ptr;
+				peer.Write(std::string(digits.data(), end) + "\r\n");
+				peer.Write(part);
+				peer.Write("\r\n");
+			}
+			peer.Write("0\r\nX-Checksum: done\r\n\r\n");
+		});
+		Collector collector;
+		HT::Options options;
+		options.receiver = &collector;
+		options.body_bytes = ByteSize{payload.size()};
+		HT::Client client;
+		const auto result = client.Execute(HT::Request(fixture.URL()), options);
+		Require(result && result->status == 200 && result->body.empty(), "HTTP/1 streamed response is not buffered");
+		Require(collector.begins == 1 && collector.status == 200 && !collector.body_before_begin, "HTTP/1 final head first");
+		Require(collector.writes > 1 && collector.body == payload, "HTTP/1 byte-exact streamed chunks");
+		Require(chunked ? result->trailers.size() == 1 : collector.length == std::to_string(payload.size()),
+			"HTTP/1 streamed length and trailers");
+		fixture.Finish();
+	}
+	{
+		Fixture fixture;
+		fixture.Start([](Peer& peer) {
+			peer.Request();
+			peer.Write("HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\n");
+		});
+		Collector collector;
+		HT::Options options;
+		options.receiver = &collector;
+		HT::Client client;
+		HT::Request request(fixture.URL());
+		request.method = std::string_view("HEAD");
+		const auto result = client.Execute(request, options);
+		Require(result && collector.begins == 1 && collector.writes == 0, "HTTP/1 bodyless streamed response");
+		fixture.Finish();
+	}
+	for (const auto mode: {Collector::Mode::DeclineBegin, Collector::Mode::DeclineWrite, Collector::Mode::ThrowWrite}) {
+		Fixture fixture;
+		fixture.Start([&](Peer& peer) {
+			peer.Request();
+			peer.Write("HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(payload.size()) + "\r\n\r\n");
+			peer.Write(payload);
+		});
+		Collector collector(mode);
+		HT::Options options;
+		options.receiver = &collector;
+		HT::Client client;
+		Failure(client.Execute(HT::Request(fixture.URL()), options), HT::Error::Rejected);
+		Require(collector.writes == (mode == Collector::Mode::DeclineBegin ? 0u : 1u), "HTTP/1 receiver stops delivery");
+		fixture.Finish(true);
+	}
+	{
+		Fixture fixture;
+		fixture.Start([&](Peer& peer) {
+			peer.Request();
+			peer.Write("HTTP/1.1 200 OK\r\n\r\n");
+			peer.Write(payload);
+		});
+		Collector collector;
+		HT::Options options;
+		options.receiver = &collector;
+		options.body_bytes = ByteSize{payload.size() - 1};
+		HT::Client client;
+		Failure(client.Execute(HT::Request(fixture.URL()), options), HT::Error::LimitExceeded);
+		Require(collector.body.size() < payload.size(), "HTTP/1 streamed body bound");
+		fixture.Finish(true);
+	}
+	return 0;
+}
+
 int test_http1_truncated() {
 	for (const auto& response: {
 		"", "HTTP/1.1 200", "HTTP/1.1 200 OK\r\n",
@@ -831,6 +970,67 @@ int test_http2_native_allocation_bound() {
 	Failure(client.Execute(HT::Request(fixture.URL()), options), HT::Error::LimitExceeded);
 	fixture.Finish(true);
 	Require(received.load(), "HTTP/2 native allocation test must reach HPACK decoding");
+	return 0;
+}
+
+int test_http2_streaming_receiver() {
+	const auto payload = Payload(500000, 5);
+	for (const bool secure: {false, true}) {
+		Fixture fixture(secure, std::string("\x02h2", 3));
+		fixture.Start([&](Peer& peer) {
+			H2Peer server(peer, payload);
+			server.Run();
+		});
+		HT::Client client;
+		if (secure)
+			Configure(client);
+		Collector collector;
+		HT::Options options;
+		options.protocol = secure ? HT::Protocol::Automatic : HT::Protocol::HTTP2;
+		options.receiver = &collector;
+		options.body_bytes = ByteSize{payload.size()};
+		const auto result = client.Execute(HT::Request(fixture.URL("/", "localhost")), options);
+		if (!result)
+			throw std::runtime_error("HTTP/2 streamed response failed (" + std::to_string(static_cast<int>(*result.error()))
+				+ "), secure=" + std::to_string(secure));
+		Require(result->protocol == HT::Protocol::HTTP2 && result->body.empty() && result->trailers.size() == 1,
+			"HTTP/2 streamed response is not buffered");
+		Require(collector.begins == 1 && collector.status == 200 && !collector.body_before_begin
+			&& collector.length == std::to_string(payload.size()), "HTTP/2 final head first");
+		Require(collector.writes > 1 && collector.body == payload, "HTTP/2 byte-exact streamed chunks");
+		fixture.Finish();
+	}
+	for (const auto mode: {Collector::Mode::DeclineBegin, Collector::Mode::DeclineWrite, Collector::Mode::ThrowWrite}) {
+		Fixture fixture;
+		fixture.Start([&](Peer& peer) {
+			H2Peer server(peer, payload);
+			server.Run();
+		});
+		Collector collector(mode);
+		HT::Options options;
+		options.protocol = HT::Protocol::HTTP2;
+		options.receiver = &collector;
+		HT::Client client;
+		Failure(client.Execute(HT::Request(fixture.URL()), options), HT::Error::Rejected);
+		Require(collector.writes == (mode == Collector::Mode::DeclineBegin ? 0u : 1u), "HTTP/2 receiver stops delivery");
+		fixture.Finish(true);
+	}
+	{
+		Fixture fixture;
+		fixture.Start([&](Peer& peer) {
+			H2Peer server(peer, payload);
+			server.Run();
+		});
+		Collector collector;
+		HT::Options options;
+		options.protocol = HT::Protocol::HTTP2;
+		options.receiver = &collector;
+		options.body_bytes = ByteSize{payload.size() - 1};
+		HT::Client client;
+		Failure(client.Execute(HT::Request(fixture.URL()), options), HT::Error::LimitExceeded);
+		Require(collector.begins == 0 && collector.writes == 0, "HTTP/2 declared length exceeds streamed bound");
+		fixture.Finish(true);
+	}
 	return 0;
 }
 
@@ -1125,6 +1325,7 @@ int main() {
 	Run("test_http1_ipv6", test_http1_ipv6);
 	Run("test_http1_limits", test_http1_limits);
 	Run("test_http1_malformed", test_http1_malformed);
+	Run("test_http1_streaming_receiver", test_http1_streaming_receiver);
 	Run("test_http1_truncated", test_http1_truncated);
 	// -------------------
 	// HTTP2
@@ -1134,6 +1335,7 @@ int main() {
 	Run("test_http2_errors_and_bounds", test_http2_errors_and_bounds);
 	Run("test_http2_flow_control_clear_and_tls", test_http2_flow_control_clear_and_tls);
 	Run("test_http2_native_allocation_bound", test_http2_native_allocation_bound);
+	Run("test_http2_streaming_receiver", test_http2_streaming_receiver);
 	// -------------------
 	// HTTPS
 	// -------------------

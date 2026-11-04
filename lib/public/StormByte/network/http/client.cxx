@@ -107,6 +107,8 @@ Response& Response::operator=(Response&& other) noexcept = default;
 
 HTTP::Client::Client(): m_resolver(Safe::MakeShared<Connection::Resolver>()) {}
 
+Receiver::~Receiver() noexcept = default;
+
 HTTP::Client::Client(Client&& other) noexcept = default;
 
 HTTP::Client::~Client() noexcept = default;
@@ -153,6 +155,45 @@ namespace {
 			default:
 				throw Error::Transport;
 		}
+	}
+
+	/**
+	 * @brief Offer the final response to an optional streaming receiver.
+	 * @param receiver Borrowed receiver or null.
+	 * @param status Final status.
+	 * @param headers Final fields.
+	 */
+	void Offer(Receiver* receiver, unsigned short status, const Safe::Vector<Header>& headers) {
+		if (!receiver)
+			return;
+		bool accepted = false;
+		try {
+			accepted = receiver->Begin(status, headers);
+		}
+		catch (...) {
+			throw Error::Rejected;
+		}
+		if (!accepted)
+			throw Error::Rejected;
+	}
+
+	/**
+	 * @brief Stream one nonempty body chunk to the receiver.
+	 * @param receiver Borrowed receiver.
+	 * @param bytes Borrowed chunk.
+	 */
+	void Deliver(Receiver& receiver, std::span<const std::byte> bytes) {
+		if (bytes.empty())
+			return;
+		bool accepted = false;
+		try {
+			accepted = receiver.Write(bytes);
+		}
+		catch (...) {
+			throw Error::Rejected;
+		}
+		if (!accepted)
+			throw Error::Rejected;
 	}
 
 	/**
@@ -490,6 +531,7 @@ namespace {
 		std::size_t available{0};	///< Retained byte count.
 		std::size_t headers{0};	///< Aggregate status/header/trailer bytes.
 		std::size_t fields{0};	///< Aggregate fields.
+		std::size_t delivered{0};	///< Final body bytes buffered or streamed.
 
 		/**
 		 * @brief Refill only an exhausted buffer.
@@ -558,19 +600,23 @@ namespace {
 		}
 
 		/**
-		 * @brief Copy an exact body prefix into Safe storage.
-		 * @param body Output.
+		 * @brief Copy an exact body prefix into Safe storage or the streaming receiver.
+		 * @param body Buffered output, unused when streaming.
 		 * @param length Bytes required.
 		 */
 		void Body(Safe::Binary& body, std::size_t length) {
-			auto size = Count(body.size());
-			Account(size, length, Count(channel.options.body_bytes));
+			Account(delivered, length, Count(channel.options.body_bytes));
+			auto* receiver = channel.options.receiver;
 			while (length) {
 				Check(channel.control.Check());
 				if (!Fill())
 					throw Error::Truncated;
 				const auto part = std::min(length, available - offset);
-				body.append(std::span(buffer).subspan(offset, part));
+				const auto bytes = std::span(buffer).subspan(offset, part);
+				if (receiver)
+					Deliver(*receiver, bytes);
+				else
+					body.append(bytes);
 				offset += part;
 				length -= part;
 			}
@@ -727,6 +773,7 @@ namespace {
 		}
 		if (response.status == 204 && (length || chunked))
 			throw Error::Protocol;
+		Offer(channel.options.receiver, response.status, response.headers);
 		if (Bodyless(std::string_view(request.method), response.status))
 			return response;
 		if (chunked) {
@@ -753,7 +800,7 @@ namespace {
 		else
 			while (reader.Fill())
 				reader.Body(response.body, reader.available - reader.offset);
-		if (response.status == 205 && !response.body.empty())
+		if (response.status == 205 && reader.delivered)
 			throw Error::Protocol;
 		return response;
 	}
@@ -781,6 +828,7 @@ namespace {
 		std::size_t fields{0};	///< Aggregate field count.
 		std::size_t interim{0};	///< Informational count.
 		std::size_t sent{0};	///< Accepted upload prefix.
+		std::size_t received{0};	///< Final body bytes buffered or streamed.
 		std::optional<std::size_t> length;	///< Expected body length.
 		int32_t stream{0};	///< Sole locally initiated stream.
 		bool final{false};	///< Final response headers accepted.
@@ -1030,6 +1078,7 @@ namespace {
 					if (!self.no_body && self.length && *self.length > Count(self.channel.options.body_bytes))
 						throw Error::LimitExceeded;
 					self.final = true;
+					Offer(self.channel.options.receiver, self.response.status, self.response.headers);
 				}
 				else {
 					if (self.status || !(frame->hd.flags & NGHTTP2_FLAG_END_STREAM))
@@ -1041,19 +1090,23 @@ namespace {
 		}
 
 		/**
-		 * @brief Receive one flow-controlled body chunk into bounded Safe storage.
+		 * @brief Receive one flow-controlled body chunk into bounded Safe storage
+		 * or the streaming receiver.
 		 */
 		static int Data(nghttp2_session*, uint8_t, int32_t stream, const uint8_t* data, size_t size, void* user) noexcept {
 			return Guard(user, [=](H2& self) {
 				if (stream != self.stream || !self.final || self.trailers || (self.no_body && size))
 					throw Error::Protocol;
-				auto total = Count(self.response.body.size());
-				Account(total, size, Count(self.channel.options.body_bytes));
-				if (self.length && !self.no_body && total > *self.length)
+				Account(self.received, size, Count(self.channel.options.body_bytes));
+				if (self.length && !self.no_body && self.received > *self.length)
 					throw Error::Protocol;
 				if (self.response.status == 205 && size)
 					throw Error::Protocol;
-				self.response.body.append(std::span(reinterpret_cast<const std::byte*>(data), size));
+				const auto bytes = std::span(reinterpret_cast<const std::byte*>(data), size);
+				if (auto* receiver = self.channel.options.receiver)
+					Deliver(*receiver, bytes);
+				else
+					self.response.body.append(bytes);
 			});
 		}
 
@@ -1064,7 +1117,7 @@ namespace {
 			return Guard(user, [=](H2& self) {
 				if (stream != self.stream || error != NGHTTP2_NO_ERROR)
 					throw Error::HTTP2;
-				if (!self.final || (!self.no_body && self.length && Count(self.response.body.size()) != *self.length))
+				if (!self.final || (!self.no_body && self.length && self.received != *self.length))
 					throw Error::Truncated;
 				self.done = true;
 			});

@@ -50,6 +50,8 @@
 #include <StormByte/safe/vector.hxx>
 
 #include <chrono>
+#include <cstddef>
+#include <span>
 #include <string_view>
 
 /**
@@ -103,7 +105,8 @@ namespace StormByte {
 				Protocol,	///< Invalid HTTP semantics, framing or required ALPN.
 				Truncated,	///< Incomplete message or bare TCP EOF on authenticated TLS.
 				HTTP2,	///< HTTP/2 engine, frame, reset or GOAWAY failure.
-				Allocation	///< Provider-side allocation or callback construction failed.
+				Allocation,	///< Provider-side allocation or callback construction failed.
+				Rejected	///< The streaming Receiver declined the response or failed.
 			};
 
 			/**
@@ -270,6 +273,65 @@ namespace StormByte {
 			};
 
 			/**
+			 * @brief Borrowed streaming consumer of the final response body.
+			 * @details When Options::receiver is set, Begin is called once with the final
+			 * status and fields before any body byte, including for bodyless responses.
+			 * Every body byte is then passed to Write in order instead of being stored in
+			 * Response::body, which stays empty; trailers are still returned. body_bytes
+			 * bounds the total streamed body, so large downloads must raise body_bytes,
+			 * wire_bytes and timeout explicitly. Returning false or throwing stops the
+			 * exchange with Error::Rejected and closes the connection; bytes already
+			 * written are not retracted. Callbacks run synchronously on the Execute
+			 * thread and must not use the same client.
+			 */
+			class STORMBYTE_NETWORK_PUBLIC Receiver {
+				public:
+					/**
+					 * @brief Construct a stateless receiver base.
+					 */
+					Receiver() noexcept = default;
+					/**
+					 * @brief Copy the stateless base.
+					 * @param other Source receiver.
+					 */
+					Receiver(const Receiver& other) noexcept = default;
+					/**
+					 * @brief Move the stateless base.
+					 * @param other Source receiver.
+					 */
+					Receiver(Receiver&& other) noexcept = default;
+					/**
+					 * @brief Destroy the receiver.
+					 */
+					virtual ~Receiver() noexcept;
+					/**
+					 * @brief Copy the stateless base.
+					 * @param other Source receiver.
+					 * @return This receiver.
+					 */
+					Receiver& operator=(const Receiver& other) noexcept = default;
+					/**
+					 * @brief Move the stateless base.
+					 * @param other Source receiver.
+					 * @return This receiver.
+					 */
+					Receiver& operator=(Receiver&& other) noexcept = default;
+					/**
+					 * @brief Accept or decline the final response before its body.
+					 * @param status Final three-digit status.
+					 * @param headers Final fields, preserving duplicates; borrowed for this call.
+					 * @return Whether to continue receiving the body.
+					 */
+					virtual bool Begin(unsigned short status, const Safe::Vector<Header>& headers) = 0;
+					/**
+					 * @brief Consume the next nonempty body chunk.
+					 * @param bytes Chunk borrowed for this call only.
+					 * @return Whether to continue receiving.
+					 */
+					virtual bool Write(std::span<const std::byte> bytes) = 0;
+			};
+
+			/**
 			 * @brief Scalar request limits. All bounds include informational responses
 			 * and trailers; wire_bytes counts received HTTP plaintext, including framing.
 			 * Cancellation is synchronously borrowed, checked during every phase, and
@@ -317,7 +379,8 @@ namespace StormByte {
 				const Safe::Atomic<bool>* cancellation{nullptr};	///< Borrowed until Execute returns.
 				ByteSize header_bytes{65536};	///< Aggregate decoded headers, status and trailer bytes.
 				Size header_fields{256};	///< Aggregate field count.
-				ByteSize body_bytes{16 * 1024 * 1024};	///< Maximum buffered body in either direction.
+				Receiver* receiver{nullptr};	///< Borrowed until Execute returns; streams the final body.
+				ByteSize body_bytes{16 * 1024 * 1024};	///< Maximum buffered or streamed body in either direction.
 				ByteSize wire_bytes{32 * 1024 * 1024};	///< Maximum incoming wire plaintext.
 				ByteSize http2_bytes{1024 * 1024};	///< Maximum live native HTTP/2 session allocation.
 				ByteSize url_bytes{8192};	///< Maximum URL bytes.
@@ -385,6 +448,7 @@ namespace StormByte {
 					 * @param request Synchronously borrowed immutable request.
 					 * @param options Total deadline, protocol and buffer bounds.
 					 * @return Final response or explicit failure; never partial success.
+					 * With a Receiver, failure can follow bytes already delivered to it.
 					 * @throws StormByte::Safe::AllocationError Error storage cannot be allocated.
 					 */
 					Expected<Response, Error> Execute(const Request& request, const Options& options = {});
