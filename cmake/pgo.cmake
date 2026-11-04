@@ -94,7 +94,8 @@ endif()
 
 # LLVM value profiling can corrupt its linked list under concurrent AArch64
 # training (llvm/llvm-project#160968). Keep execution counters and threading.
-set(_pgo_clang_generate_workaround "")
+# Disable it on use too: these profiles deliberately contain no value sites.
+set(_pgo_clang_workaround "")
 if(_pgo_kind STREQUAL "CLANG" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
 	include(CheckCXXSourceCompiles)
 	include(CMakePushCheckState)
@@ -109,7 +110,7 @@ int main() { return 0; }" PGO_AARCH64_NO_VALUE_PROFILING)
 	if(PGO_AARCH64_NO_VALUE_PROFILING)
 		# CMake also passes C/C++ flags to link-only feature probes. Suppress
 		# unused-argument diagnostics for this compile-only option, not others.
-		set(_pgo_clang_generate_workaround
+		set(_pgo_clang_workaround
 			"--start-no-unused-arguments" "-mllvm" "-disable-vp"
 			"--end-no-unused-arguments")
 	endif()
@@ -260,8 +261,8 @@ macro(_pgo_apply_stage_flags stage)
 				${_pgo_generate_workaround})
 			list(APPEND _link "-fprofile-generate=${PGO_PROFILE_DIR}" ${_pgo_generate_workaround})
 		elseif(_pgo_kind STREQUAL "CLANG")
-			list(APPEND _compile "-fprofile-generate=${PGO_PROFILE_DIR}" ${_pgo_clang_generate_workaround})
-			list(APPEND _link "-fprofile-generate=${PGO_PROFILE_DIR}" ${_pgo_clang_generate_workaround})
+			list(APPEND _compile "-fprofile-generate=${PGO_PROFILE_DIR}" ${_pgo_clang_workaround})
+			list(APPEND _link "-fprofile-generate=${PGO_PROFILE_DIR}" ${_pgo_clang_workaround})
 		elseif(_pgo_kind STREQUAL "CLANG_CL")
 			# lld-link is the linker, not clang-cl. A /clang: flag is an input file
 			# to lld-link. Instrumentation stays in the objects; the link only needs
@@ -285,8 +286,9 @@ macro(_pgo_apply_stage_flags stage)
 			list(APPEND _compile
 				"-fprofile-use=${PGO_PROFILE_DIR}/default.profdata"
 				"-Wno-error=profile-instr-unprofiled"
-				"-Wno-error=profile-instr-out-of-date")
-			list(APPEND _link "-fprofile-use=${PGO_PROFILE_DIR}/default.profdata")
+				"-Wno-error=profile-instr-out-of-date"
+				${_pgo_clang_workaround})
+			list(APPEND _link "-fprofile-use=${PGO_PROFILE_DIR}/default.profdata" ${_pgo_clang_workaround})
 		elseif(_pgo_kind STREQUAL "CLANG_CL")
 			list(APPEND _compile
 				"/clang:-fprofile-use=${PGO_PROFILE_DIR}/default.profdata"
