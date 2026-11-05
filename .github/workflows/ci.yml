@@ -126,6 +126,7 @@ jobs:
           cpu-baseline: auto
           cmake-options: >-
             -DENABLE_TEST=ON
+            -DENABLE_CI_FIXTURES=ON
             -DWITH_STORMBYTE=BUNDLED
             -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
@@ -183,6 +184,7 @@ jobs:
           cpu-baseline: auto
           cmake-options: >-
             -DENABLE_TEST=ON
+            -DENABLE_CI_FIXTURES=ON
             -DWITH_STORMBYTE=BUNDLED
             -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON
@@ -231,6 +233,7 @@ jobs:
           cpu-baseline: auto
           cmake-options: >-
             -DENABLE_TEST=ON
+            -DENABLE_CI_FIXTURES=ON
             -DWITH_STORMBYTE=BUNDLED
             -DWITH_NGHTTP2=BUNDLED
             -DBUILD_SHARED_LIBS=ON

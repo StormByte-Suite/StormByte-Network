@@ -547,6 +547,11 @@ StormByte::Network::PacketPointer MakePingPacket() {
 
 ## Testing
 
+Package discovery fixtures are CI-only and require `-DENABLE_CI_FIXTURES=ON`,
+which is disabled by default and enabled explicitly by CI. Normal API tests,
+including network service discovery and TLS fixtures, remain available locally
+and during PGO training with `-DENABLE_TEST=ON`.
+
 Enable tests with `-DENABLE_TEST=ON` and run CTest from the build's `test/` registration root. For development validation, use a temporary build directory and leave the user's `build/` untouched unless explicitly authorized:
 
 ```bash
