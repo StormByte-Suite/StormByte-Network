@@ -395,6 +395,9 @@ int test_handshake_rejects_identity_and_untrusted_root() {
 			{std::chrono::steady_clock::now() + 2s});
 		ASSERT_TRUE(result.state == Socket::OperationState::Error && result.tls_failure);
 		ASSERT_TRUE(result.error == CryptoTLS::SessionError::PeerRejected);
+		ASSERT_FALSE(result.detail.empty());
+		ASSERT_TRUE(std::string_view(result.detail) != CryptoTLS::DescribeSessionError(result.error));
+		ASSERT_TRUE(std::string_view(result.detail) != session.FailureDetail());
 		ASSERT_TRUE(fixture.socket.Status() == Connection::Status::Disconnected);
 		fixture.Join();
 	}
@@ -410,6 +413,7 @@ int test_handshake_rejects_invalid_records() {
 	const auto result = Socket::TLS::Handshake(fixture.socket, session,
 		{std::chrono::steady_clock::now() + 1s});
 	ASSERT_TRUE(result.state == Socket::OperationState::Error && result.tls_failure);
+	ASSERT_FALSE(result.detail.empty());
 	ASSERT_TRUE(fixture.socket.Status() == Connection::Status::Disconnected);
 	return 0;
 }
@@ -547,6 +551,7 @@ int test_transfer_rejects_truncated_tcp_eof() {
 	std::array<std::byte, 1> output{};
 	const auto result = Socket::TLS::Read(fixture.socket, session, output, control);
 	ASSERT_TRUE(result.state == Socket::OperationState::Error && result.truncated);
+	ASSERT_TRUE(std::string_view(result.detail).find("close-notify") != std::string_view::npos);
 	ASSERT_TRUE(!result.tls_failure);
 	ASSERT_TRUE(fixture.socket.Status() == Connection::Status::Disconnected);
 	fixture.Join();

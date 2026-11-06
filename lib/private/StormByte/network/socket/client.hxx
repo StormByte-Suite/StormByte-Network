@@ -133,6 +133,30 @@ namespace StormByte {
 					OperationResult StartTLS(Crypto::TLS::Session session, const OperationControl& control);
 
 					/**
+					 * @brief Authenticate and retain a copied TLS failure explanation.
+					 * @param session Independent configured session.
+					 * @param control Total connect budget.
+					 * @param detail Output cleared on entry and populated on TLS failure.
+					 * @return Completion or terminal stop reason.
+					 */
+					OperationResult StartTLS(Crypto::TLS::Session session, const OperationControl& control,
+						Safe::String& detail);
+
+					/**
+					 * @brief Log the live engine explanation or a static Crypto category.
+					 * @param error Crypto failure category.
+					 * @return Always false, for fail-closed transport paths.
+					 */
+					bool TLSFailure(Crypto::TLS::SessionError error) noexcept;
+
+					/**
+					 * @brief Borrow the engine explanation, falling back to a Crypto category.
+					 * @param error Crypto failure category.
+					 * @return View valid until the engine is replaced or destroyed.
+					 */
+					std::string_view TLSFailureDetail(Crypto::TLS::SessionError error) const noexcept;
+
+					/**
 					 * @brief Write application bytes, including TLS, without restarting the budget.
 					 * @param data Borrowed application bytes.
 					 * @param control Total operation budget.

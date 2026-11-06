@@ -453,6 +453,7 @@ namespace {
 		bool encrypted{false};	///< Use authenticated TLS I/O.
 		const Socket::OperationControl& control;	///< Total deadline.
 		const Options& options;	///< Limits.
+		Safe::String& detail;	///< Owned failure output borrowed for this operation.
 		std::size_t wire{0};	///< Received plaintext bytes.
 
 		/**
@@ -460,6 +461,8 @@ namespace {
 		 * @param result Crypto/socket outcome.
 		 */
 		void CheckTLS(const Socket::TLS::Result& result) {
+			if (result.tls_failure || result.truncated)
+				detail = result.detail;
 			if (result.truncated)
 				throw Error::Truncated;
 			if (result.tls_failure)
@@ -1263,20 +1266,43 @@ namespace {
 bool HTTP::Client::ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
 	bool refresh_validation_time) noexcept {
 	try {
-		auto input = configuration;
-		input.alpn_wire = {};
-		auto copied = Safe::MakeShared<Detail::TLSConfiguration>(input, refresh_validation_time);
-		if (!copied->Create())
-			return false;
-		m_tls = std::move(copied);
-		return true;
+		Safe::String detail;
+		return ConfigureTLS(configuration, detail, refresh_validation_time);
 	}
 	catch (...) {
 		return false;
 	}
 }
 
+bool HTTP::Client::ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
+	Safe::String& detail, bool refresh_validation_time) {
+	detail.clear();
+	try {
+		auto input = configuration;
+		input.alpn_wire = {};
+		auto copied = Safe::MakeShared<Detail::TLSConfiguration>(input, refresh_validation_time);
+		const auto created = copied->Create();
+		if (!created) {
+			detail = std::string_view{Crypto::TLS::DescribeSessionError(*created.error())};
+			return false;
+		}
+		m_tls = std::move(copied);
+		return true;
+	}
+	catch (...) {
+		detail = std::string_view{"Cannot allocate or copy the TLS configuration."};
+		return false;
+	}
+}
+
 Expected<Response, HTTP::Error> HTTP::Client::Execute(const Request& request, const Options& options) {
+	Safe::String detail;
+	return Execute(request, options, detail);
+}
+
+Expected<Response, HTTP::Error> HTTP::Client::Execute(const Request& request, const Options& options,
+	Safe::String& detail) {
+	detail.clear();
 	try {
 		if (!m_resolver || options.timeout.count() <= 0 || options.timeout > std::chrono::hours{24}
 			|| Count(options.header_bytes) == 0 || Count(options.header_fields) == 0
@@ -1290,7 +1316,7 @@ Expected<Response, HTTP::Error> HTTP::Client::Execute(const Request& request, co
 			throw Error::LimitExceeded;
 		const auto url = ParseURL(std::string_view(request.url));
 		ValidateRequest(request, options, url);
-		Channel channel{{Connection::Protocol::IPv4, {}}, {}, false, control, options};
+		Channel channel{{Connection::Protocol::IPv4, {}}, {}, false, control, options, detail};
 		Check(channel.socket.Connect(url.host, url.port, *m_resolver, control, Connection::AddressPolicy::SystemOrder).state);
 		bool h2 = options.protocol == Protocol::HTTP2;
 		if (url.tls) {
@@ -1308,12 +1334,16 @@ Expected<Response, HTTP::Error> HTTP::Client::Execute(const Request& request, co
 				configuration.alpn_wire = alpn;
 				return Crypto::TLS::Session::CreateClient(configuration);
 			}();
-			if (!configured)
+			if (!configured) {
+				detail = std::string_view{Crypto::TLS::DescribeSessionError(*configured.error())};
 				throw Error::TLS;
+			}
 			channel.tls = std::move(*configured);
 			const auto handshake = Socket::TLS::Handshake(channel.socket, channel.tls, control);
-			if (handshake.truncated)
+			if (handshake.truncated) {
+				detail = handshake.detail;
 				throw Error::TLS;
+			}
 			channel.CheckTLS(handshake);
 			channel.encrypted = true;
 			const auto negotiated = channel.tls.NegotiatedALPN();
@@ -1334,9 +1364,12 @@ Expected<Response, HTTP::Error> HTTP::Client::Execute(const Request& request, co
 		return response;
 	}
 	catch (Error error) {
+		if (error != Error::TLS && error != Error::Truncated)
+			detail.clear();
 		return Unexpected(error);
 	}
 	catch (...) {
+		detail.clear();
 		return Unexpected(Error::Allocation);
 	}
 }

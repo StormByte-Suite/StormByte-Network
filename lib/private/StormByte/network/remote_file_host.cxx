@@ -411,6 +411,9 @@ namespace StormByte::Network::Detail::RemoteFile {
 		if (m_tls_configuration) {
 			try {
 				auto tls = m_tls_configuration->Create();
+				if (!tls)
+					m_logger << Logger::Level::Error << "Auxiliary TLS setup failed: "
+						<< Crypto::TLS::DescribeSessionError(*tls.error()) << std::endl;
 				if (!tls || !m_active_client->StartTLS(std::move(tls.value()), false)) {
 					Stop();
 					return false;

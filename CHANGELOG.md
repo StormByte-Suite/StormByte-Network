@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add caller-owned TLS diagnostic outputs to HTTP requests, application-client connections and client TLS configuration. Preserve Crypto's specific failure explanation through connection cleanup without changing public object layouts or error enumerations.
+
+### Changed
+
+- Require Crypto 3.0.1 for TLS diagnostics; bundled builds download its tagged release archive.
+- Log detailed TLS failures for application, server and remote-file transports, including incremental handshakes and authenticated I/O.
+
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.2.0...HEAD
 
 ## [3.2.0] - 2026-11-04

@@ -1120,12 +1120,16 @@ int test_https_truncated_close_delimited() {
 	});
 	HT::Client client;
 	Configure(client);
-	Failure(client.Execute(HT::Request(fixture.URL())), HT::Error::Truncated);
+	Safe::String detail;
+	Failure(client.Execute(HT::Request(fixture.URL()), {}, detail), HT::Error::Truncated);
+	Require(std::string_view(detail).find("close-notify") != std::string_view::npos,
+		"TLS response truncation must retain its explanation after session cleanup");
 	fixture.Finish();
 	return 0;
 }
 
 int test_https_trust_and_identity_failure() {
+	Safe::String detail{"stale detail"};
 	for (int mode = 0; mode < 3; ++mode) {
 		Fixture fixture(true);
 		fixture.Start([](Peer& peer) { peer.Request(); });
@@ -1134,21 +1138,30 @@ int test_https_trust_and_identity_failure() {
 			Configure(client, "wrong.invalid");
 		else if (mode == 2)
 			Configure(client, "localhost", false, true);
-		Failure(client.Execute(HT::Request(fixture.URL())), HT::Error::TLS);
+		Failure(client.Execute(HT::Request(fixture.URL()), {}, detail), HT::Error::TLS);
+		Require(!detail.empty(), "TLS authentication must retain a diagnostic after cleanup");
+		Require(std::string_view(detail) != CT::DescribeSessionError(CT::SessionError::PeerRejected),
+			"TLS authentication must preserve the engine detail, not just its category");
 		fixture.Finish(true);
 	}
 	HT::Client client;
 	Configure(client);
 	CT::ClientConfiguration invalid;
 	invalid.trust_source = CT::TrustSource::Custom;
-	Require(!client.ConfigureTLS(invalid), "invalid TLS policy must be rejected");
+	Require(!client.ConfigureTLS(invalid, detail), "invalid TLS policy must be rejected");
+	Require(std::string_view(detail) == CT::DescribeSessionError(CT::SessionError::InvalidConfiguration),
+		"TLS setup must return the Crypto category explanation");
 	Fixture fixture(true);
 	fixture.Start([](Peer& peer) {
 		peer.Request();
 		peer.Write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 	});
-	Require(static_cast<bool>(client.Execute(HT::Request(fixture.URL()))), "failed TLS configure preserves previous policy");
+	Require(static_cast<bool>(client.Execute(HT::Request(fixture.URL()), {}, detail)), "failed TLS configure preserves previous policy");
+	Require(detail.empty(), "successful request clears stale TLS diagnostics");
 	fixture.Finish();
+	detail = std::string_view{"stale detail"};
+	Failure(client.Execute(HT::Request("not-a-url"), {}, detail), HT::Error::InvalidURL);
+	Require(detail.empty(), "non-TLS failure clears stale TLS diagnostics");
 	return 0;
 }
 

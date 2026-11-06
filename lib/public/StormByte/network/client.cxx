@@ -206,6 +206,16 @@ bool Client::Connect(const Connection::Protocol& protocol, std::string_view addr
 
 Expected<void, Client::Error> Client::Connect(const Connection::Protocol& protocol, std::string_view address,
 	unsigned short port, std::chrono::milliseconds timeout) {
+	Safe::String detail;
+	const auto result = Connect(protocol, address, port, timeout, detail);
+	if (!detail.empty())
+		m_logger << Logger::Level::Error << "TLS connection failed: " << std::string_view(detail) << std::endl;
+	return result;
+}
+
+Expected<void, Client::Error> Client::Connect(const Connection::Protocol& protocol, std::string_view address,
+	unsigned short port, std::chrono::milliseconds timeout, Safe::String& detail) {
+	detail.clear();
 	if (timeout.count() < 0)
 		return Unexpected(Error::InvalidTimeout);
 	const auto control = ClientControl(timeout, m_cancelled);
@@ -226,6 +236,8 @@ Expected<void, Client::Error> Client::Connect(const Connection::Protocol& protoc
 		const auto state = control.Check();
 		if (state != Socket::OperationState::Complete)
 			error = ClientFailure(state, control);
+		if (error != Error::TLS)
+			detail.clear();
 		DropConnection();
 		if (m_telemetry)
 			m_telemetry->RecordConnectionFailed();
@@ -252,9 +264,11 @@ Expected<void, Client::Error> Client::Connect(const Connection::Protocol& protoc
 		}
 		if (m_tls_configuration) {
 			auto session = m_tls_configuration->Create();
-			if (!session)
+			if (!session) {
+				detail = std::string_view{Crypto::TLS::DescribeSessionError(*session.error())};
 				return fail(Error::TLS);
-			const auto handshake = socket->StartTLS(std::move(*session), control);
+			}
+			const auto handshake = socket->StartTLS(std::move(*session), control, detail);
 			if (handshake.state != Socket::OperationState::Complete) {
 				const auto error = ClientFailure(handshake.state, control);
 				return fail(error == Error::Transport ? Error::TLS : error);
@@ -407,17 +421,37 @@ Expected<PacketPointer, Client::Error> Client::Send(const Transport::Packet& pac
 bool Client::ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
 	bool refresh_validation_time) noexcept {
 	try {
+		Safe::String detail;
+		const bool configured = ConfigureTLS(configuration, detail, refresh_validation_time);
+		if (!configured)
+			m_logger << Logger::Level::Error << "Client TLS configuration failed: " << std::string_view(detail) << std::endl;
+		return configured;
+	} catch (...) {
+		m_logger << Logger::Level::Error << "Cannot allocate client TLS configuration diagnostics." << std::endl;
+		return false;
+	}
+}
+
+bool Client::ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
+	Safe::String& detail, bool refresh_validation_time) {
+	detail.clear();
+	try {
 		std::scoped_lock operation(m_operation_mutex);
 		std::scoped_lock lock(m_remote_file_mutex);
-		if (m_connection || m_remote_file_plane)
+		if (m_connection || m_remote_file_plane) {
+			detail = std::string_view{"Disconnect application and remote-file channels before changing TLS configuration."};
 			return false;
+		}
 		auto snapshot = Safe::MakeShared<Detail::TLSConfiguration>(configuration, refresh_validation_time);
-		if (!snapshot->Create())
+		const auto created = snapshot->Create();
+		if (!created) {
+			detail = std::string_view{Crypto::TLS::DescribeSessionError(*created.error())};
 			return false;
+		}
 		m_tls_configuration = std::move(snapshot);
 		return true;
 	} catch (...) {
-		m_logger << Logger::Level::Error << "Failed to copy or validate client TLS configuration." << std::endl;
+		detail = std::string_view{"Cannot allocate or copy the client TLS configuration."};
 		return false;
 	}
 }
@@ -465,6 +499,9 @@ RemoteFileReaderHandle Client::CreateRemoteFileReader(const RemoteFileMount& mou
 				return {};
 			if (m_tls_configuration) {
 				auto session = m_tls_configuration->Create();
+				if (!session)
+					m_logger << Logger::Level::Error << "Remote-file TLS setup failed: "
+						<< Crypto::TLS::DescribeSessionError(*session.error()) << std::endl;
 				if (!session || !socket->StartTLS(std::move(session.value()), true)) {
 					socket->Disconnect();
 					return {};
@@ -529,6 +566,9 @@ RemoteFileWriterHandle Client::CreateRemoteFileWriter(const RemoteFileMount& mou
 				return {};
 			if (m_tls_configuration) {
 				auto session = m_tls_configuration->Create();
+				if (!session)
+					m_logger << Logger::Level::Error << "Remote-file TLS setup failed: "
+						<< Crypto::TLS::DescribeSessionError(*session.error()) << std::endl;
 				if (!session || !socket->StartTLS(std::move(session.value()), true)) {
 					socket->Disconnect();
 					return {};

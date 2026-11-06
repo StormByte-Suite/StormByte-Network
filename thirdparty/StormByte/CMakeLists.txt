@@ -6,6 +6,22 @@ endif()
 
 if(WITH_STORMBYTE STREQUAL "SYSTEM")
 	find_package(StormByte REQUIRED Base Buffer Crypto Logger System)
+	include(CheckCXXSourceCompiles)
+	include(CMakePushCheckState)
+	cmake_push_check_state(RESET)
+	set(CMAKE_REQUIRED_LIBRARIES StormByte::Crypto StormByte::Buffer StormByte::Logger StormByte::System StormByte::Base)
+	check_cxx_source_compiles("
+		#include <StormByte/crypto/tls/session.hxx>
+		int main() {
+			StormByte::Crypto::TLS::Session session;
+			return session.FailureDetail().empty()
+				&& !StormByte::Crypto::TLS::DescribeSessionError(StormByte::Crypto::TLS::SessionError::InvalidState);
+		}
+	" STORMBYTE_CRYPTO_HAS_TLS_DIAGNOSTICS)
+	cmake_pop_check_state()
+	if(NOT STORMBYTE_CRYPTO_HAS_TLS_DIAGNOSTICS)
+		message(FATAL_ERROR "StormByte-Network requires StormByte-Crypto 3.0.1 or later with TLS diagnostics.")
+	endif()
 else()
 	add_subdirectory(base)
 	add_subdirectory(logger)

@@ -689,8 +689,12 @@ bool Server::ConfigureTLS(const Crypto::TLS::ServerConfiguration& configuration,
 		if (Status() != Connection::Status::Disconnected || m_socket_server || m_pool || m_accept_thread.joinable())
 			return false;
 		auto snapshot = Safe::MakeShared<Detail::TLSConfiguration>(configuration, refresh_validation_time);
-		if (!snapshot->Create())
+		const auto created = snapshot->Create();
+		if (!created) {
+			m_logger << Logger::Level::Error << "Server TLS configuration failed: "
+				<< Crypto::TLS::DescribeSessionError(*created.error()) << std::endl;
 			return false;
+		}
 		m_tls_configuration = std::move(snapshot);
 		return true;
 	} catch (...) {
@@ -736,6 +740,9 @@ void Server::AcceptOneClient() noexcept {
 				return;
 			}
 			auto tls = m_tls_configuration->Create();
+			if (!tls)
+				m_logger << Logger::Level::Error << "Server TLS setup failed: "
+					<< Crypto::TLS::DescribeSessionError(*tls.error()) << std::endl;
 			if (!tls || !expected_client.value()->StartTLS(std::move(tls.value()), false)) {
 				m_socket_server->DisconnectClient(expected_client.value()->UUID());
 				return;

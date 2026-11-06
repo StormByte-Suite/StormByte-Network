@@ -202,6 +202,19 @@ namespace StormByte {
 					unsigned short port, std::chrono::milliseconds timeout);
 
 				/**
+				 * @brief Connect with a copied TLS failure explanation.
+				 * @param protocol Address family.
+				 * @param address Borrowed hostname or IP.
+				 * @param port Destination port.
+				 * @param timeout Total operation budget.
+				 * @param detail Output cleared on entry; populated for TLS setup/authentication failure.
+				 * @return The same typed outcome as the existing timed overload.
+				 * @details Output is caller-owned and survives failed connection cleanup.
+				 */
+				Expected<void, Error> Connect(const Connection::Protocol& protocol, std::string_view address,
+					unsigned short port, std::chrono::milliseconds timeout, Safe::String& detail);
+
+				/**
 				 * @brief Cancel the active operation and invalidate its application stream.
 				 * @details Thread-safe against Connect, Send, Status and Disconnect.
 				 * Shuts down connected I/O without closing/reusing a handle concurrently.
@@ -221,6 +234,17 @@ namespace StormByte {
 				 */
 				bool ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
 					bool refresh_validation_time = true) noexcept;
+
+				/**
+				 * @brief Configure TLS with an owned explanation on failure.
+				 * @param configuration Borrowed Crypto inputs, copied during this call.
+				 * @param detail Output cleared on entry; failure explanation.
+				 * @param refresh_validation_time Refresh time per new session.
+				 * @return Whether configuration succeeded; prior policy survives failure.
+				 * @throws StormByte::Safe::AllocationError Explanation storage cannot be allocated.
+				 */
+				bool ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
+					Safe::String& detail, bool refresh_validation_time = true);
 
 				/**
 				 * @brief Restore plaintext for future connections while disconnected.

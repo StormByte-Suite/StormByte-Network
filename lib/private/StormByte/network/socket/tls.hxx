@@ -63,6 +63,7 @@ namespace StormByte::Network::Socket::TLS {
 		bool tls_failure = false;	///< Whether error is meaningful.
 		Crypto::TLS::SessionError error = Crypto::TLS::SessionError::InvalidState;	///< Crypto error.
 		bool truncated = false;	///< TCP EOF without an authenticated TLS close-notify.
+		Safe::String detail;	///< Copied Crypto failure explanation, surviving session cleanup.
 	};
 
 	/**

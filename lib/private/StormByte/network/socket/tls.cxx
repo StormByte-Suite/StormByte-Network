@@ -76,6 +76,12 @@ namespace {
 	 * @return The supplied failure.
 	 */
 	TLS::Result Abort(Client& socket, CryptoSession& session, TLS::Result result) {
+		if (result.tls_failure) {
+			const auto detail = session.FailureDetail();
+			result.detail = detail.empty() ? Crypto::TLS::DescribeSessionError(result.error) : detail;
+		}
+		else if (result.truncated)
+			result.detail = std::string_view{"The peer closed the connection without a TLS close-notify."};
 		socket.Disconnect();
 		session = CryptoSession{};
 		return result;

@@ -441,6 +441,18 @@ namespace StormByte {
 					 */
 					bool ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
 						bool refresh_validation_time = true) noexcept;
+
+					/**
+					 * @brief Configure TLS with an owned explanation on failure.
+					 * @param configuration Borrowed Crypto inputs.
+					 * @param detail Output cleared on entry; copied category or allocation explanation on failure.
+					 * @param refresh_validation_time Refresh validation time per session.
+					 * @return Whether configuration succeeded; prior policy survives failure.
+					 * @throws StormByte::Safe::AllocationError Explanation storage cannot be allocated.
+					 */
+					bool ConfigureTLS(const Crypto::TLS::ClientConfiguration& configuration,
+						Safe::String& detail, bool refresh_validation_time = true);
+
 					/**
 					 * @brief Execute one bounded request, closing its connection on all exits.
 					 * Default HTTPS verifies URL identity with bundled Crypto roots.
@@ -452,6 +464,19 @@ namespace StormByte {
 					 * @throws StormByte::Safe::AllocationError Error storage cannot be allocated.
 					 */
 					Expected<Response, Error> Execute(const Request& request, const Options& options = {});
+
+					/**
+					 * @brief Execute with an owned TLS failure explanation.
+					 * @param request Borrowed request.
+					 * @param options Total deadline, protocol and buffer bounds.
+					 * @param detail Output cleared on entry; populated for TLS failures and unnotified TLS EOF.
+					 * @return The same response or typed error as the existing overload.
+					 * @throws StormByte::Safe::AllocationError Result or explanation storage cannot be allocated.
+					 * @details The output survives session destruction. Non-TLS errors leave it empty.
+					 * No class layout or error-enumeration changes are required.
+					 */
+					Expected<Response, Error> Execute(const Request& request, const Options& options, Safe::String& detail);
+
 				private:
 					Safe::Shared<Connection::Resolver> m_resolver;	///< Managed DNS slot.
 					Safe::Shared<const Detail::TLSConfiguration> m_tls;	///< Immutable copied Crypto inputs.

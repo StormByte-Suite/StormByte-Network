@@ -182,15 +182,20 @@ int test_public_signatures() {
 	using LegacyConnect = bool (Client::*)(const Network::Connection::Protocol&, std::string_view, const unsigned short&);
 	using TimedConnect = Expected<void, Client::Error> (Client::*)(const Network::Connection::Protocol&,
 		std::string_view, unsigned short, std::chrono::milliseconds);
+	using DetailedConnect = Expected<void, Client::Error> (Client::*)(const Network::Connection::Protocol&,
+		std::string_view, unsigned short, std::chrono::milliseconds, Safe::String&);
+	using ConfigureTLS = bool (Client::*)(const Crypto::TLS::ClientConfiguration&, bool) noexcept;
+	using DetailedConfigureTLS = bool (Client::*)(const Crypto::TLS::ClientConfiguration&, Safe::String&, bool);
 	using LegacySend = Network::PacketPointer (Client::*)(const Network::Transport::Packet&) noexcept;
 	using TimedSend = Expected<Network::PacketPointer, Client::Error> (Client::*)(const Network::Transport::Packet&, std::chrono::milliseconds);
 	static_assert(Type::SameAs<decltype(static_cast<LegacyConnect>(&Client::Connect)), LegacyConnect>);
 	static_assert(Type::SameAs<decltype(static_cast<TimedConnect>(&Client::Connect)), TimedConnect>);
+	static_assert(Type::SameAs<decltype(static_cast<DetailedConnect>(&Client::Connect)), DetailedConnect>);
 	static_assert(Type::SameAs<decltype(static_cast<LegacySend>(&ClientFixture::Send)), LegacySend>);
 	static_assert(Type::SameAs<decltype(static_cast<TimedSend>(&ClientFixture::Send)), TimedSend>);
 	static_assert(Type::SameAs<decltype(&Client::Cancel), void (Client::*)() noexcept>);
-	static_assert(Type::SameAs<decltype(&Client::ConfigureTLS),
-		bool (Client::*)(const Crypto::TLS::ClientConfiguration&, bool) noexcept>);
+	static_assert(Type::SameAs<decltype(static_cast<ConfigureTLS>(&Client::ConfigureTLS)), ConfigureTLS>);
+	static_assert(Type::SameAs<decltype(static_cast<DetailedConfigureTLS>(&Client::ConfigureTLS)), DetailedConfigureTLS>);
 	static_assert(Type::SameAs<decltype(&Client::DisableTLS), bool (Client::*)() noexcept>);
 	static_assert(Type::SameAs<decltype(&Client::Disconnect), void (Client::*)() noexcept>);
 	static_assert(Type::SameAs<decltype(&Client::Status), Network::Connection::Status (Client::*)() const noexcept>);

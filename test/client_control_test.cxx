@@ -738,6 +738,35 @@ int test_serialized_requests_keep_responses_isolated() {
 	return 0;
 }
 
+int test_tls_failure_diagnostics() {
+	TestClient client;
+	ASSERT_TRUE(TLSFixture::Configure(client, "wrong.invalid"));
+	Safe::String detail{"stale detail"};
+	Crypto::TLS::ClientConfiguration invalid;
+	ASSERT_FALSE(client.ConfigureTLS(invalid, detail));
+	ASSERT_TRUE(std::string_view(detail) ==
+		Crypto::TLS::DescribeSessionError(Crypto::TLS::SessionError::InvalidConfiguration));
+	Peer fixture;
+	std::jthread server([&] {
+		fixture.Accept();
+		try {
+			fixture.Authenticate();
+		} catch (const std::runtime_error&) {
+			// A rejected certificate can abort the peer handshake.
+		}
+	});
+	const auto result = client.Connect(Connection::Protocol::IPv4, "127.0.0.1", fixture.port, 2s, detail);
+	server.join();
+	ASSERT_FALSE(result);
+	ASSERT_TRUE(*result.error() == Client::Error::TLS);
+	ASSERT_FALSE(detail.empty());
+	ASSERT_TRUE(std::string_view(detail) != Crypto::TLS::DescribeSessionError(Crypto::TLS::SessionError::PeerRejected));
+	ASSERT_TRUE(client.Status() == Connection::Status::Disconnected);
+	ASSERT_FALSE(client.Connect(Connection::Protocol::IPv4, "127.0.0.1", fixture.port, -1ms, detail));
+	ASSERT_TRUE(detail.empty());
+	return 0;
+}
+
 int main() {
 #ifdef WINDOWS
 	WSADATA data{};
@@ -781,6 +810,7 @@ int main() {
 	failures += test_invalid_timeout_and_zero_budget();
 	failures += test_partial_header_is_transport_error();
 	failures += test_serialized_requests_keep_responses_isolated();
+	failures += test_tls_failure_diagnostics();
 #ifdef WINDOWS
 	::WSACleanup();
 #endif

@@ -163,7 +163,10 @@ bool Socket::Client::StartTLS(Crypto::TLS::Session session, bool synchronous) no
 	m_tls_deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
 	try {
 		if (synchronous) {
-			if (TLS::Handshake(*this, m_tls, {m_tls_deadline}).state != OperationState::Complete)
+			const auto result = TLS::Handshake(*this, m_tls, {m_tls_deadline});
+			if (!result.detail.empty())
+				m_logger << Logger::Level::Error << "TLS handshake failed: " << std::string_view(result.detail) << std::endl;
+			if (result.state != OperationState::Complete)
 				return false;
 			m_tls_pending = false;
 		}
@@ -182,6 +185,16 @@ bool Socket::Client::TLSReady() const noexcept {
 }
 
 Socket::OperationResult Socket::Client::StartTLS(Crypto::TLS::Session session, const OperationControl& control) {
+	Safe::String detail;
+	const auto result = StartTLS(std::move(session), control, detail);
+	if (!detail.empty())
+		m_logger << Logger::Level::Error << "TLS handshake failed: " << std::string_view(detail) << std::endl;
+	return result;
+}
+
+Socket::OperationResult Socket::Client::StartTLS(Crypto::TLS::Session session, const OperationControl& control,
+	Safe::String& detail) {
+	detail.clear();
 	if (m_tls_enabled || session.Status() != Crypto::TLS::State::Handshaking)
 		return {OperationState::Error};
 	m_tls_enabled = true;
@@ -189,6 +202,7 @@ Socket::OperationResult Socket::Client::StartTLS(Crypto::TLS::Session session, c
 	m_tls = std::move(session);
 	m_tls_deadline = control.deadline;
 	const auto result = TLS::Handshake(*this, m_tls, control);
+	detail = result.detail;
 	if (result.state == OperationState::Complete)
 		m_tls_pending = false;
 	return {result.state, result.bytes, result.native_error};
@@ -199,6 +213,8 @@ Socket::OperationResult Socket::Client::SendApplication(std::span<const std::byt
 	if (!m_tls_enabled)
 		return Send(data, control);
 	const auto result = TLS::Write(*this, m_tls, data, control);
+	if (!result.detail.empty())
+		m_logger << Logger::Level::Error << "TLS write failed: " << std::string_view(result.detail) << std::endl;
 	return {result.state, result.bytes, result.native_error};
 }
 
@@ -214,6 +230,8 @@ Socket::OperationResult Socket::Client::ReceiveApplication(ByteSize size, Safe::
 		OperationResult result;
 		if (m_tls_enabled) {
 			const auto read = TLS::Read(*this, m_tls, std::span{bytes}.first(count), control);
+			if (!read.detail.empty())
+				m_logger << Logger::Level::Error << "TLS read failed: " << std::string_view(read.detail) << std::endl;
 			result = {read.state, read.bytes, read.native_error};
 		}
 		else {
@@ -250,20 +268,35 @@ bool Socket::Client::UsingTLS() const noexcept {
 	return m_tls_enabled;
 }
 
+bool Socket::Client::TLSFailure(Crypto::TLS::SessionError error) noexcept {
+	m_logger << Logger::Level::Error << "TLS transport failed: "
+		<< TLSFailureDetail(error) << std::endl;
+	return false;
+}
+
+std::string_view Socket::Client::TLSFailureDetail(Crypto::TLS::SessionError error) const noexcept {
+	const auto detail = m_tls.FailureDetail();
+	return detail.empty() ? std::string_view{Crypto::TLS::DescribeSessionError(error)} : detail;
+}
+
 bool Socket::Client::PumpTLS(bool readable) noexcept {
 	if (!m_tls_enabled)
 		return true;
 	try {
-		if (TLSExpired() || m_tls.Status() == Crypto::TLS::State::Failed)
+		if (TLSExpired())
 			return false;
+		if (m_tls.Status() == Crypto::TLS::State::Failed)
+			return TLSFailure(m_tls.Failure());
 		if (readable) {
 			std::array<std::byte, 16384> encrypted{};
 			const auto received = ReadSome(encrypted);
 			if (received.state == OperationState::Complete) {
 				auto input = std::span<const std::byte>(encrypted).first(static_cast<std::size_t>(received.bytes));
 				auto fed = m_tls.FeedEncrypted(input);
-				if (!fed || *fed != input.size())
-					return false;
+				if (!fed)
+					return TLSFailure(*fed.error());
+				if (*fed != input.size())
+					return TLSFailure(Crypto::TLS::SessionError::BufferLimit);
 				m_tls_buffered = m_tls.HandshakeComplete();
 				m_tls_pending = true;
 			}
@@ -274,7 +307,7 @@ bool Socket::Client::PumpTLS(bool readable) noexcept {
 			m_tls_output.resize(ByteSize{16384});
 			auto drained = m_tls.DrainEncrypted(m_tls_output.span());
 			if (!drained)
-				return false;
+				return TLSFailure(*drained.error());
 			m_tls_output.resize(ByteSize{*drained});
 			m_tls_pending = *drained != 0;
 			m_tls_offset = 0;
@@ -303,6 +336,8 @@ bool Socket::Client::PumpTLS(bool readable) noexcept {
 					return false;
 			}
 		}
+		if (m_tls.Status() == Crypto::TLS::State::Failed)
+			return TLSFailure(m_tls.Failure());
 		return m_tls.Status() == Crypto::TLS::State::Handshaking || m_tls.Status() == Crypto::TLS::State::Open;
 	} catch (...) {
 		m_logger << Logger::Level::Error << "Failed to advance incremental TLS transport." << std::endl;
@@ -999,7 +1034,9 @@ StormByte::Expected<ByteSize, ConnectionError> Socket::Client::TryWrite(
 			}
 			auto written = m_tls.WritePlaintext(data.first(std::min(data.size(), std::size_t{16384})));
 			m_tls_pending = true;
-			if (!written || !PumpTLS(false))
+			if (!written)
+				return Unexpected<ConnectionError>("TLS write failed: {}", TLSFailureDetail(*written.error()));
+			if (!PumpTLS(false))
 				return Unexpected<ConnectionError>("TLS write failed");
 			would_block = *written == 0;
 			return ByteSize{*written};
@@ -1052,14 +1089,14 @@ StormByte::Expected<Safe::Binary, ConnectionError> Socket::Client::TryRead(bool&
 			auto read = m_tls.ReadPlaintext(data.span());
 			m_tls_pending = true;
 			if (!read)
-				return Unexpected<ConnectionError>("TLS read failed");
+				return Unexpected<ConnectionError>("TLS read failed: {}", TLSFailureDetail(*read.error()));
 			if (*read == 0) {
 				m_tls_buffered = false;
 				if (!PumpTLS(true))
 					return Unexpected<ConnectionError>("TLS transport failed or truncated");
 				read = m_tls.ReadPlaintext(data.span());
 				if (!read)
-					return Unexpected<ConnectionError>("TLS read failed");
+					return Unexpected<ConnectionError>("TLS read failed: {}", TLSFailureDetail(*read.error()));
 			}
 			if (*read == 0 && m_tls.Status() != Crypto::TLS::State::Open)
 				return Unexpected<ConnectionError>("TLS stream closed");
