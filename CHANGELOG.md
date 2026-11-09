@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.2.1...HEAD
+[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.2.2...HEAD
+
+## [3.2.2] - 2026-11-09
+
+### Changed
+
+- Update the bundled Crypto dependency to 3.0.2, which fixes TLS test certificate creation with OpenSSL 4.x while preserving OpenSSL 3.x compatibility.
+
+[3.2.2]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.2.1...3.2.2
 
 ## [3.2.1] - 2026-11-06
 
