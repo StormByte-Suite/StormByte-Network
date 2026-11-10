@@ -9,7 +9,7 @@
 
 StormByte-Network is the C++26 networking module of the [StormByte](https://suite.stormbyte.org/StormByte) suite.
 
-It depends on StormByte Base, Buffer, Logger and System 3.0.0, and Crypto 3.0.2.
+It depends on StormByte Base, Logger and System 3.0.0, Buffer 4.0.0 and Crypto 3.1.0.
 
 It is not a thin socket wrapper. You inherit `Client` or `Server`, define packets, and optionally configure authenticated Crypto TLS. POSIX and Winsock, framing, event-driven I/O and bounded packet processing stay private.
 
@@ -137,8 +137,8 @@ These examples use `ccache`; install it or omit the two compiler-launcher option
 | Dependency | Required Version | Role |
 |------------|------------------|------|
 | [StormByte (base)](https://github.com/StormByte-Suite/StormByte/releases/tag/3.0.0) | [3.0.0](https://github.com/StormByte-Suite/StormByte/releases/tag/3.0.0) | Expected, Safe ownership/containers/synchronization/threads, Size, ByteSize, visibility |
-| [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/3.0.0) | [3.0.0](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/3.0.0) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly |
-| [StormByte-Crypto](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/3.0.2) | [3.0.2](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/3.0.2) | Buffer-driven TLS 1.3 sessions, certificate verification, trust policies and failure explanations |
+| [StormByte-Buffer](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/4.0.0) | [4.0.0](https://github.com/StormByte-Suite/StormByte-Buffer/releases/tag/4.0.0) | FIFO, Pipeline, Consumer, ReadOnly/WriteOnly, configurable remote-file transfers |
+| [StormByte-Crypto](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/3.1.0) | [3.1.0](https://github.com/StormByte-Suite/StormByte-Crypto/releases/tag/3.1.0) | Buffer-driven TLS 1.3 sessions, certificate verification, trust policies and failure explanations |
 | [StormByte-Logger](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/3.0.0) | [3.0.0](https://github.com/StormByte-Suite/StormByte-Logger/releases/tag/3.0.0) | Diagnostics |
 | [StormByte-System](https://github.com/StormByte-Suite/StormByte-System/releases/tag/3.0.0) | [3.0.0](https://github.com/StormByte-Suite/StormByte-System/releases/tag/3.0.0) | Calling-thread utilities |
 | [nghttp2](https://github.com/nghttp2/nghttp2) | 1.70.0 when bundled | Private HTTP/2 protocol engine; `WITH_NGHTTP2=BUNDLED` is the default, `SYSTEM` uses an installed library |

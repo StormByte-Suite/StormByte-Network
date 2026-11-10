@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Require Buffer 4.0.0 and Crypto 3.1.0; bundled builds use their published
+  release archives.
+- Migrate remote-file leaves to Buffer's Parameters constructors while
+  preserving automatic network-window probing.
+
+### Removed
+
+- **Breaking:** binary compatibility with remote-file handles built against
+  Buffer 3, including virtual policy overrides inherited from Buffer.
+
 [Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.2.2...HEAD
 
 ## [3.2.2] - 2026-11-09

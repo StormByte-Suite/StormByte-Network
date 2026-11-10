@@ -241,7 +241,7 @@ namespace StormByte::Network {
 	BufferedRemoteFileReader::BufferedRemoteFileReader(StormByte::Safe::String locator,
 		StormByte::Safe::Weak<DataPlane> plane, RemoteFileMount::ChannelToken token):
 		BufferedLocationReader(std::move(locator), Buffer::IO::Location::Remote,
-			StormByte::ByteSize{0}, StormByte::ByteSize{0}, std::chrono::milliseconds{0}, true),
+			Parameters{}),
 		m_plane(std::move(plane)), m_token(std::move(token)) {}
 
 	BufferedRemoteFileReader::~BufferedRemoteFileReader() noexcept {
@@ -363,7 +363,7 @@ namespace StormByte::Network {
 	BufferedRemoteFileWriter::BufferedRemoteFileWriter(StormByte::Safe::String locator,
 		StormByte::Safe::Weak<DataPlane> plane, RemoteFileMount::ChannelToken token):
 		BufferedLocationWriter(std::move(locator), Buffer::IO::Location::Remote,
-			StormByte::ByteSize{0}, 0, std::chrono::milliseconds{0}, StormByte::ByteSize{0}, true),
+			Parameters{}),
 		m_plane(std::move(plane)), m_token(std::move(token)) {}
 
 	BufferedRemoteFileWriter::~BufferedRemoteFileWriter() noexcept {
