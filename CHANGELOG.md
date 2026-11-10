@@ -9,10 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Expose Buffer 4's inherited read chunks, universal write-transfer limits,
+  page-drain thresholds, coherent live configuration and transfer snapshots
+  on remote-file handles; document effective limits and memory accounting.
 - Require Buffer 4.0.0 and Crypto 3.1.0; bundled builds use their published
   release archives.
 - Migrate remote-file leaves to Buffer's Parameters constructors while
   preserving automatic network-window probing.
+
+### Fixed
+
+- Segment remote reads larger than a protocol frame instead of faulting when
+  the configured ReadChunk exceeds the wire payload limit.
+- Report each acknowledged remote write segment to Buffer before attempting
+  another frame, preserving confirmed progress if a later exchange fails.
+- Cover configured direct, prefetched, page-cached and ring transfers in
+  plaintext and TLS tests, including aggregation, live capacity reduction,
+  protocol segmentation and sub-threshold Flush/Close tails.
 
 ### Removed
 

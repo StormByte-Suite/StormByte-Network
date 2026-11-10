@@ -142,7 +142,7 @@ namespace StormByte {
 				Buffer::IO::Result OriginClose() override;
 
 				/**
-				 * @brief Pull bytes at this leaf's absolute logical offset.
+				 * @brief Pull one protocol-bounded segment at this leaf's absolute logical offset.
 				 * @param count Maximum number of bytes to read.
 				 * @param destination FIFO receiving the bytes.
 				 * @return Read result and transferred byte count, or an error.
@@ -291,7 +291,7 @@ namespace StormByte {
 				Buffer::IO::Result OriginClose() override;
 
 				/**
-				 * @brief Write a complete byte span at this leaf's absolute logical offset.
+				 * @brief Write one protocol-bounded segment at this leaf's absolute logical offset.
 				 * @param data Bytes to write.
 				 * @return Write result and transferred byte count, or an error.
 				 */

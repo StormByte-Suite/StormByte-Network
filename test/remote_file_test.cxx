@@ -1284,6 +1284,54 @@ namespace RemoteFileTest {
 	// -------------------
 	// Reader
 	// -------------------
+	void test_configurable_transfer_reader() {
+		for (const bool tls: {false, true}) {
+			TempDirectory temporary;
+			const auto read_path = temporary.Path() / "configured-read.bin";
+			const auto expected = MakePattern(5 * 1024 * 1024 + 17);
+			WriteBytes(read_path, expected);
+			Server server(read_path, temporary.Path() / "unused-write.bin");
+			server.UseTLS(tls);
+			Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "configured reader server connect");
+			Client client;
+			client.UseTLS(tls);
+			Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "configured reader client connect");
+			for (std::size_t mode = 0; mode < 4; ++mode) {
+				auto [mount, rejected] = client.RequestMount(false);
+				Check(!rejected && mount.Result() == Mount::Status::Authorized, "configured reader mount");
+				auto reader = client.AttachReader(mount);
+				Check(reader && reader->Open(), "configured reader open");
+				Buf::IO::ReaderConfiguration configuration;
+				configuration.ReadChunk = StormByte::ByteSize{mode == 3 ? 8 * 1024 * 1024 : 1024};
+				if (mode == 1)
+					configuration.MaxMemory = StormByte::ByteSize{512};
+				if (mode == 2) {
+					configuration.MaxMemory = StormByte::ByteSize{16384};
+					configuration.ReadAhead = StormByte::ByteSize{8192};
+				}
+				Check(reader->Configure(configuration).status == Buf::IO::Status::Ok, "reader Configure");
+				const std::size_t count = mode == 3 ? static_cast<std::size_t>(expected.size()) : 32771;
+				StormByte::Safe::Binary actual{StormByte::ByteSize{count}};
+				const auto read = reader->Read(actual.span());
+				Check(read.count == actual.size() && std::equal(actual.begin(), actual.end(), expected.begin()),
+					"configured reader lost bytes");
+				const auto transfers = reader->Transfers();
+				const auto limit = mode == 1 ? StormByte::ByteSize{512} : configuration.ReadChunk;
+				Check(transfers.TransferLimit == limit && transfers.MaxRequest <= limit
+					&& transfers.Calls > 1 && transfers.Bytes >= actual.size(), "reader origin transfer limits");
+				if (mode == 3)
+					Check(transfers.Calls == 2, "oversized ReadChunk was not segmented at the protocol boundary");
+				Check(reader->Seek(7, Buf::Position::Absolute).status == Buf::IO::Status::Ok, "configured reader seek");
+				std::array<std::byte, 37> peeked{};
+				Check(reader->Peek(std::span<std::byte>{peeked}).count == StormByte::ByteSize{peeked.size()}
+					&& std::equal(peeked.begin(), peeked.end(), expected.begin() + 7), "configured reader Peek");
+				Check(reader->Read(std::span<std::byte>{peeked}).count == StormByte::ByteSize{peeked.size()}
+					&& std::equal(peeked.begin(), peeked.end(), expected.begin() + 7), "configured reader replay");
+				Check(reader->Close().status == Buf::IO::Status::Ok, "configured reader close");
+			}
+		}
+	}
+
 	void test_eight_interleaved_readers() {
 		TempDirectory temporary;
 		const auto read_path = temporary.Path() / "interleaved-read.bin";
@@ -1561,6 +1609,102 @@ namespace RemoteFileTest {
 	// -------------------
 	// Writer
 	// -------------------
+	void test_configurable_transfer_writer() {
+		for (const bool tls: {false, true}) {
+			TempDirectory temporary;
+			const auto write_path = temporary.Path() / "configured-write.bin";
+			Server server(temporary.Path() / "unused-read.bin", write_path);
+			server.UseTLS(tls);
+			Check(server.Connect(Net::Connection::Protocol::IPv4, address, port), "configured writer server connect");
+			Client client;
+			client.UseTLS(tls);
+			Check(client.Connect(Net::Connection::Protocol::IPv4, address, port), "configured writer client connect");
+			auto [mount, rejected] = client.RequestMount(true);
+			Check(!rejected && mount.Result() == Mount::Status::Authorized, "configured writer mount");
+			auto writer = client.AttachWriter(mount);
+			Check(writer && writer->Open(), "configured writer open");
+			Buf::IO::WriterConfiguration configuration;
+			configuration.WriteTransfer = StormByte::ByteSize{1024};
+			Check(writer->Configure(configuration).status == Buf::IO::Status::Ok, "direct writer Configure");
+			const auto direct = MakePattern(32771);
+			Check(writer->Write(direct.span()).count == direct.size(), "configured direct write");
+			auto transfers = writer->Transfers();
+			Check(transfers.Calls == 33 && transfers.Bytes == direct.size()
+				&& transfers.MaxRequest == StormByte::ByteSize{1024}, "direct origin transfer limit");
+			Check(writer->Flush().status == Buf::IO::Status::Ok && EqualBytes(ReadBytes(write_path), direct),
+				"configured direct write contents");
+			Check(writer->Truncate().status == Buf::IO::Status::Ok, "configured writer truncate");
+			configuration.MaxMemory = StormByte::ByteSize{32768};
+			configuration.WriteTransfer = StormByte::ByteSize{8192};
+			configuration.WriteThreshold = StormByte::ByteSize{16384};
+			Check(writer->Configure(configuration).status == Buf::IO::Status::Ok, "page writer Configure");
+			const auto before = writer->Transfers();
+			const auto page = MakePattern(32768);
+			for (std::size_t offset = 0; offset < static_cast<std::size_t>(page.size()); offset += 1024)
+				Check(writer->Write(page.span().subspan(offset, 1024)).count == StormByte::ByteSize{1024},
+					"configured small page write");
+			Check(writer->Flush().status == Buf::IO::Status::Ok && EqualBytes(ReadBytes(write_path), page),
+				"aggregated page contents");
+			transfers = writer->Transfers();
+			Check(transfers.Calls - before.Calls < 32 && transfers.MaxRequest == StormByte::ByteSize{8192}
+				&& transfers.Bytes - before.Bytes == page.size() && transfers.Pending == StormByte::ByteSize{0}
+				&& transfers.PageCapacity == configuration.MaxMemory, "small writes were not grouped within budget");
+			const auto tail = MakePattern(37);
+			Check(writer->Write(tail.span()).count == tail.size(), "configured tail write");
+			configuration.MaxMemory = StormByte::ByteSize{512};
+			configuration.WriteTransfer = StormByte::ByteSize{1024};
+			Check(writer->Configure(configuration).status == Buf::IO::Status::Ok, "writer budget reduction");
+			Check(writer->Transfers().Pending == StormByte::ByteSize{0}
+				&& writer->Transfers().PageCapacity == configuration.MaxMemory, "reconfiguration left pending pages");
+			auto reduced = page;
+			reduced.insert(reduced.end(), tail.begin(), tail.end());
+			Check(EqualBytes(ReadBytes(write_path), reduced), "budget reduction lost pending tail");
+			Check(writer->Truncate().status == Buf::IO::Status::Ok, "small-budget writer truncate");
+			const auto small_before = writer->Transfers();
+			Check(writer->Write(direct.span()).count == direct.size(), "write larger than page budget");
+			Check(writer->Flush().status == Buf::IO::Status::Ok && EqualBytes(ReadBytes(write_path), direct),
+				"small-budget contents");
+			Check(writer->Transfers().Calls - small_before.Calls >= 65
+				&& writer->Transfers().LastRequest <= StormByte::ByteSize{512}, "small-budget transfer limit");
+			Check(writer->Truncate().status == Buf::IO::Status::Ok, "ring writer truncate");
+			configuration.MaxMemory = StormByte::ByteSize{0};
+			configuration.WriteChunk = StormByte::ByteSize{4096};
+			configuration.BackPressure = 4;
+			Check(writer->Configure(configuration).status == Buf::IO::Status::Ok, "ring writer Configure");
+			const auto oversized = writer->Write(direct.span());
+			Check(oversized.status == Buf::IO::Status::TryAgain && oversized.count == StormByte::ByteSize{0},
+				"ring admission changed its oversized-request contract");
+			const auto ring = MakePattern(8195);
+			Check(writer->Write(ring.span()).count == ring.size(), "configured ring write");
+			configuration.WriteChunk = StormByte::ByteSize{2048};
+			configuration.BackPressure = 2;
+			Check(writer->Configure(configuration).status == Buf::IO::Status::Ok, "ring writer reduction");
+			transfers = writer->Transfers();
+			Check(transfers.RingCapacity == StormByte::ByteSize{8192}
+				&& transfers.QueueCapacity == StormByte::ByteSize{4096}
+				&& transfers.LastRequest <= StormByte::ByteSize{1024}
+				&& EqualBytes(ReadBytes(write_path), ring), "ring reduction lost data or kept the old capacity");
+			Check(writer->Truncate().status == Buf::IO::Status::Ok, "large writer truncate");
+			configuration = {};
+			Check(writer->Configure(configuration).status == Buf::IO::Status::Ok, "unlimited writer Configure");
+			const auto large = MakePattern(5 * 1024 * 1024 + 17);
+			const auto large_before = writer->Transfers();
+			Check(writer->Write(large.span()).count == large.size(), "protocol-segmented direct write");
+			Check(writer->Transfers().Calls - large_before.Calls == 2, "large write did not expose per-frame progress");
+			Check(writer->Flush().status == Buf::IO::Status::Ok && EqualBytes(ReadBytes(write_path), large),
+				"protocol-segmented direct contents");
+			configuration.MaxMemory = StormByte::ByteSize{4096};
+			configuration.WriteThreshold = StormByte::ByteSize{4096};
+			Check(writer->Configure(configuration).status == Buf::IO::Status::Ok, "tail writer Configure");
+			Check(writer->Write(tail.span()).count == tail.size(), "close tail write");
+			Check(writer->Transfers().Pending == tail.size(), "sub-threshold tail was not retained");
+			Check(writer->Close(), "configured writer close");
+			auto expected = large;
+			expected.insert(expected.end(), tail.begin(), tail.end());
+			Check(EqualBytes(ReadBytes(write_path), expected), "Close lost sub-threshold tail");
+		}
+	}
+
 	int test_flush_after_size_queries() {
 		TempDirectory temporary;
 		const auto read_path = temporary.Path() / "unused-read.bin";
@@ -1649,6 +1793,7 @@ int main() {
 	// -------------------
 	// Reader
 	// -------------------
+	result += RunOne("test_configurable_transfer_reader", test_configurable_transfer_reader);
 	result += RunOne("test_eight_interleaved_readers", test_eight_interleaved_readers);
 	result += RunOne("test_empty_file_eof", test_empty_file_eof);
 	result += RunOne("test_large_pattern_reader", test_large_pattern_reader);
@@ -1669,6 +1814,7 @@ int main() {
 	// -------------------
 	// Writer
 	// -------------------
+	result += RunOne("test_configurable_transfer_writer", test_configurable_transfer_writer);
 	result += RunOne("test_flush_after_size_queries", test_flush_after_size_queries);
 	result += RunOne("test_pattern_writer_lifecycle", test_pattern_writer_lifecycle);
 	result += RunOne("test_writer_reader_conflicts", test_writer_reader_conflicts);

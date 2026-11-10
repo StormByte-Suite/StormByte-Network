@@ -380,6 +380,87 @@ Each peer plane has one independently constructed TLS session when configured, p
 
 Remote readers and writers retain Buffer's I/O telemetry, including its existing operation counters and rates. Buffer telemetry derives from `StormByte::Telemetry` and measures operations with Base's named clocks, so remote I/O uses the same instrumentation as other Buffer locations.
 
+#### Transfer configuration (Buffer 4)
+
+Remote handles inherit `Configuration()`, `Configure(...)`, `ReadChunk`,
+`WriteTransfer`, `WriteThreshold` and `Transfers()` directly from Buffer; no
+Network-specific policy wrapper is required. Apply a complete policy **after
+`Open()`**, because opening a remote handle first probes the network window
+for the legacy automatic defaults. Check every operation's result:
+
+```cpp
+namespace IO = StormByte::Buffer::IO;
+using StormByte::ByteSize;
+
+// reader/writer are authorized, already-open remote handles.
+auto read_policy = reader->Configuration();
+read_policy.ReadChunk = ByteSize{256 * 1024};
+read_policy.ReadAhead = ByteSize{1024 * 1024};
+read_policy.MaxMemory = ByteSize{2 * 1024 * 1024};
+const auto read_configuration = reader->Configure(read_policy);
+if (read_configuration.status != IO::Status::Ok)
+	return false;
+
+auto write_policy = writer->Configuration();
+write_policy.WriteTransfer = ByteSize{256 * 1024};
+write_policy.WriteThreshold = ByteSize{1024 * 1024};
+write_policy.MaxMemory = ByteSize{2 * 1024 * 1024};
+const auto write_configuration = writer->Configure(write_policy);
+if (write_configuration.status != IO::Status::Ok)
+	return false;
+
+const auto effective = writer->Transfers(); // No I/O.
+// Check Flush()/Close() results before treating pending writes as completed.
+```
+
+`ReadChunk` limits each Buffer origin request (default/zero: 64 KiB), independently
+of `ReadAhead` (zero: no prefetch). `WriteTransfer` limits origin requests on
+every writing path (zero: no explicit maximum; page mode retains Buffer's
+64 KiB fallback). A positive transfer setting in page mode is capped by the
+page budget. Each remote origin hook exchanges at most one file-data frame:
+the wire payload is additionally capped at 4 MiB minus its 58-byte header.
+Larger public operations and configured chunks complete through multiple
+segments; a short successful segment is not EOF. These are application
+transfer sizes, not physical disk-operation sizes.
+
+`WriteThreshold` (default/zero: memory pressure only) is the dirty-page high
+watermark, capped by the page budget; draining targets half that watermark.
+Contiguous small writes can therefore become larger transfers. Page draining
+runs in the caller's thread, and Flush, Close and reconfiguration can
+materialize data below the watermark. `WriteChunk` and `BackPressure` retain
+their separate ring unit/queue-depth meaning; pages take priority when
+`MaxMemory` is nonzero. Defaults retain automatic network-window probing,
+the writer's 1 MiB page budget and depth four, and the reader's zero page budget.
+Ring admission retains Buffer's `TryAgain` behavior: a request larger than
+the current queue capacity must be split by the caller, not retried unchanged
+forever. Page-mode writes larger than their budget drain incrementally.
+The ring's allocated capacity is rounded to a power of two including a spare
+slot; `RingCapacity` and the logical `QueueCapacity` can therefore differ.
+
+`Configure` serializes with Buffer operations, may block on in-flight I/O and
+flushes pending writer data before applying the new policy. A failed flush
+does not install a partial policy; already acknowledged remote writes cannot
+be rolled back. Setters can also block and throw on failed configuration.
+`Transfers()` reports actual origin-hook calls and bytes, effective transfer
+limits, page/ring/queue capacities and pending/in-flight payload, not wire/TLS
+overhead or consumer-delivered bytes. `MaxRequest` measures the request passed
+to the hook, before the additional protocol cap; it is a lifetime maximum,
+not the current configured limit.
+
+`MaxMemory` accounts for Buffer page payload, not RSS or all transport memory.
+Ring storage, Buffer's assembly/replay and transfer scratch, the caller's
+buffers, protocol frame copies, TLS buffers and server-side stream buffering
+can require additional memory. Buffer's queue/ByteBudget APIs are not wired
+into the existing private data plane: it retains its own bounded exchange
+protocol. No aggregate file/transport memory cap, disk scheduler or physical
+read/write isolation is implied.
+
+**Breaking:** remote handles inherit Buffer 4's changed base-class ABI.
+Update Buffer to 4.0.0, Crypto to 3.1.0, then Network and applications using
+these handles as one compatible set; do not mix Buffer 3 and Buffer 4 handle
+layouts or old virtual policy overrides. Provider-owned Safe handles and
+module-lifetime requirements are unchanged.
+
 Remote reader size queries return `StormByte::Safe::Optional<StormByte::ByteSize>`: an empty value means the size is unavailable, not that the file is empty; a present zero means an empty file. Byte lengths and seek offsets use `ByteSize`; convert explicitly when an application needs a plain numeric value. A successful writer flush synchronizes buffered writes with the host stream; size queries must not disturb its write position. Flush is not a transactional commit or a guarantee of crash-durable storage.
 
 The remote reader and writer expose the same shared polymorphic `System::Device` snapshot for their plane's local network interface. Its `Throughput()` and `Window()` report the interface link speed when the operating system exposes it, with a nominal network-rate fallback otherwise.

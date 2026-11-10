@@ -290,11 +290,9 @@ namespace StormByte::Network {
 	}
 
 	Buffer::IO::Result BufferedRemoteFileReader::OriginPull(const StormByte::ByteSize count, Buffer::FIFO& destination) {
-		if (count == StormByte::ByteSize{0}) return { Status::Ok, StormByte::ByteSize{0} };
-		if (count > StormByte::ByteSize{Detail::RemoteFile::max_data_size}) {
-			SetState(State::Fault);
-			return { Status::Failed, StormByte::ByteSize{0} };
-		}
+		if (count == StormByte::ByteSize{0})
+			return { Status::Ok, StormByte::ByteSize{0} };
+		const auto requested = std::min(count, StormByte::ByteSize{Detail::RemoteFile::max_data_size});
 		auto plane = m_plane.lock();
 		if (!plane || plane->Failed()) {
 			SetState(State::Fault);
@@ -304,9 +302,9 @@ namespace StormByte::Network {
 		request.opcode = Opcode::Read;
 		request.token = m_token;
 		request.offset = static_cast<std::uint64_t>(m_offset);
-		request.value = static_cast<std::uint64_t>(count);
+		request.value = static_cast<std::uint64_t>(requested);
 		auto response = plane->Exchange(std::move(request));
-		if (!response || response->value != response->data.size() || response->data.size() > count
+		if (!response || response->value != response->data.size() || response->data.size() > requested
 			|| response->offset != static_cast<std::uint64_t>(m_offset)
 			|| (response->status != RemoteStatus::Ok && response->status != RemoteStatus::End)) {
 			SetState(State::Fault);
@@ -422,26 +420,22 @@ namespace StormByte::Network {
 			SetState(State::Fault);
 			return { Status::Error, StormByte::ByteSize{0} };
 		}
-		std::size_t written = 0;
-		while (written < data.size()) {
-			const std::size_t count = std::min(max_chunk, data.size() - written);
-			Message request;
-			request.opcode = Opcode::Write;
-			request.token = m_token;
-			request.offset = static_cast<std::uint64_t>(m_offset) + written;
-			request.value = count;
-			request.data.assign(data.subspan(written, count));
-			auto response = plane->Exchange(std::move(request));
-			if (!response || response->status != RemoteStatus::Ok || response->value != count
-				|| response->offset != static_cast<std::uint64_t>(m_offset) + written
-				|| !response->data.empty()) {
-				SetState(State::Fault);
-				return { Status::Error, StormByte::ByteSize{0} };
-			}
-			written += count;
+		const std::size_t count = std::min(max_chunk, data.size());
+		Message request;
+		request.opcode = Opcode::Write;
+		request.token = m_token;
+		request.offset = static_cast<std::uint64_t>(m_offset);
+		request.value = count;
+		request.data.assign(data.first(count));
+		auto response = plane->Exchange(std::move(request));
+		if (!response || response->status != RemoteStatus::Ok || response->value != count
+			|| response->offset != static_cast<std::uint64_t>(m_offset)
+			|| !response->data.empty()) {
+			SetState(State::Fault);
+			return { Status::Error, StormByte::ByteSize{0} };
 		}
-		m_offset += StormByte::ByteSize{written};
-		return { Status::Ok, StormByte::ByteSize{written} };
+		m_offset += StormByte::ByteSize{count};
+		return { Status::Ok, StormByte::ByteSize{count} };
 	}
 
 	Buffer::IO::Result BufferedRemoteFileWriter::OriginFlush() {
