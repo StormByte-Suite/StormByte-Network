@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/4.0.0...HEAD
+
+## [4.0.0] - 2026-11-10
+
 ### Changed
 
 - Expose Buffer 4's inherited read chunks, universal write-transfer limits,
@@ -32,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** binary compatibility with remote-file handles built against
   Buffer 3, including virtual policy overrides inherited from Buffer.
 
-[Unreleased]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.2.2...HEAD
+[4.0.0]: https://github.com/StormByte-Suite/StormByte-Network/compare/3.2.2...4.0.0
 
 ## [3.2.2] - 2026-11-09
 
