@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Prevent heartbeat timeouts from invalidating an in-flight remote-file response.
 - Segment remote reads larger than a protocol frame instead of faulting when
   the configured ReadChunk exceeds the wire payload limit.
 - Report each acknowledged remote write segment to Buffer before attempting

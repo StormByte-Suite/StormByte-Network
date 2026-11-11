@@ -294,7 +294,7 @@ namespace StormByte {
 				Safe::Shared<System::Device> m_device;	///< Provider-owned device snapshot.
 				const std::uint16_t m_port;		///< Assigned server port.
 				mutable Safe::Mutex m_mutex;		///< Protects pending exchanges.
-				Safe::Mutex m_operation_mutex;	///< Serializes operations independently of heartbeat.
+				Safe::Mutex m_operation_mutex;	///< Serializes file operations and heartbeat exchanges.
 				Safe::Mutex m_send_mutex;		///< Serializes frames and sequence assignment.
 				Safe::ConditionVariable m_response_condition;	///< Wakes response waiters and receiver.
 				std::array<Safe::Optional<Pending>, 2> m_pending;	///< Operation and heartbeat slots.

@@ -236,9 +236,7 @@ namespace StormByte::Network::Detail::RemoteFile {
 	StormByte::Expected<Message, ConnectionError> DataPlane::Exchange(Message request) noexcept {
 		const bool heartbeat = request.opcode == Opcode::Ping;
 		const std::size_t slot = heartbeat ? 1 : 0;
-		Safe::UniqueLock operation(m_operation_mutex, Safe::DeferLock{});
-		if (!heartbeat)
-			operation.lock();
+		Safe::UniqueLock operation(m_operation_mutex);
 		try {
 			{
 				Safe::UniqueLock sending(m_send_mutex);
