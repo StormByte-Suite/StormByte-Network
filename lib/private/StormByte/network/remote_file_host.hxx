@@ -323,8 +323,8 @@ namespace StormByte {
 				void SetTaskBlocked(bool blocked) noexcept;
 
 				/**
-				 * @brief Check whether the heartbeat or authorization deadline expired.
-				 * @return Whether the peer silence exceeds its timeout.
+				 * @brief Check whether an idle peer has exceeded its timeout.
+				 * @return Whether the idle peer timeout or TLS deadline expired.
 				 */
 				bool Expired() const noexcept;
 
@@ -418,7 +418,7 @@ namespace StormByte {
 				Safe::Atomic<bool> m_finished{false};	///< Shutdown completed.
 				std::uint16_t m_port{0};			///< Assigned peer port.
 				std::uint64_t m_last_request_id{0};	///< Last monotonic request sequence.
-				std::chrono::steady_clock::time_point m_last_activity;	///< Last valid frame or start.
+				std::chrono::steady_clock::time_point m_last_activity;	///< Last peer or response progress.
 			};
 		}
 	}

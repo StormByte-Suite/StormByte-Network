@@ -306,7 +306,10 @@ namespace StormByte::Network::Detail::RemoteFile {
 				return false;
 			}
 			m_port = m_listener->Port();
-			m_last_activity = std::chrono::steady_clock::now();
+			{
+				std::scoped_lock lock(m_mutex);
+				m_last_activity = std::chrono::steady_clock::now();
+			}
 			return m_port != 0;
 		} catch (...) {
 			if (m_listener) m_listener->Disconnect();
@@ -399,6 +402,9 @@ namespace StormByte::Network::Detail::RemoteFile {
 	bool Host::Expired() const noexcept {
 		if (m_active_client && m_active_client->TLSExpired())
 			return true;
+		std::scoped_lock lock(m_mutex);
+		if (m_in_flight || m_pending_request)
+			return false;
 		return m_port != 0 && std::chrono::steady_clock::now() - m_last_activity
 			>= std::chrono::seconds{m_timeout_seconds};
 	}
@@ -425,7 +431,10 @@ namespace StormByte::Network::Detail::RemoteFile {
 			}
 		}
 		m_accepted = true;
-		m_last_activity = std::chrono::steady_clock::now();
+		{
+			std::scoped_lock lock(m_mutex);
+			m_last_activity = std::chrono::steady_clock::now();
+		}
 		return true;
 	}
 
@@ -475,7 +484,10 @@ namespace StormByte::Network::Detail::RemoteFile {
 			return Unexpected<ConnectionError>("Invalid or repeated peer data-plane request sequence");
 		}
 		m_last_request_id = request->request_id;
-		m_last_activity = std::chrono::steady_clock::now();
+		{
+			std::scoped_lock lock(m_mutex);
+			m_last_activity = std::chrono::steady_clock::now();
+		}
 
 		Message response = Reply(request.value(), Status::Failed);
 		if (request->opcode == Opcode::Ping) {
@@ -580,6 +592,7 @@ namespace StormByte::Network::Detail::RemoteFile {
 			}
 			else
 				m_output_queue.push_back(std::move(framed));
+			m_last_activity = std::chrono::steady_clock::now();
 			if (response.opcode != Opcode::Pong) {
 				m_in_flight = false;
 				m_task_blocked = false;
@@ -610,6 +623,8 @@ namespace StormByte::Network::Detail::RemoteFile {
 		if (!written) return Unexpected(written.error());
 		if (would_block) return false;
 		m_output_offset += written.value();
+		if (written.value() > ByteSize{0})
+			m_last_activity = std::chrono::steady_clock::now();
 		if (m_output_offset == m_output_buffer.size()) {
 			m_output_buffer.clear();
 			m_output_offset = ByteSize{0};
